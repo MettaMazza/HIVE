@@ -318,7 +318,8 @@ impl Engine {
                     &candidate_text,
                     &active_prompt,
                     &history,
-                    &event
+                    &event,
+                    &context_from_swarm
                 ).await;
 
                 if audit_result.is_allowed() {

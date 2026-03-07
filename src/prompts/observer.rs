@@ -94,6 +94,7 @@ pub async fn run_skeptic_audit(
     system_context: &str,
     history: &[Event],
     new_event: &Event,
+    tool_context: &str,
 ) -> AuditResult {
     let current_time = chrono::Utc::now().to_rfc3339();
     
@@ -104,10 +105,16 @@ pub async fn run_skeptic_audit(
     }
     history_str.push_str(&format!("{}: {}\n", new_event.author_name, new_event.content));
 
+    let resolved_tool_context = if tool_context.trim().is_empty() {
+        "NO TOOLS EXECUTED THIS TURN."
+    } else {
+        tool_context
+    };
+
     let prompt = SKEPTIC_AUDIT_PROMPT
         .replace("{currentDatetime}", &current_time)
         .replace("{userLastMsg}", &new_event.content)
-        .replace("{toolContext}", "NO TOOLS EXECUTED THIS TURN.") // We don't have tools implemented yet in HIVE
+        .replace("{toolContext}", resolved_tool_context)
         .replace("{capabilitiesText}", &capabilities.format_for_prompt(new_event))
         .replace("{responseText}", candidate_text);
     
@@ -218,7 +225,7 @@ mod tests {
         };
 
         let caps = AgentCapabilities::default();
-        let res = run_skeptic_audit(Arc::new(mock_provider), &caps, "My candidate", "System", &[history_event], &event).await;
+        let res = run_skeptic_audit(Arc::new(mock_provider), &caps, "My candidate", "System", &[history_event], &event, "").await;
         assert_eq!(res.verdict, "ALLOWED");
     }
 
@@ -238,7 +245,7 @@ mod tests {
         };
 
         let caps = AgentCapabilities::default();
-        let res = run_skeptic_audit(Arc::new(mock_provider), &caps, "My candidate", "System", &[], &event).await;
+        let res = run_skeptic_audit(Arc::new(mock_provider), &caps, "My candidate", "System", &[], &event, "").await;
         assert_eq!(res.verdict, "ALLOWED");
         assert!(res.what_went_wrong.contains("fail"));
     }
