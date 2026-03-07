@@ -2,12 +2,20 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
-
 use crate::models::message::{Event, Response};
 
 use crate::memory::MemoryStore;
 use crate::platforms::Platform;
 use crate::providers::Provider;
+
+/// Format elapsed seconds as a human-readable string.
+fn format_elapsed(elapsed_secs: u64) -> String {
+    if elapsed_secs < 60 {
+        format!("{}s", elapsed_secs)
+    } else {
+        format!("{:.1}m", elapsed_secs as f64 / 60.0)
+    }
+}
 
 pub struct EngineBuilder {
     platforms: HashMap<String, Box<dyn Platform>>,
@@ -116,19 +124,8 @@ impl Engine {
                         Err(_) => {
                             // Debounce timeout — flush update with accumulated thinking text
                             if has_update {
-                                let elapsed_secs = start_time.elapsed().as_secs();
-                                let elapsed_str = if elapsed_secs < 60 {
-                                    format!("{}s", elapsed_secs)
-                                } else {
-                                    format!("{:.1}m", elapsed_secs as f64 / 60.0)
-                                };
-                                // Truncate thinking text for Discord embed limit (4096 chars total)
-                                let thinking_display = if buffered_thought.len() > 3800 {
-                                    format!("...{}", &buffered_thought[buffered_thought.len()-3700..])
-                                } else {
-                                    buffered_thought.clone()
-                                };
-                                let status = format!("🧠 Thinking... ({})\n\n{}", elapsed_str, thinking_display);
+                                let elapsed_str = format_elapsed(start_time.elapsed().as_secs());
+                                let status = format!("🧠 Thinking... ({})\n\n{}", elapsed_str, buffered_thought);
                                 let update_res = Response {
                                     platform: platform_id_clone.clone(),
                                     target_scope: scope_clone.clone(),
@@ -145,21 +142,11 @@ impl Engine {
                 }
 
                 // Channel closed: send final "complete" telemetry with full reasoning
-                let elapsed_secs = start_time.elapsed().as_secs();
-                let elapsed_str = if elapsed_secs < 60 {
-                    format!("{}s", elapsed_secs)
-                } else {
-                    format!("{:.1}m", elapsed_secs as f64 / 60.0)
-                };
-                let thinking_display = if buffered_thought.len() > 3800 {
-                    format!("...{}", &buffered_thought[buffered_thought.len()-3700..])
-                } else {
-                    buffered_thought.clone()
-                };
-                let status = if thinking_display.is_empty() {
+                let elapsed_str = format_elapsed(start_time.elapsed().as_secs());
+                let status = if buffered_thought.is_empty() {
                     format!("✅ Complete ({})", elapsed_str)
                 } else {
-                    format!("✅ Complete ({})\n\n{}", elapsed_str, thinking_display)
+                    format!("✅ Complete ({})\n\n{}", elapsed_str, buffered_thought)
                 };
                 let update_res = Response {
                     platform: platform_id_clone.clone(),
@@ -406,10 +393,8 @@ mod tests {
         let mut mock_platform = MockTelemetryPlatform::new();
         mock_platform.expect_name().return_const("telemetry_plat".to_string());
         mock_platform.expect_start().returning(|_| Ok(()));
-        
-        // It should receive 2 intermediate sends and 1 final send.
-        // We'll just verify it gets called at least 3 times.
-        mock_platform.expect_send().times(3).returning(|_| Ok(()));
+        // Complete telemetry (1) + final response (1) = at least 2
+        mock_platform.expect_send().times(2..).returning(|_| Ok(()));
 
         let engine = EngineBuilder::new()
             .with_platform(Box::new(mock_platform))
@@ -428,6 +413,82 @@ mod tests {
             content: "Ping".to_string(),
         }).await.unwrap();
 
-        sleep(Duration::from_millis(150)).await;
+        // Wait for debounce (800ms) + processing
+        sleep(Duration::from_millis(2000)).await;
+    }
+
+    #[tokio::test]
+    async fn test_engine_telemetry_debounce_fires() {
+        // Test that the debounce timeout actually flushes thinking text
+        use crate::providers::MockProvider;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use tokio::time::{sleep, Duration};
+        
+        // Use a flag to track if a telemetry send was received
+        let got_thinking = Arc::new(AtomicBool::new(false));
+        let got_thinking_clone = got_thinking.clone();
+
+        let mut mock_provider = MockProvider::new();
+        mock_provider
+            .expect_generate()
+            .returning(|_sys, _hist, _req, tx_opt| {
+                // Send a token, then keep the channel open long enough for debounce to fire
+                if let Some(tx) = tx_opt {
+                    let tx_clone = tx.clone();
+                    tokio::spawn(async move {
+                        let _ = tx_clone.send("reasoning token".to_string()).await;
+                        // Hold the channel open past the 800ms debounce
+                        sleep(Duration::from_millis(1500)).await;
+                        // Channel drops here, triggering the "Complete" path
+                    });
+                }
+                // Provider returns after the spawned task completes
+                Ok("Answer".to_string())
+            });
+
+        let mut mock_platform = MockTelemetryPlatform::new();
+        mock_platform.expect_name().return_const("telemetry_plat".to_string());
+        mock_platform.expect_start().returning(|_| Ok(()));
+        mock_platform.expect_send().times(1..).returning(move |r| {
+            if r.is_telemetry && r.text.contains("Thinking") {
+                got_thinking_clone.store(true, Ordering::SeqCst);
+            }
+            Ok(())
+        });
+
+        let engine = EngineBuilder::new()
+            .with_platform(Box::new(mock_platform))
+            .with_provider(Arc::new(mock_provider))
+            .build().unwrap();
+
+        let sender = engine.event_sender.as_ref().unwrap().clone();
+        tokio::spawn(async move {
+            engine.run().await;
+        });
+
+        sender.send(Event {
+            platform: "telemetry_plat:456".to_string(),
+            scope: Scope::Public,
+            author_name: "TestUser".to_string(),
+            content: "Trigger debounce".to_string(),
+        }).await.unwrap();
+
+        // Wait past debounce (800ms) + processing time
+        sleep(Duration::from_millis(2500)).await;
+        assert!(got_thinking.load(Ordering::SeqCst), "Debounce should have flushed a thinking update");
+    }
+
+    #[test]
+    fn test_format_elapsed_seconds() {
+        assert_eq!(format_elapsed(0), "0s");
+        assert_eq!(format_elapsed(5), "5s");
+        assert_eq!(format_elapsed(59), "59s");
+    }
+
+    #[test]
+    fn test_format_elapsed_minutes() {
+        assert_eq!(format_elapsed(60), "1.0m");
+        assert_eq!(format_elapsed(90), "1.5m");
+        assert_eq!(format_elapsed(120), "2.0m");
     }
 }
