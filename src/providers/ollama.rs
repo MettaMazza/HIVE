@@ -121,19 +121,21 @@ impl Provider for OllamaProvider {
                     if let Some(msg) = parsed.get("message") {
                         if let Some(content) = msg.get("content").and_then(|v| v.as_str()) {
                             full_response.push_str(content);
+                            
+                            // Stream all content directly as telemetry
+                            if let Some(ref tx) = telemetry_tx {
+                                if !content.is_empty() {
+                                    let _ = tx.send(content.to_string()).await;
+                                }
+                            }
                         }
 
-                        let mut telemetry_token = String::new();
-                        
-                        // Qwen3.5 uses 'thinking' key or '<think>' tags.
-                        // For pure JSON 'thinking' key:
+                        // Some models stream reasoning separately in a 'thinking' key
                         if let Some(thinking) = msg.get("thinking").and_then(|v| v.as_str()) {
-                            telemetry_token.push_str(thinking);
-                        }
-                        
-                        if let Some(ref tx) = telemetry_tx {
-                            if !telemetry_token.is_empty() {
-                                let _ = tx.send(telemetry_token).await;
+                            if let Some(ref tx) = telemetry_tx {
+                                if !thinking.is_empty() {
+                                    let _ = tx.send(thinking.to_string()).await;
+                                }
                             }
                         }
                     }
@@ -147,19 +149,7 @@ impl Provider for OllamaProvider {
             }
         }
 
-        // Qwen models sometimes return the <think> block inside the final content string.
-        // We need to strip it out so it doesn't double-print to the user.
-        let mut final_answer = full_response;
-        if let Some(start_idx) = final_answer.find("<think>") {
-            if let Some(end_idx) = final_answer.find("</think>") {
-                if end_idx > start_idx {
-                    // Remove everything from <think> to </think> + length of </think>
-                    final_answer.replace_range(start_idx..end_idx + 8, "");
-                }
-            }
-        }
-        
-        Ok(final_answer.trim().to_string())
+        Ok(full_response.trim().to_string())
     }
 }
 
@@ -296,7 +286,6 @@ mod tests {
         let mut provider = OllamaProvider::new();
         provider.endpoint = format!("{}/api/chat", mock_server.uri());
 
-        // Simulate Qwen3.5 style where both thinking and content can stream
         let mock_response = "{\"message\": {\"role\": \"assistant\", \"thinking\": \"I am thinking...\", \"content\": \"Final answer\"}, \"done\": true}\n";
 
         Mock::given(method("POST"))
@@ -315,8 +304,11 @@ mod tests {
             content: "Bork?".into(),
         }, Some(tx)).await;
 
-        assert_eq!(res.unwrap(), "Final answer"); 
-        assert_eq!(rx.recv().await.unwrap(), "I am thinking...");
+        let first_recv = rx.recv().await.unwrap();
+        let second_recv = rx.recv().await.unwrap();
+        assert!(first_recv == "Final answer" || first_recv == "I am thinking...");
+        assert!(second_recv == "Final answer" || second_recv == "I am thinking...");
+        assert_eq!(res.unwrap(), "Final answer");
     }
 
     #[tokio::test]
