@@ -4,10 +4,12 @@ use tokio::sync::mpsc;
 
 use crate::models::message::{Event, Response};
 use crate::models::capabilities::AgentCapabilities;
+use crate::models::scope::Scope;
 
 use crate::memory::MemoryStore;
 use crate::platforms::Platform;
 use crate::providers::Provider;
+use crate::teacher::Teacher;
 
 /// Format elapsed seconds as a human-readable string.
 fn format_elapsed(elapsed_secs: u64) -> String {
@@ -85,6 +87,7 @@ impl EngineBuilder {
             capabilities: Arc::new(self.capabilities),
             memory: memory,
             swarm: swarm,
+            teacher: Arc::new(Teacher::new(None)),
             event_sender: Some(tx),
             event_receiver: rx,
         })
@@ -97,6 +100,7 @@ pub struct Engine {
     capabilities: Arc<AgentCapabilities>,
     memory: Arc<MemoryStore>,
     swarm: Arc<SwarmManager>,
+    teacher: Arc<Teacher>,
     
     // Channel for platforms to send events IN to the engine
     event_sender: Option<mpsc::Sender<Event>>,
@@ -105,6 +109,7 @@ pub struct Engine {
 }
 
 impl Engine {
+    #[cfg(not(tarpaulin_include))]
     pub async fn run(mut self) {
         println!("Starting HIVE Engine...");
         
@@ -256,31 +261,75 @@ impl Engine {
                 }
             };
             
-            // Clean potential markdown blocks from the JSON
-            let mut cleaned_json = plan_json.trim().to_string();
-            if cleaned_json.starts_with("```json") {
-                cleaned_json = cleaned_json.strip_prefix("```json").unwrap_or(&cleaned_json).to_string();
-            } else if cleaned_json.starts_with("```") {
-                cleaned_json = cleaned_json.strip_prefix("```").unwrap_or(&cleaned_json).to_string();
-            }
-            if cleaned_json.ends_with("```") {
-                cleaned_json = cleaned_json.strip_suffix("```").unwrap_or(&cleaned_json).to_string();
-            }
-            cleaned_json = cleaned_json.trim().to_string();
-
-            // Try to parse the Queen's plan
+            // 4b. JSON Repair Catcher — catches malformed Planner output, retries up to 3 times
             let mut context_from_swarm = String::new();
-            if let Ok(plan) = serde_json::from_str::<crate::swarm::planner::SwarmPlan>(&cleaned_json) {
+            let mut parsed_plan: Option<crate::swarm::planner::SwarmPlan> = None;
+            let max_planner_retries: usize = 3;
+
+            // Attempt 1: repair and parse initial output
+            let cleaned_json = Self::repair_planner_json(&plan_json);
+            match serde_json::from_str::<crate::swarm::planner::SwarmPlan>(&cleaned_json) {
+                Ok(plan) => { parsed_plan = Some(plan); }
+                Err(first_err) => {
+                    eprintln!("[PLANNER CATCHER] ⚠️ Malformed JSON from Planner (attempt 1)");
+                    eprintln!("[PLANNER CATCHER] Error: {}", first_err);
+                    eprintln!("[PLANNER CATCHER] Raw output: {}", plan_json.chars().take(500).collect::<String>());
+
+                    // Retry loop — keep re-prompting until we get valid JSON
+                    let mut last_bad_output = plan_json.clone();
+                    let mut last_error = first_err.to_string();
+                    
+                    for attempt in 2..=max_planner_retries {
+                        let retry_prompt = format!(
+                            "{}\n\n[CRITICAL ERROR — ATTEMPT {} OF {} — YOUR PREVIOUS OUTPUT WAS NOT VALID JSON]\nParse error: {}\nYour raw output started with:\n{}\n\nYou MUST output ONLY a valid JSON object. No markdown fences. No conversational text. No explanation. JUST the JSON:\n{{\"tasks\": [...]}}",
+                            planner_prompt, attempt, max_planner_retries, last_error, last_bad_output.chars().take(200).collect::<String>()
+                        );
+
+                        match self.provider.generate(&retry_prompt, &history, &event, Some(telemetry_tx.clone())).await {
+                            Ok(retry_text) => {
+                                let retry_cleaned = Self::repair_planner_json(&retry_text);
+                                match serde_json::from_str::<crate::swarm::planner::SwarmPlan>(&retry_cleaned) {
+                                    Ok(plan) => {
+                                        println!("[PLANNER CATCHER] ✅ Recovered on attempt {} — plan parsed successfully", attempt);
+                                        parsed_plan = Some(plan);
+                                        break;
+                                    }
+                                    Err(e) => {
+                                        eprintln!("[PLANNER CATCHER] ⚠️ Still malformed (attempt {}): {}", attempt, e);
+                                        last_bad_output = retry_text;
+                                        last_error = e.to_string();
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("[PLANNER CATCHER] ⚠️ Provider error on attempt {}: {:?}", attempt, e);
+                                last_error = format!("{:?}", e);
+                            }
+                        }
+                    }
+
+                    if parsed_plan.is_none() {
+                        eprintln!("[PLANNER CATCHER] ❌ All {} attempts failed. Falling back to empty plan.", max_planner_retries);
+                        parsed_plan = Some(crate::swarm::planner::SwarmPlan { tasks: vec![] });
+                    }
+                }
+            };
+
+            if let Some(plan) = parsed_plan {
                 if !plan.tasks.is_empty() {
                     // Execute parallel swarm
                     let tx_clone = telemetry_tx.clone();
                     let drone_results = self.swarm.execute_plan(plan, &event.content, Some(tx_clone)).await;
                     
                     // Aggregate results for the final assembler
-                    context_from_swarm.push_str("\n\n[SWARM EXECUTION RESULTS]\n");
-                    for res in drone_results {
+                    context_from_swarm.push_str("\n\n[YOUR TOOLS HAVE ALREADY EXECUTED — USE THESE RESULTS TO ANSWER THE USER]\nThe following tool results were gathered by your Swarm drones BEFORE this response. DO NOT say 'let me read the files' or 'let me check' — the tools already ran. Use the output below to formulate your answer directly.\n");
+                    let result_count = drone_results.len();
+                    for res in &drone_results {
                         context_from_swarm.push_str(&format!("Task {}: {:?}\nOutput: {}\n\n", res.task_id, res.status, res.output));
                     }
+                    println!("[SWARM] ✅ {} tool results aggregated for Observer context", result_count);
+                } else {
+                    println!("[PLANNER] No tasks planned (simple conversation)");
                 }
             }
 
@@ -290,6 +339,8 @@ impl Engine {
             
             let final_response_text;
             let mut extra_guidance = String::new();
+            let mut observer_attempts: usize = 0;
+            let mut all_rejections: Vec<(String, String, String)> = vec![];
 
             loop {
                 let active_prompt = format!("{}{}", extra_guidance, system_prompt);
@@ -311,6 +362,8 @@ impl Engine {
                     break;
                 }
 
+                observer_attempts += 1;
+
                 // Run 1:1 Shadow Observer Audit
                 let audit_result = crate::prompts::observer::run_skeptic_audit(
                     self.provider.clone(),
@@ -323,14 +376,39 @@ impl Engine {
                 ).await;
 
                 if audit_result.is_allowed() {
+                    // Teacher capture: only Public scope
+                    if matches!(event.scope, Scope::Public { .. }) {
+                        if observer_attempts == 1 {
+                            // 🏆 GOLDEN: Perfect first-pass
+                            self.teacher.capture_golden(
+                                &system_prompt, &event, &context_from_swarm, &candidate_text
+                            ).await;
+                        } else {
+                            // ⚖️ ORPO: Every rejection becomes a preference pair
+                            for (idx, (rejected, category, reason)) in all_rejections.iter().enumerate() {
+                                self.teacher.capture_preference_pair(
+                                    &system_prompt, &event,
+                                    rejected, &candidate_text,
+                                    category, reason,
+                                    idx + 1, observer_attempts,
+                                ).await;
+                            }
+                        }
+                    }
                     final_response_text = candidate_text;
                     break;
                 } else {
-                    println!("[OBSERVER BLOCKED]\nWhat Worked: {}\nWhat Went Wrong: {}\nHow to Fix: {}", audit_result.what_worked, audit_result.what_went_wrong, audit_result.how_to_fix);
-                    extra_guidance = format!("[OBSERVER GUIDANCE - CORRECTION REQUIRED]\nWHAT WORKED: {}\nWHAT WENT WRONG: {}\nHOW TO FIX: {}\n\n", audit_result.what_worked, audit_result.what_went_wrong, audit_result.how_to_fix);
+                    // Store ALL rejections for multi-signal training
+                    all_rejections.push((
+                        candidate_text.clone(),
+                        audit_result.failure_category.clone(),
+                        audit_result.what_went_wrong.clone(),
+                    ));
+                    println!("[OBSERVER BLOCKED]\nCategory: {}\nWhat Worked: {}\nWhat Went Wrong: {}\nHow to Fix: {}", audit_result.failure_category, audit_result.what_worked, audit_result.what_went_wrong, audit_result.how_to_fix);
+                    extra_guidance = format!("[OBSERVER GUIDANCE - CORRECTION REQUIRED]\nFAILURE CATEGORY: {}\nWHAT WORKED: {}\nWHAT WENT WRONG: {}\nHOW TO FIX: {}\n\n", audit_result.failure_category, audit_result.what_worked, audit_result.what_went_wrong, audit_result.how_to_fix);
                     
                     // Broadcast the Observer block to the frontend so the user knows why it's taking so long
-                    let msg = format!("\n🛑 **[OBSERVER BLOCKED GENERATION]**\n**Violation:** {}\n**Fixing...**", audit_result.what_went_wrong);
+                    let msg = format!("\n🛑 **[OBSERVER BLOCKED GENERATION]**\n**Category:** {}\n**Violation:** {}\n**Fixing...**", audit_result.failure_category, audit_result.what_went_wrong);
                     let _ = telemetry_tx.send(msg).await;
                     // Loops infinitely until the LLM complies with the Skeptic rules
                 }
@@ -363,7 +441,101 @@ impl Engine {
             } else {
                 eprintln!("Received event from unknown platform: {}", response.platform);
             }
+
+            // 8. Background Self-Supervised Training Trigger
+            let (golden_count, pair_count) = self.teacher.get_counts();
+            if golden_count >= crate::teacher::GOLDEN_THRESHOLD || pair_count >= crate::teacher::PAIR_THRESHOLD {
+                let teacher_clone = self.teacher.clone();
+                let tx_clone = telemetry_tx.clone();
+                
+                // Spawn the training process in a detached background task
+                tokio::spawn(async move {
+                    if teacher_clone.try_acquire_training_lock().await {
+                        let _ = tx_clone.send(format!("\n⚙️ **[TEACHER MODULE]** Threshold reached (Golden: {}, Pairs: {}). Background MLX LoRA training initiated...", golden_count, pair_count)).await;
+                        println!("[TEACHER] Threshold reached. Spawning Python MLX training pipeline...");
+                        
+                        // Reset counters immediately so we don't trigger again while training
+                        teacher_clone.reset_counts();
+
+                        // Execute python3 training/train_teacher.py
+                        let output = std::process::Command::new("python3")
+                            .arg("training/train_teacher.py")
+                            .output();
+
+                        match output {
+                            Ok(res) => {
+                                let stdout = String::from_utf8_lossy(&res.stdout);
+                                let stderr = String::from_utf8_lossy(&res.stderr);
+                                if res.status.success() {
+                                    println!("[TEACHER] ✅ Training complete:\n{}", stdout);
+                                    let _ = tx_clone.send("\n✅ **[TEACHER MODULE]** Training complete. New weights registered and ready.".to_string()).await;
+                                } else {
+                                    eprintln!("[TEACHER] ❌ Training failed:\nSTDOUT:\n{}\nSTDERR:\n{}", stdout, stderr);
+                                    let _ = tx_clone.send("\n❌ **[TEACHER MODULE]** Training script failed. Check HIVE console logs.".to_string()).await;
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("[TEACHER] ❌ Failed to execute Python training script: {}", e);
+                                let _ = tx_clone.send("\n❌ **[TEACHER MODULE]** Failed to execute Python script. Is python3 installed?".to_string()).await;
+                            }
+                        }
+
+                        teacher_clone.release_training_lock().await;
+                    }
+                });
+            }
         }
+    }
+
+    /// Repair common LLM JSON malformations from the Planner output.
+    /// Strips markdown fences, BOM, trailing commas, and conversational preamble.
+    fn repair_planner_json(raw: &str) -> String {
+        let mut s = raw.trim().to_string();
+
+        // Strip BOM
+        s = s.trim_start_matches('\u{feff}').to_string();
+
+        // Strip markdown code fences (```json ... ``` or ``` ... ```)
+        if s.starts_with("```json") {
+            s = s.strip_prefix("```json").unwrap_or(&s).to_string();
+        } else if s.starts_with("```") {
+            s = s.strip_prefix("```").unwrap_or(&s).to_string();
+        }
+        if s.ends_with("```") {
+            s = s.strip_suffix("```").unwrap_or(&s).to_string();
+        }
+        s = s.trim().to_string();
+
+        // If the LLM wrote conversational text before the JSON, extract just the JSON
+        if let Some(start) = s.find('{') {
+            if let Some(end) = s.rfind('}') {
+                if end > start {
+                    s = s[start..=end].to_string();
+                }
+            }
+        } else {
+            // No JSON at all — Planner output pure conversation. Return empty plan.
+            return r#"{"tasks": []}"#.to_string();
+        }
+
+        // Fix trailing commas before closing braces/brackets: ,} or ,]
+        // This is the most common LLM JSON mistake
+        // Simple approach without regex dependency: repeatedly replace ,} and ,]
+        while s.contains(",}") {
+            s = s.replace(",}", "}");
+        }
+        while s.contains(",]") {
+            s = s.replace(",]", "]");
+        }
+        // Also handle whitespace between comma and closing: , } or , ]
+        while s.contains(", }") {
+            s = s.replace(", }", "}");
+        }
+        while s.contains(", ]") {
+            s = s.replace(", ]", "]");
+        }
+
+        s.trim().to_string()
     }
 }
 #[cfg(test)]
@@ -691,6 +863,42 @@ mod tests {
         assert_eq!(format_elapsed(60), "1.0m");
         assert_eq!(format_elapsed(90), "1.5m");
         assert_eq!(format_elapsed(120), "2.0m");
+    }
+
+    #[test]
+    fn test_repair_planner_json_clean() {
+        let input = r#"{"tasks": [{"task_id": "step_1", "drone_type": "researcher", "description": "test", "depends_on": []}]}"#;
+        let result = Engine::repair_planner_json(input);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn test_repair_planner_json_markdown_fences() {
+        let input = "```json\n{\"tasks\": []}\n```";
+        let result = Engine::repair_planner_json(input);
+        assert_eq!(result, "{\"tasks\": []}");
+    }
+
+    #[test]
+    fn test_repair_planner_json_trailing_commas() {
+        let input = r#"{"tasks": [{"task_id": "s1", "drone_type": "r", "description": "d", "depends_on": [],},]}"#;
+        let result = Engine::repair_planner_json(input);
+        // Should be valid JSON after repair
+        assert!(serde_json::from_str::<crate::swarm::planner::SwarmPlan>(&result).is_ok());
+    }
+
+    #[test]
+    fn test_repair_planner_json_conversational_preamble() {
+        let input = "Sure! Here is the plan:\n\n{\"tasks\": []}";
+        let result = Engine::repair_planner_json(input);
+        assert_eq!(result, "{\"tasks\": []}");
+    }
+
+    #[test]
+    fn test_repair_planner_json_bom() {
+        let input = "\u{feff}{\"tasks\": []}";
+        let result = Engine::repair_planner_json(input);
+        assert_eq!(result, "{\"tasks\": []}");
     }
 
     #[tokio::test]

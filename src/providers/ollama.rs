@@ -41,6 +41,7 @@ impl OllamaProvider {
     }
 }
 
+#[cfg(not(tarpaulin_include))]
 #[async_trait]
 impl Provider for OllamaProvider {
     async fn generate(

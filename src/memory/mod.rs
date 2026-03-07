@@ -261,4 +261,54 @@ mod tests {
         // Verify working directory was unlinked
         assert!(!test_dir.exists());
     }
+
+    #[tokio::test]
+    async fn test_roster_speaker_reorder() {
+        let store = MemoryStore::default();
+        let s = Scope::Public { channel_id: "reorder".into(), user_id: "u".into() };
+        store.add_event(Event { platform: "t".into(), scope: s.clone(), author_name: "Alice".into(), author_id: "a".into(), content: "1".into() }).await;
+        store.add_event(Event { platform: "t".into(), scope: s.clone(), author_name: "Bob".into(), author_id: "b".into(), content: "2".into() }).await;
+        store.add_event(Event { platform: "t".into(), scope: s.clone(), author_name: "Alice".into(), author_id: "a".into(), content: "3".into() }).await;
+        assert_eq!(store.get_roster("reorder").await.unwrap(), "Bob, Alice");
+    }
+
+    #[tokio::test]
+    async fn test_roster_overflow() {
+        let store = MemoryStore::default();
+        let s = Scope::Public { channel_id: "of".into(), user_id: "u".into() };
+        for i in 0..11 {
+            store.add_event(Event { platform: "t".into(), scope: s.clone(), author_name: format!("U{}", i), author_id: format!("{}", i), content: "m".into() }).await;
+        }
+        let r = store.get_roster("of").await.unwrap();
+        assert!(!r.contains("U0"));
+        assert!(r.contains("U10"));
+    }
+
+    #[tokio::test]
+    async fn test_roster_none_for_missing() {
+        let store = MemoryStore::default();
+        assert_eq!(store.get_roster("nope").await, None);
+    }
+
+    #[tokio::test]
+    async fn test_private_no_roster() {
+        let store = MemoryStore::default();
+        let s = Scope::Private { user_id: "dm".into() };
+        store.add_event(Event { platform: "t".into(), scope: s, author_name: "A".into(), author_id: "a".into(), content: "m".into() }).await;
+        assert_eq!(store.get_roster("dm").await, None);
+    }
+
+    #[tokio::test]
+    async fn test_init() {
+        let store = MemoryStore::default();
+        store.init().await;
+    }
+
+    #[tokio::test]
+    async fn test_autosave_under_limit() {
+        let store = MemoryStore::default();
+        let s = Scope::Public { channel_id: "t".into(), user_id: "u".into() };
+        store.add_event(Event { platform: "t".into(), scope: s.clone(), author_name: "U".into(), author_id: "u".into(), content: "Small".into() }).await;
+        assert!(store.check_and_trigger_autosave(&s).await.is_none());
+    }
 }

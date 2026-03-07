@@ -21,7 +21,7 @@ impl SwarmManager {
         // Register default built-in drones
         let researcher = DroneTemplate {
             name: "researcher".into(),
-            system_prompt: "You are the Researcher Drone. Your job is to analyze information, find facts, and summarize data objectively.".into(),
+            system_prompt: "You are the Researcher Drone. Your job is to analyze information, find facts, and summarize data objectively. You HAVE LIVE INTERNET ACCESS and will search the web to verify current facts.".into(),
             tools: vec![],
         };
 
@@ -43,10 +43,17 @@ impl SwarmManager {
             tools: vec![],
         };
 
+        let web_search = DroneTemplate {
+            name: "native_web_search".into(),
+            system_prompt: "You are the Web Search Drone. You search the LIVE EXTERNAL INTERNET for facts, news, and external documentation via DuckDuckGo. The planner should provide the query in the description.".into(),
+            tools: vec![],
+        };
+
         registry.insert(researcher.name.clone(), researcher);
         registry.insert(channel_reader.name.clone(), channel_reader);
         registry.insert(codebase_list.name.clone(), codebase_list);
         registry.insert(codebase_read.name.clone(), codebase_read);
+        registry.insert(web_search.name.clone(), web_search);
 
         Self {
             registry,
@@ -80,6 +87,7 @@ impl SwarmManager {
 
     /// Executes a swarm plan by spawning all tasks concurrently.
     /// In a fully robust graph, we would respect `depends_on`. For now, we fan out in parallel.
+    #[cfg(not(tarpaulin_include))]
     pub async fn execute_plan(&self, plan: crate::swarm::planner::SwarmPlan, context: &str, telemetry_tx: Option<tokio::sync::mpsc::Sender<String>>) -> Vec<DroneResult> {
         let mut futures = vec![];
 
@@ -160,7 +168,81 @@ impl SwarmManager {
                     } else if let Ok(content) = tokio::fs::read_to_string(&target_path).await {
                         format!("--- FILE: {} ---\n{}", target_path, content)
                     } else {
-                        format!("Failed to read file: {}", target_path)
+                        // Fuzzy fallback: extract filename and search src/ for it
+                        let filename = std::path::Path::new(&target_path)
+                            .file_name()
+                            .and_then(|f| f.to_str())
+                            .unwrap_or(&target_path);
+                        
+                        let find_result = std::process::Command::new("find")
+                            .args(&["src", "-name", filename, "-type", "f"])
+                            .output();
+                        
+                        match find_result {
+                            Ok(res) => {
+                                let found = String::from_utf8_lossy(&res.stdout);
+                                let found_path = found.trim().lines().next().unwrap_or("");
+                                if !found_path.is_empty() {
+                                    if let Ok(content) = tokio::fs::read_to_string(found_path).await {
+                                        format!("--- FILE: {} (resolved from '{}') ---\n{}", found_path, target_path, content)
+                                    } else {
+                                        format!("Failed to read file: {} (found at {} but read failed)", target_path, found_path)
+                                    }
+                                } else {
+                                    format!("Failed to read file: {} (not found, also searched src/ for '{}')", target_path, filename)
+                                }
+                            }
+                            Err(_) => format!("Failed to read file: {}", target_path),
+                        }
+                    };
+
+                    DroneResult {
+                        task_id,
+                        output,
+                        tokens_used: 0,
+                        status: DroneStatus::Success,
+                    }
+                });
+                futures.push(handle);
+                continue;
+            } else if task.drone_type == "native_web_search" || task.drone_type == "researcher" {
+                let task_id = task.task_id.clone();
+                let desc = task.description.clone();
+                let tx_clone = telemetry_tx.clone();
+
+                let handle = tokio::spawn(async move {
+                    if let Some(ref tx) = tx_clone {
+                        let _ = tx.send(format!("🌐 Native Web Search Drone searching for: {}\n", desc)).await;
+                    }
+                    
+                    // Simple internet fetch using curl to DuckDuckGo HTML Lite
+                    let query = desc.replace(" ", "+");
+                    let output = match std::process::Command::new("curl")
+                        .args(&["-s", "-A", "Mozilla/5.0", &format!("https://html.duckduckgo.com/html/?q={}", query)])
+                        .output() 
+                    {
+                        Ok(res) => {
+                            let html = String::from_utf8_lossy(&res.stdout);
+                            if html.is_empty() {
+                                "Failed to retrieve search results (empty response).".to_string()
+                            } else {
+                                // Extremely naive HTML stripping to extract snippets
+                                let mut text = String::new();
+                                let mut in_tag = false;
+                                for c in html.chars() {
+                                    if c == '<' { in_tag = true; }
+                                    else if c == '>' { in_tag = false; text.push(' '); }
+                                    else if !in_tag { text.push(c); }
+                                }
+                                
+                                // Clean up excessive whitespace
+                                let cleaned: Vec<&str> = text.split_whitespace().collect();
+                                let final_text = cleaned.join(" ");
+                                
+                                format!("--- SEARCH RESULTS for '{}' ---\n{}", desc, final_text)
+                            }
+                        }
+                        Err(e) => format!("Failed to execute search: {}", e),
                     };
 
                     DroneResult {

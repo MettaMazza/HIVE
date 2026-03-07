@@ -24,3 +24,62 @@ impl SystemPromptBuilder {
         format!("{}\n\n{}\n\n{}", hud_string, kernel_string, identity_string)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_system_prompt_builder_assemble() {
+        let mem = Arc::new(MemoryStore::default());
+        let scope = Scope::Public { channel_id: "test".into(), user_id: "test".into() };
+        let prompt = SystemPromptBuilder::assemble(&scope, mem).await;
+        
+        // Should contain HUD, Kernel, and Identity sections
+        assert!(prompt.contains("Apis HUD"));
+        assert!(prompt.contains("Kernel Laws"));
+        assert!(prompt.contains("Identity Core"));
+    }
+
+    #[tokio::test]
+    async fn test_system_prompt_builder_private_scope() {
+        let mem = Arc::new(MemoryStore::default());
+        let scope = Scope::Private { user_id: "dm_user".into() };
+        let prompt = SystemPromptBuilder::assemble(&scope, mem).await;
+        
+        assert!(prompt.contains("Private (User ID: dm_user)"));
+        assert!(prompt.contains("Kernel Laws"));
+    }
+
+    #[test]
+    fn test_format_hud_with_roster() {
+        let data = HudData {
+            timestamp: "2026-03-07T12:00:00Z".to_string(),
+            active_scope: "Public (Broadcast Channel: main)".to_string(),
+            working_memory_load: "500 / 256000".to_string(),
+            scratchpad_content: None,
+            room_roster: Some("Alice, Bob, Charlie".to_string()),
+        };
+        
+        let output = hud::format_hud(&data);
+        assert!(output.contains("Room Roster"));
+        assert!(output.contains("Alice, Bob, Charlie"));
+        assert!(!output.contains("Scratchpad"));
+    }
+
+    #[test]
+    fn test_format_hud_no_scratchpad_no_roster() {
+        let data = HudData {
+            timestamp: "2026-03-07T12:00:00Z".to_string(),
+            active_scope: "Private (User ID: u1)".to_string(),
+            working_memory_load: "0 / 256000".to_string(),
+            scratchpad_content: None,
+            room_roster: None,
+        };
+        
+        let output = hud::format_hud(&data);
+        assert!(output.contains("Private (User ID: u1)"));
+        assert!(!output.contains("Scratchpad"));
+        assert!(!output.contains("Current participants:"));
+    }
+}

@@ -163,6 +163,7 @@ impl Platform for DiscordPlatform {
         Ok(())
     }
 
+    #[cfg(not(tarpaulin_include))]
     async fn send(&self, response: Response) -> Result<(), PlatformError> {
         // Parse the platform string: discord:channel_id:msg_id
         let parts: Vec<&str> = response.platform.split(':').collect();

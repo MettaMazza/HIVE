@@ -7,6 +7,7 @@ mod platforms;
 pub mod prompts;
 mod providers;
 pub mod swarm;
+pub mod teacher;
 
 use std::sync::Arc;
 use tokio::io::AsyncBufRead;

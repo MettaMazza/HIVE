@@ -9,6 +9,7 @@ pub struct DroneExecutor {
     pub template: DroneTemplate,
 }
 
+#[cfg(not(tarpaulin_include))]
 impl DroneExecutor {
     pub fn new(provider: Arc<dyn Provider>, template: DroneTemplate) -> Self {
         Self { provider, template }

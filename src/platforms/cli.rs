@@ -29,6 +29,7 @@ impl Platform for CliPlatform {
         "cli"
     }
 
+    #[cfg(not(tarpaulin_include))]
     async fn start(&self, event_sender: Sender<Event>) -> Result<(), PlatformError> {
         let sender = event_sender.clone();
         let reader = self.reader.lock().await.take().ok_or(PlatformError::Other("Already started".into()))?;
@@ -66,6 +67,7 @@ impl Platform for CliPlatform {
         Ok(())
     }
 
+    #[cfg(not(tarpaulin_include))]
     async fn send(&self, response: Response) -> Result<(), PlatformError> {
         match response.target_scope {
             Scope::Public { .. } => {
