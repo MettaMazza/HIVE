@@ -158,9 +158,14 @@ impl SwarmManager {
                     if let Some(ref tx) = tx_clone {
                         let _ = tx.send(format!("🧠 Native Codebase Reader Drone reading: {}\n", desc)).await;
                     }
-                    // Extract the path from the end of the description
-                    let parts: Vec<&str> = desc.split_whitespace().collect();
-                    let target_path = parts.last().unwrap_or(&"").to_string();
+                    // Extract the path by looking for something that looks like a file path
+                    // Apis often writes: "Read the main engine module file (src/engine/mod.rs) to verify..."
+                    let target_path = desc
+                        .split_whitespace()
+                        .find(|s| s.contains("src/") || s.contains('/') || s.ends_with(".rs") || s.ends_with(".py") || s.ends_with(".toml"))
+                        .map(|s| s.trim_matches(|c| c == '(' || c == ')' || c == '\'' || c == '"' || c == '`'))
+                        .unwrap_or_else(|| desc.split_whitespace().last().unwrap_or(""))
+                        .to_string();
                     
                     // Basic sanity check to prevent arbitrary file reading outside cwd
                     let output = if target_path.contains("..") || target_path.starts_with('/') {
