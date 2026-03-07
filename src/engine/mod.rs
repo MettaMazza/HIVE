@@ -21,7 +21,7 @@ fn format_elapsed(elapsed_secs: u64) -> String {
 }
 
 use crate::swarm::SwarmManager;
-use crate::swarm::planner::PLANNER_SYSTEM_PROMPT;
+
 
 pub struct EngineBuilder {
     platforms: HashMap<String, Box<dyn Platform>>,
@@ -248,111 +248,32 @@ impl Engine {
                 }
             });
 
-            // 4. Swarm Planning Pass
+            // 4. Multi-Turn Agentic Action Loop
             let drone_list = self.swarm.get_available_drones_text();
-            let mut planner_prompt = crate::prompts::SystemPromptBuilder::assemble(&event.scope, self.memory.clone()).await;
-            planner_prompt.push_str("\n\n");
-            planner_prompt.push_str(&PLANNER_SYSTEM_PROMPT.replace("{available_drones}", &drone_list));
-            let plan_json = match self.provider.generate(&planner_prompt, &history, &event, Some(telemetry_tx.clone())).await {
-                Ok(text) => text,
-                Err(e) => {
-                    eprintln!("Planner Failed: {:?}", e);
-                    "{}".to_string() // Fallback to empty plan
-                }
-            };
+            let mut base_system_prompt = crate::prompts::SystemPromptBuilder::assemble(&event.scope, self.memory.clone()).await;
+            base_system_prompt.push_str("\n\n");
+            base_system_prompt.push_str(&crate::swarm::planner::REACT_AGENT_PROMPT.replace("{available_drones}", &drone_list));
             
-            // 4b. JSON Repair Catcher — catches malformed Planner output, retries up to 3 times
             let mut context_from_swarm = String::new();
-            let mut parsed_plan: Option<crate::swarm::planner::SwarmPlan> = None;
-            let max_planner_retries: usize = 3;
-
-            // Attempt 1: repair and parse initial output
-            let cleaned_json = Self::repair_planner_json(&plan_json);
-            match serde_json::from_str::<crate::swarm::planner::SwarmPlan>(&cleaned_json) {
-                Ok(plan) => { parsed_plan = Some(plan); }
-                Err(first_err) => {
-                    eprintln!("[PLANNER CATCHER] ⚠️ Malformed JSON from Planner (attempt 1)");
-                    eprintln!("[PLANNER CATCHER] Error: {}", first_err);
-                    eprintln!("[PLANNER CATCHER] Raw output: {}", plan_json.chars().take(500).collect::<String>());
-
-                    // Retry loop — keep re-prompting until we get valid JSON
-                    let mut last_bad_output = plan_json.clone();
-                    let mut last_error = first_err.to_string();
-                    
-                    for attempt in 2..=max_planner_retries {
-                        let retry_prompt = format!(
-                            "{}\n\n[CRITICAL ERROR — ATTEMPT {} OF {} — YOUR PREVIOUS OUTPUT WAS NOT VALID JSON]\nParse error: {}\nYour raw output started with:\n{}\n\nYou MUST output ONLY a valid JSON object. No markdown fences. No conversational text. No explanation. JUST the JSON:\n{{\"tasks\": [...]}}",
-                            planner_prompt, attempt, max_planner_retries, last_error, last_bad_output.chars().take(200).collect::<String>()
-                        );
-
-                        match self.provider.generate(&retry_prompt, &history, &event, Some(telemetry_tx.clone())).await {
-                            Ok(retry_text) => {
-                                let retry_cleaned = Self::repair_planner_json(&retry_text);
-                                match serde_json::from_str::<crate::swarm::planner::SwarmPlan>(&retry_cleaned) {
-                                    Ok(plan) => {
-                                        println!("[PLANNER CATCHER] ✅ Recovered on attempt {} — plan parsed successfully", attempt);
-                                        parsed_plan = Some(plan);
-                                        break;
-                                    }
-                                    Err(e) => {
-                                        eprintln!("[PLANNER CATCHER] ⚠️ Still malformed (attempt {}): {}", attempt, e);
-                                        last_bad_output = retry_text;
-                                        last_error = e.to_string();
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                eprintln!("[PLANNER CATCHER] ⚠️ Provider error on attempt {}: {:?}", attempt, e);
-                                last_error = format!("{:?}", e);
-                            }
-                        }
-                    }
-
-                    if parsed_plan.is_none() {
-                        eprintln!("[PLANNER CATCHER] ❌ All {} attempts failed. Falling back to empty plan.", max_planner_retries);
-                        parsed_plan = Some(crate::swarm::planner::SwarmPlan { tasks: vec![] });
-                    }
-                }
-            };
-
-            if let Some(plan) = parsed_plan {
-                if !plan.tasks.is_empty() {
-                    // Execute parallel swarm
-                    let tx_clone = telemetry_tx.clone();
-                    let drone_results = self.swarm.execute_plan(plan, &event.content, Some(tx_clone)).await;
-                    
-                    // Aggregate results for the final assembler
-                    context_from_swarm.push_str("\n\n[YOUR TOOLS HAVE ALREADY EXECUTED — USE THESE RESULTS TO ANSWER THE USER]\nThe following tool results were gathered by your Swarm drones BEFORE this response. DO NOT say 'let me read the files' or 'let me check' — the tools already ran. Use the output below to formulate your answer directly.\n");
-                    let result_count = drone_results.len();
-                    for res in &drone_results {
-                        context_from_swarm.push_str(&format!("Task {}: {:?}\nOutput: {}\n\n", res.task_id, res.status, res.output));
-                    }
-                    println!("[SWARM] ✅ {} tool results aggregated for Observer context", result_count);
-                } else {
-                    println!("[PLANNER] No tasks planned (simple conversation)");
-                }
-            }
-
-            // 5. Generate Final Apis Assembler Prompt & Call Provider
-            let system_prompt_base = crate::prompts::SystemPromptBuilder::assemble(&event.scope, self.memory.clone()).await;
-            let system_prompt = format!("{}{}", system_prompt_base, context_from_swarm);
-            
-            let final_response_text;
-            let mut extra_guidance = String::new();
-            let mut observer_attempts: usize = 0;
+            let mut final_response_text = String::new();
+            let max_agent_turns = 5;
+            let mut current_turn = 0;
+            let mut observer_attempts = 0;
             let mut all_rejections: Vec<(String, String, String)> = vec![];
+            let mut extra_observer_guidance = String::new();
 
-            loop {
-                let active_prompt = format!("{}{}", extra_guidance, system_prompt);
+            // The inner ReAct loop
+            while current_turn < max_agent_turns {
+                current_turn += 1;
                 
-                // DO NOT pass the telemetry_tx channel here.
-                // If we stream this generation, the user sees the response before the Observer even audits it.
-                // Telemetry is strictly for the Swarm Planner internal thoughts.
-                let candidate_text = match self.provider.generate(&active_prompt, &history, &event, None).await {
+                let active_prompt = format!("{}{}{}", extra_observer_guidance, base_system_prompt, context_from_swarm);
+                
+                // Call LLM for this turn
+                let candidate_text = match self.provider.generate(&active_prompt, &history, &event, if current_turn == 1 { Some(telemetry_tx.clone()) } else { None }).await {
                     Ok(text) => text,
                     Err(e) => {
-                        eprintln!("Provider Error: {:?}", e);
-                        format!("*System Error:* Something went wrong. ({})", e)
+                        eprintln!("[AGENT LOOP] Provider Error: {:?}", e);
+                        format!("*System Error:* Something went wrong connecting to the provider. ({})", e)
                     }
                 };
 
@@ -362,9 +283,35 @@ impl Engine {
                     break;
                 }
 
+                // Try to parse the LLM's output as a JSON tool command
+                let cleaned_json = Self::repair_planner_json(&candidate_text);
+                
+                if let Ok(plan) = serde_json::from_str::<crate::swarm::planner::SwarmPlan>(&cleaned_json) {
+                    // Valid JSON found -> This is a Tool Execution Turn
+                    if !plan.tasks.is_empty() {
+                        let tx_clone = telemetry_tx.clone();
+                        let drone_results = self.swarm.execute_plan(plan, &event.content, Some(tx_clone)).await;
+                        
+                        if context_from_swarm.is_empty() {
+                            context_from_swarm.push_str("\n\n[YOUR TOOLS HAVE EXECUTED — USE THESE RESULTS FOR YOUR NEXT TURN]\n");
+                        }
+                        
+                        let result_count = drone_results.len();
+                        for res in &drone_results {
+                            context_from_swarm.push_str(&format!("Turn {} - Task {}: {:?}\nOutput: {}\n\n", current_turn, res.task_id, res.status, res.output));
+                        }
+                        println!("[AGENT LOOP] 🔄 Turn {} executed {} tools. Looping...", current_turn, result_count);
+                        
+                        // Clear observer guidance if tools were used, to reset the state
+                        extra_observer_guidance.clear();
+                        continue; // Loop back and let the LLM see the new context
+                    }
+                }
+                
+                // If it wasn't valid JSON, or tasks were empty, we treat it as the FINAL CONVERSATIONAL ANSWER
+                // This starts the Observer Audit Phase for the final answer
                 observer_attempts += 1;
 
-                // Run 1:1 Shadow Observer Audit
                 let audit_result = crate::prompts::observer::run_skeptic_audit(
                     self.provider.clone(),
                     &self.capabilities,
@@ -379,15 +326,15 @@ impl Engine {
                     // Teacher capture: only Public scope
                     if matches!(event.scope, Scope::Public { .. }) {
                         if observer_attempts == 1 {
-                            // 🏆 GOLDEN: Perfect first-pass
+                            // 🏆 GOLDEN: Perfect first-pass Final Answer
                             self.teacher.capture_golden(
-                                &system_prompt, &event, &context_from_swarm, &candidate_text
+                                &active_prompt, &event, &context_from_swarm, &candidate_text
                             ).await;
                         } else {
                             // ⚖️ ORPO: Every rejection becomes a preference pair
                             for (idx, (rejected, category, reason)) in all_rejections.iter().enumerate() {
                                 self.teacher.capture_preference_pair(
-                                    &system_prompt, &event,
+                                    &active_prompt, &event,
                                     rejected, &candidate_text,
                                     category, reason,
                                     idx + 1, observer_attempts,
@@ -395,6 +342,7 @@ impl Engine {
                             }
                         }
                     }
+                    println!("[AGENT LOOP] ✅ Final answer approved by Observer on turn {}.", current_turn);
                     final_response_text = candidate_text;
                     break;
                 } else {
@@ -405,13 +353,19 @@ impl Engine {
                         audit_result.what_went_wrong.clone(),
                     ));
                     println!("[OBSERVER BLOCKED]\nCategory: {}\nWhat Worked: {}\nWhat Went Wrong: {}\nHow to Fix: {}", audit_result.failure_category, audit_result.what_worked, audit_result.what_went_wrong, audit_result.how_to_fix);
-                    extra_guidance = format!("[OBSERVER GUIDANCE - CORRECTION REQUIRED]\nFAILURE CATEGORY: {}\nWHAT WORKED: {}\nWHAT WENT WRONG: {}\nHOW TO FIX: {}\n\n", audit_result.failure_category, audit_result.what_worked, audit_result.what_went_wrong, audit_result.how_to_fix);
+                    extra_observer_guidance = format!("[OBSERVER GUIDANCE - CORRECTION REQUIRED]\nFAILURE CATEGORY: {}\nWHAT WORKED: {}\nWHAT WENT WRONG: {}\nHOW TO FIX: {}\n\n", audit_result.failure_category, audit_result.what_worked, audit_result.what_went_wrong, audit_result.how_to_fix);
                     
-                    // Broadcast the Observer block to the frontend so the user knows why it's taking so long
+                    // Broadcast the Observer block to the frontend
                     let msg = format!("\n🛑 **[OBSERVER BLOCKED GENERATION]**\n**Category:** {}\n**Violation:** {}\n**Fixing...**", audit_result.failure_category, audit_result.what_went_wrong);
                     let _ = telemetry_tx.send(msg).await;
-                    // Loops infinitely until the LLM complies with the Skeptic rules
+                    
+                    // The loop continues, sending the Observer feedback back to the Agent
+                    // The Agent can now choose to use MORE tools to fix its issue, or just rewrite the text
                 }
+            }
+
+            if final_response_text.is_empty() {
+                final_response_text = "[System Error] Agent loop exhausted max turns (5) without producing a final valid answer.".to_string();
             }
 
             let response_text = final_response_text;
