@@ -122,10 +122,14 @@ impl Provider for OllamaProvider {
                         if let Some(content) = msg.get("content").and_then(|v| v.as_str()) {
                             full_response.push_str(content);
                             
-                            // Stream all content directly as telemetry
+                            // Stream all content directly as telemetry, UNLESS it's the raw JSON task
                             if let Some(ref tx) = telemetry_tx {
                                 if !content.is_empty() {
-                                    let _ = tx.send(content.to_string()).await;
+                                    // Extremely simple heuristic: don't stream if it looks like the start of our JSON block
+                                    // The frontend doesn't need to see the raw JSON array being typed out
+                                    if !content.trim_start().starts_with("{") && !content.trim_start().starts_with("```") && !content.trim_start().starts_with("\"tasks") {
+                                        let _ = tx.send(content.to_string()).await;
+                                    }
                                 }
                             }
                         }

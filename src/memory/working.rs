@@ -231,7 +231,6 @@ mod tests {
     #[tokio::test]
     async fn test_working_memory_default() {
         let mem = WorkingMemory::default();
-        let scope = Scope::Public { channel_id: "test".into(), user_id: "test".into() };
         // Verify default sets path to "memory" and limit to 256k
         assert_eq!(mem.get_memory_dir(), std::path::PathBuf::from("memory"));
         assert_eq!(mem.max_tokens(), 256000);

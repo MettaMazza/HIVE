@@ -26,6 +26,7 @@ pub struct EngineBuilder {
     provider: Option<Arc<dyn Provider>>,
     capabilities: AgentCapabilities,
     memory: MemoryStore,
+    swarm: Option<Arc<SwarmManager>>,
 }
 
 impl EngineBuilder {
@@ -35,6 +36,7 @@ impl EngineBuilder {
             provider: None,
             capabilities: AgentCapabilities::default(),
             memory: MemoryStore::new(None),
+            swarm: None,
         }
     }
 
@@ -54,8 +56,15 @@ impl EngineBuilder {
     }
 
     /// Injects a custom testing MemoryStore instead of the default global `memory/` path
+    #[cfg(test)]
     pub fn with_memory(mut self, mem: MemoryStore) -> Self {
         self.memory = mem;
+        self
+    }
+    
+    /// Injects a pre-configured SwarmManager (e.g., dynamically built native drones)
+    pub fn with_swarm(mut self, swarm: Arc<SwarmManager>) -> Self {
+        self.swarm = Some(swarm);
         self
     }
     
@@ -65,8 +74,10 @@ impl EngineBuilder {
         
         let memory = Arc::new(self.memory);
         
-        // Ensure the swarm receives the same Arc memory map as the Engine
-        let swarm = Arc::new(SwarmManager::new(provider.clone(), memory.clone()));
+        let swarm = match self.swarm {
+            Some(s) => s,
+            None => Arc::new(SwarmManager::new(provider.clone(), memory.clone())),
+        };
 
         Ok(Engine {
             platforms: Arc::new(self.platforms),
@@ -132,6 +143,9 @@ impl Engine {
                     if let Some(platform) = self.platforms.get(response.platform.split(':').next().unwrap_or("")) {
                         let _ = platform.send(response).await;
                     }
+                    // Hard exit to prevent the platform from echoing this completion message back into a fresh timeline.
+                    println!("Memory wipe complete. HIVE Engine shutting down.");
+                    std::process::exit(0);
                 } else {
                     println!("[SECURITY INCIDENT] Unauthorized wipe attempt by UID: {}", event.author_id);
                     let response = Response {
@@ -143,9 +157,9 @@ impl Engine {
                     if let Some(platform) = self.platforms.get(response.platform.split(':').next().unwrap_or("")) {
                         let _ = platform.send(response).await;
                     }
+                    // Skip the rest of the LLM generation loop
+                    continue;
                 }
-                // Skip the rest of the LLM generation loop
-                continue;
             }
 
             // 1. Retrieve working history for this specific scope
@@ -230,7 +244,10 @@ impl Engine {
             });
 
             // 4. Swarm Planning Pass
-            let planner_prompt = PLANNER_SYSTEM_PROMPT.replace("{available_drones}", &self.swarm.get_available_drones_text());
+            let drone_list = self.swarm.get_available_drones_text();
+            let mut planner_prompt = crate::prompts::SystemPromptBuilder::assemble(&event.scope, self.memory.clone()).await;
+            planner_prompt.push_str("\n\n");
+            planner_prompt.push_str(&PLANNER_SYSTEM_PROMPT.replace("{available_drones}", &drone_list));
             let plan_json = match self.provider.generate(&planner_prompt, &history, &event, Some(telemetry_tx.clone())).await {
                 Ok(text) => text,
                 Err(e) => {
@@ -239,9 +256,21 @@ impl Engine {
                 }
             };
             
+            // Clean potential markdown blocks from the JSON
+            let mut cleaned_json = plan_json.trim().to_string();
+            if cleaned_json.starts_with("```json") {
+                cleaned_json = cleaned_json.strip_prefix("```json").unwrap_or(&cleaned_json).to_string();
+            } else if cleaned_json.starts_with("```") {
+                cleaned_json = cleaned_json.strip_prefix("```").unwrap_or(&cleaned_json).to_string();
+            }
+            if cleaned_json.ends_with("```") {
+                cleaned_json = cleaned_json.strip_suffix("```").unwrap_or(&cleaned_json).to_string();
+            }
+            cleaned_json = cleaned_json.trim().to_string();
+
             // Try to parse the Queen's plan
             let mut context_from_swarm = String::new();
-            if let Ok(plan) = serde_json::from_str::<crate::swarm::planner::SwarmPlan>(&plan_json) {
+            if let Ok(plan) = serde_json::from_str::<crate::swarm::planner::SwarmPlan>(&cleaned_json) {
                 if !plan.tasks.is_empty() {
                     // Execute parallel swarm
                     let tx_clone = telemetry_tx.clone();

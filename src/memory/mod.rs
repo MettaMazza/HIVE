@@ -20,7 +20,6 @@ use tokio::sync::RwLock;
 /// The Unified 5-Tier Memory Store.
 #[derive(Debug, Clone)]
 pub struct MemoryStore {
-    memory_dir: PathBuf,
     pub working: WorkingMemory,
     pub timeline: TimelineManager,
     pub synaptic: Neo4jGraph,
@@ -46,7 +45,6 @@ impl MemoryStore {
         let scratch = Scratchpad::new(Some(memory_dir.clone()));
 
         Self {
-            memory_dir,
             working,
             timeline,
             synaptic,
@@ -149,11 +147,10 @@ impl MemoryStore {
     pub async fn wipe_all(&self) {
         // 1. Wipe Active RAM State
         self.working.clear_all().await;
-        // self.timeline.clear_all().await; // Timeline in RAM is minimal/irrelevant, but could be added
-        // self.scratch.clear_all().await;  // Real-time scratch could be cleared here
+        self.rosters.write().await.clear();
 
         // 2. Wipe Physical Hard Drive Backups
-        let dir = self.working.get_memory_dir(); // Since working and timeline share the base_dir
+        let dir = self.working.get_memory_dir();
         let _ = tokio::fs::remove_dir_all(dir).await;
         
         println!("⚠️ FACTORY RESET EXECUTED: All persistent memory has been wiped.");

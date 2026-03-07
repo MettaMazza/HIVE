@@ -83,7 +83,6 @@ mod tests {
     use super::*;
     use crate::models::scope::Scope;
     use crate::memory::MemoryStore;
-    use crate::memory::Scratchpad;
     use std::sync::Arc;
 
 

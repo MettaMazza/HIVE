@@ -59,6 +59,12 @@ impl SwarmManager {
         self.registry.insert(template.name.clone(), template);
     }
 
+    /// Exposes all registered drone names so they can be securely injected into 
+    /// the AgentCapabilities matrix at engine boot.
+    pub fn get_drone_names(&self) -> Vec<String> {
+        self.registry.keys().cloned().collect()
+    }
+
     pub fn get_template(&self, name: &str) -> Option<DroneTemplate> {
         self.registry.get(name).cloned()
     }
@@ -94,18 +100,15 @@ impl SwarmManager {
                         let _ = tx.send(format!("🧠 Native Channel Reader Drone executing...\n")).await;
                     }
                     // Extract channel_id if possible, or we could just pass `Event` down the SwarmManager tree.
-                    // To keep it simple, we'll try to extract a channel_id from the description (e.g. "Read channel: 1234")
-                    // If none, we fallback to a standard error.
-                    let mut output = String::new();
-                    let parts: Vec<&str> = desc.split_whitespace().collect();
-                    let target_id = parts.last().unwrap_or(&"").to_string();
-                    
+                    // To keep it simple, we'll try to extract target from desc 
+                    let target_id = desc.split_whitespace().last().unwrap_or(&"").to_string();
                     let pub_scope = Scope::Public { channel_id: target_id.clone(), user_id: "system".into() };
-                    if let Ok(timeline_data) = mem_clone.timeline.read_timeline(&pub_scope).await {
-                        output = String::from_utf8_lossy(&timeline_data).to_string();
+
+                    let output = if let Ok(timeline_data) = mem_clone.timeline.read_timeline(&pub_scope).await {
+                        String::from_utf8_lossy(&timeline_data).to_string()
                     } else {
-                        output = "Failed to read timeline for channel.".to_string();
-                    }
+                        "Failed to read timeline for channel.".to_string()
+                    };
                     
                     DroneResult {
                         task_id,
