@@ -294,7 +294,10 @@ impl Engine {
             loop {
                 let active_prompt = format!("{}{}", extra_guidance, system_prompt);
                 
-                let candidate_text = match self.provider.generate(&active_prompt, &history, &event, Some(telemetry_tx.clone())).await {
+                // DO NOT pass the telemetry_tx channel here.
+                // If we stream this generation, the user sees the response before the Observer even audits it.
+                // Telemetry is strictly for the Swarm Planner internal thoughts.
+                let candidate_text = match self.provider.generate(&active_prompt, &history, &event, None).await {
                     Ok(text) => text,
                     Err(e) => {
                         eprintln!("Provider Error: {:?}", e);
