@@ -193,9 +193,6 @@ impl Platform for DiscordPlatform {
                     .edit_message(http, serenity::model::id::MessageId::new(thinking_msg_id), edit_builder)
                     .await;
             }
-            
-            // Also trigger the native typing indicator
-            let _ = channel.broadcast_typing(http).await;
         } else {
             // Check if this is responding to a slash command "discord_interaction" platform ID
             if response.platform.starts_with("discord_interaction:") {
@@ -207,6 +204,10 @@ impl Platform for DiscordPlatform {
                 let _ = channel.send_message(http, builder).await;
             }
         }
+        
+        // Always trigger the native typing indicator on any engine frame
+        // This ensures the bot looks busy even during silent validation loops
+        let _ = channel.broadcast_typing(http).await;
 
         Ok(())
     }

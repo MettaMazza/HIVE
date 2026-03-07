@@ -328,6 +328,10 @@ impl Engine {
                 } else {
                     println!("[OBSERVER BLOCKED]\nWhat Worked: {}\nWhat Went Wrong: {}\nHow to Fix: {}", audit_result.what_worked, audit_result.what_went_wrong, audit_result.how_to_fix);
                     extra_guidance = format!("[OBSERVER GUIDANCE - CORRECTION REQUIRED]\nWHAT WORKED: {}\nWHAT WENT WRONG: {}\nHOW TO FIX: {}\n\n", audit_result.what_worked, audit_result.what_went_wrong, audit_result.how_to_fix);
+                    
+                    // Broadcast the Observer block to the frontend so the user knows why it's taking so long
+                    let msg = format!("\n🛑 **[OBSERVER BLOCKED GENERATION]**\n**Violation:** {}\n**Fixing...**", audit_result.what_went_wrong);
+                    let _ = telemetry_tx.send(msg).await;
                     // Loops infinitely until the LLM complies with the Skeptic rules
                 }
             }
