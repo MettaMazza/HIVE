@@ -74,7 +74,7 @@ impl SwarmManager {
 
     /// Executes a swarm plan by spawning all tasks concurrently.
     /// In a fully robust graph, we would respect `depends_on`. For now, we fan out in parallel.
-    pub async fn execute_plan(&self, plan: crate::swarm::planner::SwarmPlan, context: &str) -> Vec<DroneResult> {
+    pub async fn execute_plan(&self, plan: crate::swarm::planner::SwarmPlan, context: &str, telemetry_tx: Option<tokio::sync::mpsc::Sender<String>>) -> Vec<DroneResult> {
         let mut futures = vec![];
 
         for task in plan.tasks {
@@ -88,7 +88,11 @@ impl SwarmManager {
                 // But generally the planner executes on the current Context Event anyway.
                 // We'll parse the description or just default read the timeline logic.
                 
+                let tx_clone = telemetry_tx.clone();
                 let handle = tokio::spawn(async move {
+                    if let Some(ref tx) = tx_clone {
+                        let _ = tx.send(format!("🧠 Native Channel Reader Drone executing...\n")).await;
+                    }
                     // Extract channel_id if possible, or we could just pass `Event` down the SwarmManager tree.
                     // To keep it simple, we'll try to extract a channel_id from the description (e.g. "Read channel: 1234")
                     // If none, we fallback to a standard error.
@@ -114,7 +118,11 @@ impl SwarmManager {
                 continue;
             } else if task.drone_type == "native_codebase_list" {
                 let task_id = task.task_id.clone();
+                let tx_clone = telemetry_tx.clone();
                 let handle = tokio::spawn(async move {
+                    if let Some(ref tx) = tx_clone {
+                        let _ = tx.send(format!("🧠 Native Codebase List Drone executing...\n")).await;
+                    }
                     // Quick recursive list, we'll shell out to `find` for simplicity or use standard local traversal.
                     // Returning a hardcoded string or running a quick command is easiest since we know linux/mac.
                     // For pure rust, we'll try std::process::Command
@@ -134,7 +142,11 @@ impl SwarmManager {
             } else if task.drone_type == "native_codebase_read" {
                 let task_id = task.task_id.clone();
                 let desc = task.description.clone();
+                let tx_clone = telemetry_tx.clone();
                 let handle = tokio::spawn(async move {
+                    if let Some(ref tx) = tx_clone {
+                        let _ = tx.send(format!("🧠 Native Codebase Reader Drone reading: {}\n", desc)).await;
+                    }
                     // Extract the path from the end of the description
                     let parts: Vec<&str> = desc.split_whitespace().collect();
                     let target_path = parts.last().unwrap_or(&"").to_string();
@@ -165,9 +177,15 @@ impl SwarmManager {
                 let task_id = task.task_id.clone();
                 let desc = task.description.clone();
 
+                let tx_clone = telemetry_tx.clone();
+                let template_name = template.name.clone();
+
                 let handle = tokio::spawn(async move {
+                    if let Some(ref tx) = tx_clone {
+                        let _ = tx.send(format!("🚀 Spawning Drone `{}` for Task: {}\n", template_name, task_id)).await;
+                    }
                     let executor = drone::DroneExecutor::new(provider_clone, template);
-                    executor.execute(&task_id, &desc, &context_clone).await
+                    executor.execute(&task_id, &desc, &context_clone, tx_clone).await
                 });
 
                 futures.push(handle);
@@ -237,7 +255,7 @@ mod tests {
             ],
         };
 
-        let results = swarm.execute_plan(plan, "User said hello").await;
+        let results = swarm.execute_plan(plan, "User said hello", None).await;
         
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].task_id, "1");
@@ -262,7 +280,7 @@ mod tests {
             ],
         };
 
-        let results = swarm.execute_plan(plan, "Context").await;
+        let results = swarm.execute_plan(plan, "Context", None).await;
         
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].task_id, "2");

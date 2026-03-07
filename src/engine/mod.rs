@@ -244,7 +244,8 @@ impl Engine {
             if let Ok(plan) = serde_json::from_str::<crate::swarm::planner::SwarmPlan>(&plan_json) {
                 if !plan.tasks.is_empty() {
                     // Execute parallel swarm
-                    let drone_results = self.swarm.execute_plan(plan, &event.content).await;
+                    let tx_clone = telemetry_tx.clone();
+                    let drone_results = self.swarm.execute_plan(plan, &event.content, Some(tx_clone)).await;
                     
                     // Aggregate results for the final assembler
                     context_from_swarm.push_str("\n\n[SWARM EXECUTION RESULTS]\n");

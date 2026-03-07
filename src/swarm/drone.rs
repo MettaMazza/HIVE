@@ -14,7 +14,7 @@ impl DroneExecutor {
         Self { provider, template }
     }
 
-    pub async fn execute(&self, task_id: &str, task_description: &str, context: &str) -> DroneResult {
+    pub async fn execute(&self, task_id: &str, task_description: &str, context: &str, telemetry_tx: Option<tokio::sync::mpsc::Sender<String>>) -> DroneResult {
         let system_prompt = format!(
             "{}\n\n[CONTEXT PROVIDED BY QUEEN]\n{}\n\n[YOUR TASK]\n{}",
             self.template.system_prompt,
@@ -31,7 +31,7 @@ impl DroneExecutor {
         };
 
         // We use the shared provider for execution, but could swap model if template.model_override is set.
-        let result = self.provider.generate(&system_prompt, &[], &dummy_event, None).await;
+        let result = self.provider.generate(&system_prompt, &[], &dummy_event, telemetry_tx).await;
 
         match result {
             Ok(output) => {
@@ -79,7 +79,7 @@ mod tests {
         };
 
         let executor = DroneExecutor::new(Arc::new(mock_provider), template);
-        let result = executor.execute("task_1", "Task", "Context").await;
+        let result = executor.execute("task_1", "Task", "Context", None).await;
 
         assert_eq!(result.task_id, "task_1");
         assert_eq!(result.output, "Success output");
@@ -100,7 +100,7 @@ mod tests {
         };
 
         let executor = DroneExecutor::new(Arc::new(mock_provider), template);
-        let result = executor.execute("task_2", "Task desc", "Ctx").await;
+        let result = executor.execute("task_2", "Task desc", "Ctx", None).await;
 
         assert_eq!(result.task_id, "task_2");
         assert!(matches!(result.status, DroneStatus::Failed(_)));
