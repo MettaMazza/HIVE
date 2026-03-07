@@ -194,14 +194,23 @@ impl Platform for DiscordPlatform {
                     .await;
             }
         } else {
-            // Check if this is responding to a slash command "discord_interaction" platform ID
-            if response.platform.starts_with("discord_interaction:") {
-                let builder = serenity::builder::CreateMessage::new().content(response.text);
-                let _ = channel.send_message(http, builder).await;
-            } else {
-                // FINAL RESPONSE: Send the actual reply as a new message
-                let builder = serenity::builder::CreateMessage::new().content(response.text);
-                let _ = channel.send_message(http, builder).await;
+            // Discord limits messages to 2000 characters. We must chunk the final response.
+            let chars: Vec<char> = response.text.chars().collect();
+            let mut chunks = Vec::new();
+            let mut current_pos = 0;
+
+            while current_pos < chars.len() {
+                let end_pos = std::cmp::min(current_pos + 1950, chars.len()); // 1950 to be safe
+                let chunk: String = chars[current_pos..end_pos].iter().collect();
+                chunks.push(chunk);
+                current_pos = end_pos;
+            }
+
+            for chunk_text in chunks {
+                let builder = serenity::builder::CreateMessage::new().content(chunk_text);
+                if let Err(e) = channel.send_message(http, builder).await {
+                    eprintln!("[Discord Platform] Error sending response chunk: {:?}", e);
+                }
             }
         }
         
