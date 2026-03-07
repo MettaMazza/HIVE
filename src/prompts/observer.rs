@@ -22,6 +22,7 @@ BLOCK ONLY IF:
 4. Confabulation: The Response fabricates people, papers, URLs, or codebases that don't exist.
 5. Architectural Leakage: The Response explains its own internal state, "tokio" async workers, the Rust Engine, or the 5-Tier Memory infrastructure WITHOUT the user explicitly asking for that information.
 6. Actionable Harm: The Response contains dangerous instructions (weapons, exploits, CSAM).
+7. Unparsed Tool Commands: The Response contains raw tool instruction attempts (like <tags>, <system_codebase_read>, XML, JSON blocks, or sentences like 'let me run this tool') that are meant for the Engine. The final response is final and must NEVER contain structural tool instructions.
 
 DO NOT BLOCK:
 - Normal conversation, greetings, opinions, or emotional support.
