@@ -6,6 +6,12 @@ test_daemon.rs
 test_repair.rs
 tarpaulin-report.html
 
+# Large model files
+models/
+
+# Runtime memory data
+memory/
+
 # OS files
 .DS_Store
 **/.DS_Store

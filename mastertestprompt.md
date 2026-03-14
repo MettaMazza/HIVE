@@ -29,8 +29,8 @@ The following prompt is designed to push the HIVE Agent stack to its absolute li
 > 
 > **Turn 5: Turing Daemons & Host Admin Rights**
 > 19. Use `process_manager` with `action:[daemon]` to start a background daemon that echoes the date to a log file every 2 seconds indefinitely (`while true; do date; sleep 2; done`).
-> 31. Use `file_system_operator` with `action:[write]` to create `gauntlet_admin.txt` containing "Host secured." in the project root.
-> 32. Use `run_bash_command` to cat `../../gauntlet_admin.txt`, verifying your host access despite ALU sandbox isolation.
+> 20. Use `file_system_operator` with `action:[write]` to create `gauntlet_admin.txt` containing "Host secured." in the project root.
+> 21. Use `run_bash_command` to cat `gauntlet_admin.txt`, verifying your host access.
 > 22. Use `process_manager` with `action:[list]` to find your daemon PID, then use `action:[read]` to read its logs, then `action:[kill]` to terminate it.
 > 
 > **Turn 6: Final Verification, Document Composition & Synthesis**

@@ -131,25 +131,60 @@ pub fn dispatch_native_tool(
         return Some(handle);
     }
     if tool_type == "run_bash_command" {
-        let mem_clone = memory.clone();
         let name_clone = tool_type.to_string();
         let handle = tokio::spawn(async move {
             if let Some(ref tx) = tx_clone {
                 let _ = tx.send(format!("⚙️ Native {} executing...\n", name_clone)).await;
             }
-            let res = mem_clone.alu.execute_cell("bash", &desc).await;
-            match res {
-                Ok(output) => ToolResult {
-                    task_id,
-                    output: if output.is_empty() { "Command succeeded with no output.".into() } else { output },
-                    tokens_used: 0,
-                    status: ToolStatus::Success,
-                },
-                Err(e) => ToolResult {
-                    task_id,
-                    output: e.clone(),
-                    tokens_used: 0,
-                    status: ToolStatus::Failed(e),
+            // Run directly from the project root (NOT the ALU sandbox)
+            // so that files created by file_system_operator are accessible.
+            let child = tokio::process::Command::new("bash")
+                .arg("-c")
+                .arg(&desc)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .kill_on_drop(true)
+                .spawn();
+
+            match child {
+                Ok(c) => {
+                    let execution = tokio::time::timeout(
+                        std::time::Duration::from_secs(15),
+                        c.wait_with_output(),
+                    ).await;
+                    match execution {
+                        Ok(Ok(out)) => {
+                            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+                            let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+                            if out.status.success() {
+                                ToolResult {
+                                    task_id,
+                                    output: if stdout.trim().is_empty() {
+                                        "Command succeeded with no output.".into()
+                                    } else {
+                                        stdout.trim().to_string()
+                                    },
+                                    tokens_used: 0,
+                                    status: ToolStatus::Success,
+                                }
+                            } else {
+                                let msg = format!("Command Failed.\nSTDOUT:\n{}\nSTDERR:\n{}", stdout, stderr);
+                                ToolResult { task_id, output: msg.clone(), tokens_used: 0, status: ToolStatus::Failed(msg) }
+                            }
+                        }
+                        Ok(Err(e)) => {
+                            let msg = format!("I/O Error: {}", e);
+                            ToolResult { task_id, output: msg.clone(), tokens_used: 0, status: ToolStatus::Failed(msg) }
+                        }
+                        Err(_) => {
+                            let msg = "Execution Timeout: Process exceeded 15 seconds.".to_string();
+                            ToolResult { task_id, output: msg.clone(), tokens_used: 0, status: ToolStatus::Failed(msg) }
+                        }
+                    }
+                }
+                Err(e) => {
+                    let msg = format!("Failed to spawn: {}", e);
+                    ToolResult { task_id, output: msg.clone(), tokens_used: 0, status: ToolStatus::Failed(msg) }
                 }
             }
         });

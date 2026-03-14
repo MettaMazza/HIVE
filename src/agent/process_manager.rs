@@ -93,6 +93,9 @@ pub async fn execute_process_manager(
                     }
                     
                     if let Some(pid) = pid_opt {
+                        // Brief pause to let nohup fully fork the background process
+                        // so that subsequent `list` calls can detect it with `kill -0`.
+                        tokio::time::sleep(Duration::from_millis(500)).await;
                         let mut map = daemons().lock().await;
                         map.insert(pid, (cmd.clone(), log_file.clone()));
                         output = format!("Daemon started successfully.\nPID: {}\nCommand: {}\nLog File: {}", pid, cmd, log_file);
