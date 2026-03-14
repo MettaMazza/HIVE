@@ -1,5 +1,36 @@
-/target
+# Build artifacts
+/target/
+test_repair/
+test_daemon
+test_daemon.rs
+test_repair.rs
+tarpaulin-report.html
+
+# OS files
+.DS_Store
+**/.DS_Store
+
+# Environment
 .env
-*.onnx
-models/
-memory/
+
+# Logs (rotated daily, don't track)
+logs/*.log
+logs/*.log.*
+
+# Runtime data
+memory/computer_runtime/
+memory/scratch/
+memory/timelines/
+memory/preferences/
+memory/lessons/
+memory/synaptic/
+memory/autosave/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Telemetry
+logs/telemetry.jsonl
