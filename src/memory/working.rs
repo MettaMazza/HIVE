@@ -1,3 +1,4 @@
+#![allow(clippy::collapsible_if)]
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use std::path::PathBuf;
@@ -28,11 +29,16 @@ impl Default for WorkingMemory {
 
 impl WorkingMemory {
     pub fn new(base_dir: Option<PathBuf>) -> Self {
+        #[cfg(test)]
+        let default_dir = std::env::temp_dir().join(format!("hive_mem_test_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        #[cfg(not(test))]
+        let default_dir = PathBuf::from("memory");
+
         Self {
             events: Arc::new(RwLock::new(Vec::new())),
             token_count: Arc::new(RwLock::new(0)),
-            max_tokens: 256_000, // 256K token limit
-            base_dir: base_dir.unwrap_or_else(|| PathBuf::from("memory")),
+            max_tokens: 256_000,
+            base_dir: base_dir.unwrap_or(default_dir),
         }
     }
 
@@ -231,7 +237,10 @@ mod tests {
     #[tokio::test]
     async fn test_working_memory_default() {
         let mem = WorkingMemory::default();
-        // Verify default sets path to "memory" and limit to 256k
+        // Verify default sets path to testing env in test mode, and limit to 256k
+        #[cfg(test)]
+        assert!(mem.get_memory_dir().to_string_lossy().contains("hive_mem_test"));
+        #[cfg(not(test))]
         assert_eq!(mem.get_memory_dir(), std::path::PathBuf::from("memory"));
         assert_eq!(mem.max_tokens(), 256000);
     }

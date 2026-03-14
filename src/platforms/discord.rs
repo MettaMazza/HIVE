@@ -1,3 +1,4 @@
+#![allow(clippy::collapsible_if)]
 use async_trait::async_trait;
 use tokio::sync::mpsc::Sender;
 use serenity::prelude::*;
@@ -24,14 +25,18 @@ impl EventHandler for Handler {
         *id_lock = Some(ready.user.id);
 
         // Register Global Slash Commands
-        let command = serenity::builder::CreateCommand::new("clean")
+        let command_clean = serenity::builder::CreateCommand::new("clean")
             .description("ADMIN ONLY: Wipes all AI Memory (Factory Reset)");
-        let _ = serenity::model::application::Command::create_global_command(&ctx.http, command).await;
+        let command_clear = serenity::builder::CreateCommand::new("clear")
+            .description("ADMIN ONLY: Wipes all AI Memory (Factory Reset)");
+        
+        let _ = serenity::model::application::Command::create_global_command(&ctx.http, command_clean).await;
+        let _ = serenity::model::application::Command::create_global_command(&ctx.http, command_clear).await;
     }
 
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
         if let Interaction::Command(command) = interaction {
-            if command.data.name.as_str() == "clean" {
+            if command.data.name.as_str() == "clean" || command.data.name.as_str() == "clear" {
                 // Instantly reply so the Discord interaction doesn't fail
                 let data = CreateInteractionResponseMessage::new()
                     .content("```\n⏳ Initiating Factory Wipe...\n```")
@@ -44,7 +49,7 @@ impl EventHandler for Handler {
                 // Push a special hidden command to the core engine.
                 // It comes attached to the exact Admin's Discord UID so the Engine RBAC matches it.
                 let ev = Event {
-                    platform: format!("discord_interaction:{}", command.channel_id.get()),
+                    platform: format!("discord:{}:0", command.channel_id.get()),
                     scope: Scope::Public { channel_id: command.channel_id.get().to_string(), user_id: command.user.id.get().to_string() }, 
                     author_name: command.user.name.clone(),
                     author_id: command.user.id.get().to_string(),

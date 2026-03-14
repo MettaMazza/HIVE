@@ -21,11 +21,14 @@ pub enum ProviderError {
 #[automock]
 #[async_trait]
 pub trait Provider: Send + Sync {
+    /// Generate a response block.
+    /// `agent_context` contains the stringified tool execution results accumulated in inner loops.
     async fn generate(
         &self,
         system_prompt: &str,
         history: &[Event],
         new_event: &Event,
+        agent_context: &str,
         telemetry_tx: Option<tokio::sync::mpsc::Sender<String>>,
     ) -> Result<String, ProviderError>;
 }

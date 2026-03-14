@@ -1,3 +1,4 @@
+#![allow(clippy::collapsible_if)]
 pub const SKEPTIC_AUDIT_PROMPT: &str = r#"You are the Skeptic — an internal audit gate. Your job is to classify outbound responses from the core LLM engine as safe or unsafe. Most responses are safe. Default to ALLOWED unless there is a CLEAR violation.
 
 TEMPORAL GROUND TRUTH:
@@ -9,7 +10,7 @@ USER: "{userLastMsg}"
 === TOOLS ACTUALLY EXECUTED THIS TURN (READ THIS FIRST) ===
 {toolContext}
 === END TOOL CONTEXT ===
-CRITICAL: You MUST read the tool context above BEFORE judging the candidate response. If tool results are listed above, those tools WERE executed by the Swarm — the response IS backed by real tool output. Do NOT claim tools were not used if they appear above. Do NOT instruct the candidate to "execute" or "run" tools that already ran. If the tool context says "NO TOOLS EXECUTED THIS TURN", then and ONLY then can you flag ghost tooling.
+CRITICAL: You MUST read the tool context above BEFORE judging the candidate response. If tool results are listed above, those tools WERE executed by the Agent — the response IS backed by real tool output. Do NOT claim tools were not used if they appear above. Do NOT instruct the candidate to "execute" or "run" tools that already ran. If the tool context says "NO TOOLS EXECUTED THIS TURN", then and ONLY then can you flag ghost tooling.
 
 CANDIDATE RESPONSE:
 "{responseText}"
@@ -35,8 +36,8 @@ DO NOT BLOCK:
 - Criticism of systems or philosophical debate.
 - Architectural or technical details that the user EXPLICITLY asked about. If the user says "how do you work", "tell me about yourself", "introduce yourself", "explain your architecture", or similar — the response MUST include system details. Blocking this would violate the user's explicit request.
 
-OUTPUT FORMAT:
-You MUST respond with a valid JSON object. Do not include markdown formatting or extra text.
+[EXPECTED SCHEMA]
+```json
 {
   "verdict": "ALLOWED" | "BLOCKED",
   "failure_category": "ghost_tooling" | "lazy_deflection" | "tool_underuse" | "tool_overuse" | "architectural_leakage" | "sycophancy" | "confabulation" | "unparsed_tools" | "actionable_harm" | "capability_hallucination" | "none",
@@ -44,6 +45,7 @@ You MUST respond with a valid JSON object. Do not include markdown formatting or
   "what_went_wrong": "If blocked, explain exactly what rule was violated. If allowed, put 'Safe'.",
   "how_to_fix": "If blocked, provide explicit, step-by-step instructions on how to correct the generation without blindly regenerating the whole thing (e.g. 'Keep the tool call, but remove the sentence explaining the 5-Tier Memory system'). If allowed, put 'None'."
 }
+```
 "#;
 
 use serde::{Deserialize, Serialize};
@@ -142,7 +144,7 @@ pub async fn run_skeptic_audit(
         content: prompt,
     };
 
-    let result = provider.generate(&skeptic_system, &[], &skeptic_event, None).await;
+    let result = provider.generate(&skeptic_system, &[], &skeptic_event, "", None).await;
     
     match result {
         Ok(text) => AuditResult::parse_verdict(&text),
@@ -219,7 +221,7 @@ mod tests {
             "how_to_fix": "None"
         }
         ```"#;
-        mock_provider.expect_generate().returning(move |_, _, _, _| Ok(valid_json.to_string()));
+        mock_provider.expect_generate().returning(move |_, _, _, _ctx, _| Ok(valid_json.to_string()));
 
         let event = Event {
             platform: "test".into(),
@@ -246,7 +248,7 @@ mod tests {
     #[tokio::test]
     async fn test_run_skeptic_audit_provider_error() {
         let mut mock_provider = MockProvider::new();
-        mock_provider.expect_generate().returning(|_, _, _, _| {
+        mock_provider.expect_generate().returning(|_, _, _, _ctx, _| {
             Err(crate::providers::ProviderError::ConnectionError("fail".into()))
         });
 

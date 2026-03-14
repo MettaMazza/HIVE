@@ -1,3 +1,4 @@
+#![allow(clippy::collapsible_if)]
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use async_trait::async_trait;
@@ -49,6 +50,7 @@ impl Provider for OllamaProvider {
         system_prompt: &str,
         history: &[Event],
         new_event: &Event,
+        agent_context: &str,
         telemetry_tx: Option<mpsc::Sender<String>>,
     ) -> Result<String, ProviderError> {
         let mut messages = vec![
@@ -70,7 +72,19 @@ impl Provider for OllamaProvider {
             let content = if role == "user" {
                 format!("{}: {}", event.author_name, event.content)
             } else {
-                event.content.clone()
+                // SPRINT 3: JSON Content Forcing
+                // If Apis responded in plain text, wrap it into a mock `reply_to_request` execution.
+                // This prevents "Monkey See, Monkey Do" plain text degradation on Turn 1.
+                if !event.content.trim().starts_with("```json") && !event.content.trim().starts_with('{') {
+                    // Properly escape the original string into a JSON string
+                    let escaped_content = serde_json::to_string(&event.content).unwrap_or_else(|_| "\"Failed to escape\"".to_string());
+                    format!(
+                        "```json\n{{\n  \"tasks\": [\n    {{\n      \"task_id\": \"hist_1\",\n      \"tool_type\": \"reply_to_request\",\n      \"description\": {},\n      \"depends_on\": []\n    }}\n  ]\n}}\n```",
+                        escaped_content
+                    )
+                } else {
+                    event.content.clone()
+                }
             };
 
             messages.push(OllamaMessage {
@@ -79,10 +93,16 @@ impl Provider for OllamaProvider {
             });
         }
 
+        let mut final_user_message = format!("{}: {}", new_event.author_name, new_event.content);
+        if !agent_context.is_empty() {
+            final_user_message.push_str("\n\n[ISOLATED EXECUTION TIMELINE]\n");
+            final_user_message.push_str(agent_context);
+        }
+
         // Add the current triggering event
         messages.push(OllamaMessage {
             role: "user".to_string(),
-            content: format!("{}: {}", new_event.author_name, new_event.content),
+            content: final_user_message,
         });
 
         let payload = OllamaRequest {
@@ -122,13 +142,6 @@ impl Provider for OllamaProvider {
                     if let Some(msg) = parsed.get("message") {
                         if let Some(content) = msg.get("content").and_then(|v| v.as_str()) {
                             full_response.push_str(content);
-                            
-                            // Stream all content directly as telemetry
-                            if let Some(ref tx) = telemetry_tx {
-                                if !content.is_empty() {
-                                    let _ = tx.send(content.to_string()).await;
-                                }
-                            }
                         }
 
                         // Some models stream reasoning separately in a 'thinking' key
@@ -189,7 +202,7 @@ mod tests {
             author_id: "test".into(),
             content: "What's up?".into(),
         };
-        let res = provider.generate("sys", &history, &new_event, None).await.unwrap();
+        let res = provider.generate("sys", &history, &new_event, "", None).await.unwrap();
 
         assert_eq!(res, "Sure, here's your context.");
     }
@@ -213,7 +226,7 @@ mod tests {
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Bork?".into(),
-        }, None).await;
+        }, "", None).await;
 
         assert!(matches!(res, Err(ProviderError::ParseError(_))));
     }
@@ -229,7 +242,7 @@ mod tests {
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Bork?".into(),
-        }, None).await;
+        }, "", None).await;
 
         assert!(matches!(res, Err(ProviderError::ConnectionError(_))));
     }
@@ -252,7 +265,7 @@ mod tests {
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Bork?".into(),
-        }, None).await;
+        }, "", None).await;
 
         assert!(matches!(res, Err(ProviderError::ParseError(_))));
     }
@@ -276,7 +289,7 @@ mod tests {
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Bork?".into(),
-        }, None).await;
+        }, "", None).await;
 
         assert_eq!(res.unwrap(), "");
     }
@@ -303,12 +316,10 @@ mod tests {
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Bork?".into(),
-        }, Some(tx)).await;
+        }, "", Some(tx)).await;
 
         let first_recv = rx.recv().await.unwrap();
-        let second_recv = rx.recv().await.unwrap();
-        assert!(first_recv == "Final answer" || first_recv == "I am thinking...");
-        assert!(second_recv == "Final answer" || second_recv == "I am thinking...");
+        assert_eq!(first_recv, "I am thinking...");
         assert_eq!(res.unwrap(), "Final answer");
     }
 
@@ -332,8 +343,56 @@ mod tests {
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Bork?".into(),
-        }, None).await;
+        }, "", None).await;
 
         assert_eq!(res.unwrap(), "");
+    }
+
+    #[tokio::test]
+    async fn test_ollama_stream_fragmented() {
+        let mock_server = MockServer::start().await;
+        let mut provider = OllamaProvider::new();
+        provider.endpoint = format!("{}/api/chat", mock_server.uri());
+
+        let mock_response = "{\"message\": {\"role\": \"assistant\", \"content\": \"part1\"}}\n{\"message\": {\"content\": \" part2\"}}\n{\"message\": {\"content\": \" done!\"}, \"done\": true}\n";
+
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(mock_response))
+            .mount(&mock_server)
+            .await;
+
+        let res = provider.generate("sys", &[], &Event {
+            platform: "cli".into(),
+            scope: Scope::Public { channel_id: "t".into(), user_id: "t".into() },
+            author_name: "Bob".into(),
+            author_id: "test".into(),
+            content: "Stream?".into(),
+        }, "", None).await;
+
+        assert_eq!(res.unwrap(), "part1 part2 done!");
+    }
+
+    #[tokio::test]
+    async fn test_ollama_stream_disconnect() {
+        let mock_server = MockServer::start().await;
+        let mut provider = OllamaProvider::new();
+        provider.endpoint = format!("{}/api/chat", mock_server.uri());
+
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(503).set_body_string("Service Unavailable Drops Stream"))
+            .mount(&mock_server)
+            .await;
+
+        let res = provider.generate("sys", &[], &Event {
+            platform: "cli".into(),
+            scope: Scope::Public { channel_id: "t".into(), user_id: "t".into() },
+            author_name: "Bob".into(),
+            author_id: "test".into(),
+            content: "Disconnect?".into(),
+        }, "", None).await;
+
+        assert!(res.is_err());
     }
 }

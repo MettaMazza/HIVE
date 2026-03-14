@@ -1,51 +1,52 @@
+#![allow(clippy::useless_format, clippy::needless_borrow, clippy::needless_borrows_for_generic_args)]
 use std::collections::HashMap;
 use std::sync::Arc;
-use crate::models::drone::{DroneTemplate, DroneResult, DroneStatus};
+use crate::models::tool::{ToolTemplate, ToolResult, ToolStatus};
 use crate::providers::Provider;
 use crate::memory::MemoryStore;
 use crate::models::scope::Scope;
 
 pub mod planner;
-pub mod drone;
+pub mod tool;
 
-pub struct SwarmManager {
-    registry: HashMap<String, DroneTemplate>,
+pub struct AgentManager {
+    registry: HashMap<String, ToolTemplate>,
     provider: Arc<dyn Provider>,
     memory: Arc<MemoryStore>,
 }
 
-impl SwarmManager {
+impl AgentManager {
     pub fn new(provider: Arc<dyn Provider>, memory: Arc<MemoryStore>) -> Self {
         let mut registry = HashMap::new();
         
-        // Register default built-in drones
-        let researcher = DroneTemplate {
+        // Register default built-in tools
+        let researcher = ToolTemplate {
             name: "researcher".into(),
-            system_prompt: "You are the Researcher Drone. Your job is to analyze information, find facts, and summarize data objectively. You HAVE LIVE INTERNET ACCESS and will search the web to verify current facts.".into(),
+            system_prompt: "You are the Researcher Tool. Your job is to analyze information, find facts, and summarize data objectively. You HAVE LIVE INTERNET ACCESS and will search the web to verify current facts.".into(),
             tools: vec![],
         };
 
-        let channel_reader = DroneTemplate {
+        let channel_reader = ToolTemplate {
             name: "native_channel_reader".into(),
             system_prompt: "You natively pull the recent message history of the current channel based on the task description Target ID. You do not use LLM inference, you return the timeline JSONL block. The planner should provide the Target Entity ID in the description.".into(),
             tools: vec![],
         };
 
-        let codebase_list = DroneTemplate {
+        let codebase_list = ToolTemplate {
             name: "native_codebase_list".into(),
             system_prompt: "You list all files and directories recursively from the project root. You do not use LLM inference, you simply return the directory tree. The planner should output a blank description.".into(),
             tools: vec![],
         };
 
-        let codebase_read = DroneTemplate {
+        let codebase_read = ToolTemplate {
             name: "native_codebase_read".into(),
-            system_prompt: "You are the Codebase Reader Drone. You natively read the contents of a specific file in the HIVE codebase. The planner must put EXACTLY the relative file path (e.g. src/engine/mod.rs) in the description.".into(),
+            system_prompt: "You are the Codebase Reader Tool. You natively read the contents of a specific file in the HIVE codebase. The planner must put EXACTLY the relative file path (e.g. src/engine/mod.rs) in the description.".into(),
             tools: vec![],
         };
 
-        let web_search = DroneTemplate {
+        let web_search = ToolTemplate {
             name: "native_web_search".into(),
-            system_prompt: "You are the Web Search Drone. You search the LIVE EXTERNAL INTERNET for facts, news, and external documentation via DuckDuckGo. The planner should provide the query in the description.".into(),
+            system_prompt: "You are the Web Search Tool. You search the LIVE EXTERNAL INTERNET for facts, news, and external documentation via DuckDuckGo. The planner should provide the query in the description.".into(),
             tools: vec![],
         };
 
@@ -62,38 +63,38 @@ impl SwarmManager {
         }
     }
 
-    pub fn register_drone(&mut self, template: DroneTemplate) {
+    pub fn register_tool(&mut self, template: ToolTemplate) {
         self.registry.insert(template.name.clone(), template);
     }
 
-    /// Exposes all registered drone names so they can be securely injected into 
+    /// Exposes all registered tool names so they can be securely injected into 
     /// the AgentCapabilities matrix at engine boot.
-    pub fn get_drone_names(&self) -> Vec<String> {
+    pub fn get_tool_names(&self) -> Vec<String> {
         self.registry.keys().cloned().collect()
     }
 
-    pub fn get_template(&self, name: &str) -> Option<DroneTemplate> {
+    pub fn get_template(&self, name: &str) -> Option<ToolTemplate> {
         self.registry.get(name).cloned()
     }
 
-    /// Fetches all registered drones formatted as a string for the Queen Planner prompt
-    pub fn get_available_drones_text(&self) -> String {
+    /// Fetches all registered tools formatted as a string for the Planner Planner prompt
+    pub fn get_available_tools_text(&self) -> String {
         let mut out = String::new();
         for (name, template) in &self.registry {
-            out.push_str(&format!("- DRONE `{}`: {}\n", name, template.system_prompt));
+            out.push_str(&format!("- TOOL `{}`: {}\n", name, template.system_prompt));
         }
         out
     }
 
-    /// Executes a swarm plan by spawning all tasks concurrently.
+    /// Executes a agent plan by spawning all tasks concurrently.
     /// In a fully robust graph, we would respect `depends_on`. For now, we fan out in parallel.
     #[cfg(not(tarpaulin_include))]
-    pub async fn execute_plan(&self, plan: crate::swarm::planner::SwarmPlan, context: &str, telemetry_tx: Option<tokio::sync::mpsc::Sender<String>>) -> Vec<DroneResult> {
+    pub async fn execute_plan(&self, plan: crate::agent::planner::AgentPlan, context: &str, telemetry_tx: Option<tokio::sync::mpsc::Sender<String>>) -> Vec<ToolResult> {
         let mut futures = vec![];
 
         for task in plan.tasks {
-            // Intercept Native Drones
-            if task.drone_type == "native_channel_reader" {
+            // Intercept Native Tools
+            if task.tool_type == "native_channel_reader" {
                 let mem_clone = self.memory.clone();
                 let task_id = task.task_id.clone();
                 let desc = task.description.clone(); // E.g., tells which Scope or channel ID
@@ -105,9 +106,9 @@ impl SwarmManager {
                 let tx_clone = telemetry_tx.clone();
                 let handle = tokio::spawn(async move {
                     if let Some(ref tx) = tx_clone {
-                        let _ = tx.send(format!("🧠 Native Channel Reader Drone executing...\n")).await;
+                        let _ = tx.send(format!("🧠 Native Channel Reader Tool executing...\n")).await;
                     }
-                    // Extract channel_id if possible, or we could just pass `Event` down the SwarmManager tree.
+                    // Extract channel_id if possible, or we could just pass `Event` down the AgentManager tree.
                     // To keep it simple, we'll try to extract target from desc 
                     let target_id = desc.split_whitespace().last().unwrap_or(&"").to_string();
                     let pub_scope = Scope::Public { channel_id: target_id.clone(), user_id: "system".into() };
@@ -118,21 +119,21 @@ impl SwarmManager {
                         "Failed to read timeline for channel.".to_string()
                     };
                     
-                    DroneResult {
+                    ToolResult {
                         task_id,
                         output,
                         tokens_used: 0,
-                        status: DroneStatus::Success,
+                        status: ToolStatus::Success,
                     }
                 });
                 futures.push(handle);
                 continue;
-            } else if task.drone_type == "native_codebase_list" {
+            } else if task.tool_type == "native_codebase_list" {
                 let task_id = task.task_id.clone();
                 let tx_clone = telemetry_tx.clone();
                 let handle = tokio::spawn(async move {
                     if let Some(ref tx) = tx_clone {
-                        let _ = tx.send(format!("🧠 Native Codebase List Drone executing...\n")).await;
+                        let _ = tx.send(format!("🧠 Native Codebase List Tool executing...\n")).await;
                     }
                     // Quick recursive list, we'll shell out to `find` for simplicity or use standard local traversal.
                     // Returning a hardcoded string or running a quick command is easiest since we know linux/mac.
@@ -141,22 +142,22 @@ impl SwarmManager {
                         Ok(res) => String::from_utf8_lossy(&res.stdout).to_string(),
                         Err(e) => format!("Failed to list codebase: {}", e),
                     };
-                    DroneResult {
+                    ToolResult {
                         task_id,
                         output,
                         tokens_used: 0,
-                        status: DroneStatus::Success,
+                        status: ToolStatus::Success,
                     }
                 });
                 futures.push(handle);
                 continue;
-            } else if task.drone_type == "native_codebase_read" {
+            } else if task.tool_type == "native_codebase_read" {
                 let task_id = task.task_id.clone();
                 let desc = task.description.clone();
                 let tx_clone = telemetry_tx.clone();
                 let handle = tokio::spawn(async move {
                     if let Some(ref tx) = tx_clone {
-                        let _ = tx.send(format!("🧠 Native Codebase Reader Drone reading: {}\n", desc)).await;
+                        let _ = tx.send(format!("🧠 Native Codebase Reader Tool reading: {}\n", desc)).await;
                     }
                     // Extract the path by looking for something that looks like a file path
                     // Apis often writes: "Read the main engine module file (src/engine/mod.rs) to verify..."
@@ -201,23 +202,23 @@ impl SwarmManager {
                         }
                     };
 
-                    DroneResult {
+                    ToolResult {
                         task_id,
                         output,
                         tokens_used: 0,
-                        status: DroneStatus::Success,
+                        status: ToolStatus::Success,
                     }
                 });
                 futures.push(handle);
                 continue;
-            } else if task.drone_type == "native_web_search" || task.drone_type == "researcher" {
+            } else if task.tool_type == "native_web_search" || task.tool_type == "researcher" {
                 let task_id = task.task_id.clone();
                 let desc = task.description.clone();
                 let tx_clone = telemetry_tx.clone();
 
                 let handle = tokio::spawn(async move {
                     if let Some(ref tx) = tx_clone {
-                        let _ = tx.send(format!("🌐 Native Web Search Drone searching for: {}\n", desc)).await;
+                        let _ = tx.send(format!("🌐 Native Web Search Tool searching for: {}\n", desc)).await;
                     }
                     
                     // Simple internet fetch using curl to DuckDuckGo HTML Lite
@@ -250,18 +251,18 @@ impl SwarmManager {
                         Err(e) => format!("Failed to execute search: {}", e),
                     };
 
-                    DroneResult {
+                    ToolResult {
                         task_id,
                         output,
                         tokens_used: 0,
-                        status: DroneStatus::Success,
+                        status: ToolStatus::Success,
                     }
                 });
                 futures.push(handle);
                 continue;
             }
 
-            if let Some(template) = self.get_template(&task.drone_type) {
+            if let Some(template) = self.get_template(&task.tool_type) {
                 let context_clone = context.to_string();
                 let provider_clone = self.provider.clone();
                 let task_id = task.task_id.clone();
@@ -272,21 +273,21 @@ impl SwarmManager {
 
                 let handle = tokio::spawn(async move {
                     if let Some(ref tx) = tx_clone {
-                        let _ = tx.send(format!("🚀 Spawning Drone `{}` for Task: {}\n", template_name, task_id)).await;
+                        let _ = tx.send(format!("🚀 Spawning Tool `{}` for Task: {}\n", template_name, task_id)).await;
                     }
-                    let executor = drone::DroneExecutor::new(provider_clone, template);
+                    let executor = tool::ToolExecutor::new(provider_clone, template);
                     executor.execute(&task_id, &desc, &context_clone, tx_clone).await
                 });
 
                 futures.push(handle);
             } else {
-                // Return immediate failure if drone doesn't exist
+                // Return immediate failure if tool doesn't exist
                 futures.push(tokio::spawn(async move {
-                    DroneResult {
+                    ToolResult {
                         task_id: task.task_id.clone(),
                         output: String::new(),
                         tokens_used: 0,
-                        status: DroneStatus::Failed(format!("Drone type '{}' not found", task.drone_type)),
+                        status: ToolStatus::Failed(format!("Tool type '{}' not found", task.tool_type)),
                     }
                 }));
             }
@@ -306,74 +307,201 @@ impl SwarmManager {
 mod tests {
     use super::*;
     use crate::providers::MockProvider;
-    use crate::models::drone::DroneStatus;
+    use crate::models::tool::ToolStatus;
 
     #[tokio::test]
-    async fn test_swarm_manager_registration() {
+    async fn test_agent_manager_registration() {
         let provider = Arc::new(MockProvider::new());
         let memory = Arc::new(MemoryStore::default());
-        let mut swarm = SwarmManager::new(provider, memory);
+        let mut agent = AgentManager::new(provider, memory);
         
-        let template = DroneTemplate {
-            name: "test_drone".into(),
+        let template = ToolTemplate {
+            name: "test_tool".into(),
             system_prompt: "sys".into(),
             tools: vec![],
         };
         
-        swarm.register_drone(template.clone());
-        assert!(swarm.get_template("test_drone").is_some());
+        agent.register_tool(template.clone());
+        assert!(agent.get_template("test_tool").is_some());
     }
 
     #[tokio::test]
-    async fn test_swarm_execute_plan_success() {
+    async fn test_agent_execute_plan_success() {
         let mut mock_provider = MockProvider::new();
         mock_provider
             .expect_generate()
-            .returning(|_, _, _, _| Ok("Drone output".to_string()));
+            .returning(|_, _, _, _, _| Ok("Tool output".to_string()));
 
         let memory = Arc::new(MemoryStore::default());
-        let swarm = SwarmManager::new(Arc::new(mock_provider), memory);
+        let agent = AgentManager::new(Arc::new(mock_provider), memory);
         
-        let plan = crate::swarm::planner::SwarmPlan {
+        let plan = crate::agent::planner::AgentPlan {
+            thought: Some("I should do research".to_string()),
             tasks: vec![
-                crate::swarm::planner::SwarmTask {
+                crate::agent::planner::AgentTask {
                     task_id: "1".into(),
-                    drone_type: "researcher".into(),
+                    tool_type: "researcher".into(),
                     description: "do research".into(),
                     depends_on: vec![],
                 }
             ],
         };
 
-        let results = swarm.execute_plan(plan, "User said hello", None).await;
+        let results = agent.execute_plan(plan, "User said hello", None).await;
         
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].task_id, "1");
-        assert_eq!(results[0].output, "Drone output");
-        assert_eq!(results[0].status, DroneStatus::Success);
+        assert_eq!(results[0].output, "Tool output");
+        assert_eq!(results[0].status, ToolStatus::Success);
     }
 
     #[tokio::test]
-    async fn test_swarm_execute_plan_drone_not_found() {
+    async fn test_agent_execute_plan_tool_not_found() {
         let mock_provider = MockProvider::new();
         let memory = Arc::new(MemoryStore::default());
-        let swarm = SwarmManager::new(Arc::new(mock_provider), memory);
+        let agent = AgentManager::new(Arc::new(mock_provider), memory);
         
-        let plan = crate::swarm::planner::SwarmPlan {
+        let plan = crate::agent::planner::AgentPlan {
+            thought: None,
             tasks: vec![
-                crate::swarm::planner::SwarmTask {
+                crate::agent::planner::AgentTask {
                     task_id: "2".into(),
-                    drone_type: "missing_drone".into(),
+                    tool_type: "missing_tool".into(),
                     description: "fail".into(),
                     depends_on: vec![],
                 }
             ],
         };
 
-        let results = swarm.execute_plan(plan, "Context", None).await;
+        let results = agent.execute_plan(plan, "Context", None).await;
         
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].task_id, "2");
-        assert!(matches!(results[0].status, DroneStatus::Failed(_)));
+        assert!(matches!(results[0].status, ToolStatus::Failed(_)));
+    }
+
+    #[tokio::test]
+    async fn test_agent_native_channel_reader() {
+        let mock_provider = MockProvider::new();
+        let memory = Arc::new(MemoryStore::default());
+        // Populate timeline so read has something
+        let test_evt = crate::models::message::Event {
+            platform: "test".into(),
+            scope: crate::models::scope::Scope::Public { channel_id: "test_chan".into(), user_id: "system".into() },
+            author_name: "test".into(),
+            author_id: "test".into(),
+            content: "test timeline string payload".into(),
+        };
+        let _ = memory.timeline.append_event(&test_evt).await;
+
+        let agent = AgentManager::new(Arc::new(mock_provider), memory);
+        
+        let plan = crate::agent::planner::AgentPlan {
+            thought: None,
+            tasks: vec![
+                crate::agent::planner::AgentTask {
+                    task_id: "1".into(),
+                    tool_type: "native_channel_reader".into(),
+                    description: "read test_chan".into(),
+                    depends_on: vec![],
+                }
+            ],
+        };
+
+        let results = agent.execute_plan(plan, "Context", None).await;
+        assert_eq!(results.len(), 1);
+        assert!(results[0].output.contains("test timeline"));
+    }
+
+    #[tokio::test]
+    async fn test_agent_native_codebase_list() {
+        let mock_provider = MockProvider::new();
+        let memory = Arc::new(MemoryStore::default());
+        let agent = AgentManager::new(Arc::new(mock_provider), memory);
+        
+        let plan = crate::agent::planner::AgentPlan {
+            thought: None,
+            tasks: vec![
+                crate::agent::planner::AgentTask {
+                    task_id: "1".into(),
+                    tool_type: "native_codebase_list".into(),
+                    description: "".into(),
+                    depends_on: vec![],
+                }
+            ],
+        };
+
+        let results = agent.execute_plan(plan, "Context", None).await;
+        assert_eq!(results.len(), 1);
+        assert!(results[0].output.contains("src/agent/mod.rs"));
+    }
+
+    #[tokio::test]
+    async fn test_agent_native_codebase_read() {
+        let mock_provider = MockProvider::new();
+        let memory = Arc::new(MemoryStore::default());
+        let agent = AgentManager::new(Arc::new(mock_provider), memory);
+        
+        let plan = crate::agent::planner::AgentPlan {
+            thought: None,
+            tasks: vec![
+                crate::agent::planner::AgentTask {
+                    task_id: "1".into(),
+                    tool_type: "native_codebase_read".into(),
+                    description: "Cargo.toml".into(), // guaranteed to exist
+                    depends_on: vec![],
+                }
+            ],
+        };
+
+        let results = agent.execute_plan(plan, "Context", None).await;
+        assert_eq!(results.len(), 1);
+        assert!(results[0].output.contains("--- FILE: Cargo.toml"));
+    }
+
+    #[tokio::test]
+    async fn test_agent_native_codebase_read_security() {
+        let mock_provider = MockProvider::new();
+        let memory = Arc::new(MemoryStore::default());
+        let agent = AgentManager::new(Arc::new(mock_provider), memory);
+        
+        let plan = crate::agent::planner::AgentPlan {
+            thought: None,
+            tasks: vec![
+                crate::agent::planner::AgentTask {
+                    task_id: "1".into(),
+                    tool_type: "native_codebase_read".into(),
+                    description: "../Cargo.toml".into(), // traverse attempts
+                    depends_on: vec![],
+                }
+            ],
+        };
+
+        let results = agent.execute_plan(plan, "Context", None).await;
+        assert_eq!(results.len(), 1);
+        assert!(results[0].output.contains("Access Denied"));
+    }
+
+    #[tokio::test]
+    async fn test_agent_native_web_search() {
+        let mock_provider = MockProvider::new();
+        let memory = Arc::new(MemoryStore::default());
+        let agent = AgentManager::new(Arc::new(mock_provider), memory);
+        
+        let plan = crate::agent::planner::AgentPlan {
+            thought: None,
+            tasks: vec![
+                crate::agent::planner::AgentTask {
+                    task_id: "1".into(),
+                    tool_type: "native_web_search".into(),
+                    description: "Rust programming language".into(),
+                    depends_on: vec![],
+                }
+            ],
+        };
+
+        let results = agent.execute_plan(plan, "Context", None).await;
+        assert_eq!(results.len(), 1);
+        assert!(results[0].output.contains("SEARCH RESULTS for"));
     }
 }

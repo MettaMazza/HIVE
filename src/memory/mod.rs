@@ -37,7 +37,12 @@ impl Default for MemoryStore {
 
 impl MemoryStore {
     pub fn new(base_dir: Option<PathBuf>) -> Self {
-        let memory_dir = base_dir.unwrap_or_else(|| PathBuf::from("memory"));
+        #[cfg(test)]
+        let default_dir = std::env::temp_dir().join(format!("hive_mem_test_store_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        #[cfg(not(test))]
+        let default_dir = PathBuf::from("memory");
+
+        let memory_dir = base_dir.unwrap_or(default_dir);
         let working = WorkingMemory::new(Some(memory_dir.clone()));
         let autosave = AutosaveManager::new();
         let synaptic = Neo4jGraph::new();
@@ -151,7 +156,12 @@ impl MemoryStore {
 
         // 2. Wipe Physical Hard Drive Backups
         let dir = self.working.get_memory_dir();
-        let _ = tokio::fs::remove_dir_all(dir).await;
+        if let Err(e) = tokio::fs::remove_dir_all(&dir).await {
+            eprintln!("⚠️ Failed standard delete of {:?}: {}. Attempting force wipe...", dir, e);
+            let _ = std::process::Command::new("rm").arg("-rf").arg(&dir).status();
+            // Re-create the dir immediately so it's fresh without hitting Not Found errs
+            let _ = tokio::fs::create_dir_all(&dir).await;
+        }
         
         println!("⚠️ FACTORY RESET EXECUTED: All persistent memory has been wiped.");
     }
@@ -264,7 +274,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_roster_speaker_reorder() {
-        let store = MemoryStore::default();
+        let test_dir = std::env::temp_dir().join(format!("hive_mem_test_roster_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let store = MemoryStore::new(Some(test_dir.clone()));
         let s = Scope::Public { channel_id: "reorder".into(), user_id: "u".into() };
         store.add_event(Event { platform: "t".into(), scope: s.clone(), author_name: "Alice".into(), author_id: "a".into(), content: "1".into() }).await;
         store.add_event(Event { platform: "t".into(), scope: s.clone(), author_name: "Bob".into(), author_id: "b".into(), content: "2".into() }).await;
@@ -274,7 +285,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_roster_overflow() {
-        let store = MemoryStore::default();
+        let test_dir = std::env::temp_dir().join(format!("hive_mem_test_of_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let store = MemoryStore::new(Some(test_dir.clone()));
         let s = Scope::Public { channel_id: "of".into(), user_id: "u".into() };
         for i in 0..11 {
             store.add_event(Event { platform: "t".into(), scope: s.clone(), author_name: format!("U{}", i), author_id: format!("{}", i), content: "m".into() }).await;
@@ -286,13 +298,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_roster_none_for_missing() {
-        let store = MemoryStore::default();
+        let test_dir = std::env::temp_dir().join(format!("hive_mem_test_mnfm_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let store = MemoryStore::new(Some(test_dir.clone()));
         assert_eq!(store.get_roster("nope").await, None);
     }
 
     #[tokio::test]
     async fn test_private_no_roster() {
-        let store = MemoryStore::default();
+        let test_dir = std::env::temp_dir().join(format!("hive_mem_test_pnr_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let store = MemoryStore::new(Some(test_dir.clone()));
         let s = Scope::Private { user_id: "dm".into() };
         store.add_event(Event { platform: "t".into(), scope: s, author_name: "A".into(), author_id: "a".into(), content: "m".into() }).await;
         assert_eq!(store.get_roster("dm").await, None);
@@ -300,13 +314,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_init() {
-        let store = MemoryStore::default();
+        let test_dir = std::env::temp_dir().join(format!("hive_mem_test_init_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let store = MemoryStore::new(Some(test_dir.clone()));
         store.init().await;
     }
 
     #[tokio::test]
     async fn test_autosave_under_limit() {
-        let store = MemoryStore::default();
+        let test_dir = std::env::temp_dir().join(format!("hive_mem_test_asul_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let store = MemoryStore::new(Some(test_dir.clone()));
         let s = Scope::Public { channel_id: "t".into(), user_id: "u".into() };
         store.add_event(Event { platform: "t".into(), scope: s.clone(), author_name: "U".into(), author_id: "u".into(), content: "Small".into() }).await;
         assert!(store.check_and_trigger_autosave(&s).await.is_none());

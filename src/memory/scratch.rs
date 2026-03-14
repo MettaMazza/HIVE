@@ -15,8 +15,13 @@ impl Default for Scratchpad {
 
 impl Scratchpad {
     pub fn new(base_dir: Option<PathBuf>) -> Self {
+        #[cfg(test)]
+        let default_dir = std::env::temp_dir().join(format!("hive_mem_test_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        #[cfg(not(test))]
+        let default_dir = PathBuf::from("memory");
+
         Self {
-            base_dir: base_dir.unwrap_or_else(|| PathBuf::from("memory")),
+            base_dir: base_dir.unwrap_or(default_dir),
         }
     }
 

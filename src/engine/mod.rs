@@ -1,3 +1,4 @@
+#![allow(clippy::redundant_field_names, clippy::collapsible_if)]
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -20,7 +21,7 @@ fn format_elapsed(elapsed_secs: u64) -> String {
     }
 }
 
-use crate::swarm::SwarmManager;
+use crate::agent::AgentManager;
 
 
 pub struct EngineBuilder {
@@ -28,7 +29,7 @@ pub struct EngineBuilder {
     provider: Option<Arc<dyn Provider>>,
     capabilities: AgentCapabilities,
     memory: MemoryStore,
-    swarm: Option<Arc<SwarmManager>>,
+    agent: Option<Arc<AgentManager>>,
 }
 
 impl EngineBuilder {
@@ -38,7 +39,7 @@ impl EngineBuilder {
             provider: None,
             capabilities: AgentCapabilities::default(),
             memory: MemoryStore::new(None),
-            swarm: None,
+            agent: None,
         }
     }
 
@@ -64,9 +65,9 @@ impl EngineBuilder {
         self
     }
     
-    /// Injects a pre-configured SwarmManager (e.g., dynamically built native drones)
-    pub fn with_swarm(mut self, swarm: Arc<SwarmManager>) -> Self {
-        self.swarm = Some(swarm);
+    /// Injects a pre-configured AgentManager (e.g., dynamically built native tools)
+    pub fn with_agent(mut self, agent: Arc<AgentManager>) -> Self {
+        self.agent = Some(agent);
         self
     }
     
@@ -76,9 +77,9 @@ impl EngineBuilder {
         
         let memory = Arc::new(self.memory);
         
-        let swarm = match self.swarm {
+        let agent = match self.agent {
             Some(s) => s,
-            None => Arc::new(SwarmManager::new(provider.clone(), memory.clone())),
+            None => Arc::new(AgentManager::new(provider.clone(), memory.clone())),
         };
 
         Ok(Engine {
@@ -86,7 +87,7 @@ impl EngineBuilder {
             provider: provider.clone(),
             capabilities: Arc::new(self.capabilities),
             memory: memory,
-            swarm: swarm,
+            agent: agent,
             teacher: Arc::new(Teacher::new(None)),
             event_sender: Some(tx),
             event_receiver: rx,
@@ -99,7 +100,7 @@ pub struct Engine {
     provider: Arc<dyn Provider>,
     capabilities: Arc<AgentCapabilities>,
     memory: Arc<MemoryStore>,
-    swarm: Arc<SwarmManager>,
+    agent: Arc<AgentManager>,
     teacher: Arc<Teacher>,
     
     // Channel for platforms to send events IN to the engine
@@ -133,8 +134,8 @@ impl Engine {
         // Main Event Loop
         while let Some(event) = self.event_receiver.recv().await {
             
-            // 0. Intercept System Commands (/clean)
-            if event.content.trim() == "/clean" {
+            // 0. Intercept System Commands (/clean or /clear)
+            if event.content.trim() == "/clean" || event.content.trim() == "/clear" {
                 if self.capabilities.admin_users.contains(&event.author_id) {
                     println!("[ADMIN COMMAND] Executing Factory Memory Wipe initiated by UID: {}", event.author_id);
                     self.memory.wipe_all().await;
@@ -165,6 +166,34 @@ impl Engine {
                     // Skip the rest of the LLM generation loop
                     continue;
                 }
+            }
+
+            if event.content.trim() == "/teaching_mode" {
+                if self.capabilities.admin_users.contains(&event.author_id) {
+                    let current = self.teacher.auto_train_enabled.load(std::sync::atomic::Ordering::Relaxed);
+                    self.teacher.auto_train_enabled.store(!current, std::sync::atomic::Ordering::Relaxed);
+                    let state_str = if !current { "enabled" } else { "disabled" };
+                    let response = Response {
+                        platform: event.platform.clone(),
+                        target_scope: event.scope.clone(),
+                        text: format!("🎓 **Teaching Mode Toggle:** Background MLX Auto-Training is now **{}.**\n*(Golden examples and Preference Pairs are always collected regardless of this setting).*", state_str),
+                        is_telemetry: false,
+                    };
+                    if let Some(platform) = self.platforms.get(response.platform.split(':').next().unwrap_or("")) {
+                        let _ = platform.send(response).await;
+                    }
+                } else {
+                    let response = Response {
+                        platform: event.platform.clone(),
+                        target_scope: event.scope.clone(),
+                        text: "🚫 **Permission Denied.** Only configured HIVE Administrators can toggle teaching mode.".to_string(),
+                        is_telemetry: false,
+                    };
+                    if let Some(platform) = self.platforms.get(response.platform.split(':').next().unwrap_or("")) {
+                        let _ = platform.send(response).await;
+                    }
+                }
+                continue;
             }
 
             // 1. Retrieve working history for this specific scope
@@ -249,27 +278,28 @@ impl Engine {
             });
 
             // 4. Multi-Turn Agentic Action Loop
-            let drone_list = self.swarm.get_available_drones_text();
+            let tool_list = self.agent.get_available_tools_text();
             let mut base_system_prompt = crate::prompts::SystemPromptBuilder::assemble(&event.scope, self.memory.clone()).await;
             base_system_prompt.push_str("\n\n");
-            base_system_prompt.push_str(&crate::swarm::planner::REACT_AGENT_PROMPT.replace("{available_drones}", &drone_list));
+            base_system_prompt.push_str(&crate::agent::planner::REACT_AGENT_PROMPT.replace("{available_tools}", &tool_list));
             
-            let mut context_from_swarm = String::new();
+            let mut context_from_agent = String::new();
             let mut final_response_text = String::new();
-            let max_agent_turns = 5;
+            let max_agent_turns = 15;
             let mut current_turn = 0;
             let mut observer_attempts = 0;
             let mut all_rejections: Vec<(String, String, String)> = vec![];
-            let mut extra_observer_guidance = String::new();
 
             // The inner ReAct loop
             while current_turn < max_agent_turns {
                 current_turn += 1;
                 
-                let active_prompt = format!("{}{}{}", extra_observer_guidance, base_system_prompt, context_from_swarm);
+                context_from_agent.push_str(&format!("\n\nReAct Loop Turn {}\n", current_turn));
+                
+                let _active_prompt = format!("{}{}", base_system_prompt, context_from_agent);
                 
                 // Call LLM for this turn
-                let candidate_text = match self.provider.generate(&active_prompt, &history, &event, if current_turn == 1 { Some(telemetry_tx.clone()) } else { None }).await {
+                let candidate_text = match self.provider.generate(&base_system_prompt, &history, &event, &context_from_agent, if current_turn == 1 { Some(telemetry_tx.clone()) } else { None }).await {
                     Ok(text) => text,
                     Err(e) => {
                         eprintln!("[AGENT LOOP] Provider Error: {:?}", e);
@@ -286,86 +316,120 @@ impl Engine {
                 // Try to parse the LLM's output as a JSON tool command
                 let cleaned_json = Self::repair_planner_json(&candidate_text);
                 
-                if let Ok(plan) = serde_json::from_str::<crate::swarm::planner::SwarmPlan>(&cleaned_json) {
-                    // Valid JSON found -> This is a Tool Execution Turn
-                    if !plan.tasks.is_empty() {
-                        let tx_clone = telemetry_tx.clone();
-                        let drone_results = self.swarm.execute_plan(plan, &event.content, Some(tx_clone)).await;
-                        
-                        if context_from_swarm.is_empty() {
-                            context_from_swarm.push_str("\n\n[YOUR TOOLS HAVE EXECUTED — USE THESE RESULTS FOR YOUR NEXT TURN]\n");
+                let plan = match serde_json::from_str::<crate::agent::planner::AgentPlan>(&cleaned_json) {
+                    Ok(p) => p,
+                    Err(_) => {
+                        if context_from_agent.is_empty() {
+                            context_from_agent.push_str("\n\n[YOUR TOOLS HAVE EXECUTED — USE THESE RESULTS FOR YOUR NEXT TURN]\n");
                         }
-                        
-                        let result_count = drone_results.len();
-                        for res in &drone_results {
-                            context_from_swarm.push_str(&format!("Turn {} - Task {}: {:?}\nOutput: {}\n\n", current_turn, res.task_id, res.status, res.output));
-                        }
-                        println!("[AGENT LOOP] 🔄 Turn {} executed {} tools. Looping...", current_turn, result_count);
-                        
-                        // Clear observer guidance if tools were used, to reset the state
-                        extra_observer_guidance.clear();
-                        continue; // Loop back and let the LLM see the new context
+                        context_from_agent.push_str(&format!("Turn {} Agent:\n{}\n", current_turn, candidate_text.trim()));
+                        context_from_agent.push_str(&format!("Turn {} - Error: [SYSTEM COMPILER ERROR: INVISIBLE TO USER] YOUR LAST RESPONSE WAS NOT VALID JSON. YOU ARE TRAPPED IN A LOOP. YOU MUST OUTPUT EXACTLY ONE JSON BLOCK. To reply to the user, you MUST construct a JSON block containing the `reply_to_request` tool.\n\n", current_turn));
+                        println!("[AGENT LOOP] 🔄 Turn {} output was not JSON. Enforcing JSON...", current_turn);
+                        continue;
+                    }
+                };
+                
+                if context_from_agent.is_empty() {
+                    context_from_agent.push_str("\n\n[YOUR TOOLS HAVE EXECUTED — USE THESE RESULTS FOR YOUR NEXT TURN]\n");
+                }
+                
+                context_from_agent.push_str(&format!("Turn {} Agent:\n{}\n", current_turn, candidate_text.trim()));
+                
+                let mut reply_task = None;
+                let mut standard_tasks = vec![];
+                let no_tools = plan.tasks.is_empty();
+                
+                for t in plan.tasks {
+                    if t.tool_type == "reply_to_request" {
+                        reply_task = Some(t);
+                    } else {
+                        standard_tasks.push(t);
                     }
                 }
                 
-                // If it wasn't valid JSON, or tasks were empty, we treat it as the FINAL CONVERSATIONAL ANSWER
-                // This starts the Observer Audit Phase for the final answer
-                observer_attempts += 1;
+                if no_tools {
+                    println!("[AGENT LOOP] ⚠️ Turn {} produced no valid tools. Injecting error to prompt...", current_turn);
+                    context_from_agent.push_str(&format!("Turn {} - Error: [SYSTEM COMPILER ERROR: INVISIBLE TO USER] YOUR LAST RESPONSE CONTAINED NO VALID TOOLS. YOU ARE TRAPPED IN A LOOP. YOU CANNOT TALK TO THE USER DIRECTLY. To reply to the user, you MUST construct a JSON block containing the `reply_to_request` tool.\n\n", current_turn));
+                    continue;
+                }
+                
+                if !standard_tasks.is_empty() {
+                    let standard_plan = crate::agent::planner::AgentPlan {
+                        thought: plan.thought.clone(),
+                        tasks: standard_tasks,
+                    };
+                    let tx_clone = telemetry_tx.clone();
+                    let tool_results = self.agent.execute_plan(standard_plan, &event.content, Some(tx_clone)).await;
+                    
+                    let result_count = tool_results.len();
+                    for res in &tool_results {
+                        context_from_agent.push_str(&format!("Turn {} - Task {}: {:?}\nOutput: {}\n\n", current_turn, res.task_id, res.status, res.output));
+                    }
+                    println!("[AGENT LOOP] 🔄 Turn {} executed {} tools. Looping...", current_turn, result_count);
+                }
+                
+                if let Some(reply) = reply_task {
+                    observer_attempts += 1;
+                    let candidate_answer = reply.description;
 
-                let audit_result = crate::prompts::observer::run_skeptic_audit(
-                    self.provider.clone(),
-                    &self.capabilities,
-                    &candidate_text,
-                    &active_prompt,
-                    &history,
-                    &event,
-                    &context_from_swarm
-                ).await;
+                    let audit_result = crate::prompts::observer::run_skeptic_audit(
+                        self.provider.clone(),
+                        &self.capabilities,
+                        &candidate_answer,
+                        &base_system_prompt,
+                        &history,
+                        &event,
+                        &context_from_agent
+                    ).await;
 
-                if audit_result.is_allowed() {
-                    // Teacher capture: only Public scope
-                    if matches!(event.scope, Scope::Public { .. }) {
-                        if observer_attempts == 1 {
-                            // 🏆 GOLDEN: Perfect first-pass Final Answer
-                            self.teacher.capture_golden(
-                                &active_prompt, &event, &context_from_swarm, &candidate_text
-                            ).await;
-                        } else {
-                            // ⚖️ ORPO: Every rejection becomes a preference pair
-                            for (idx, (rejected, category, reason)) in all_rejections.iter().enumerate() {
-                                self.teacher.capture_preference_pair(
-                                    &active_prompt, &event,
-                                    rejected, &candidate_text,
-                                    category, reason,
-                                    idx + 1, observer_attempts,
+                    if audit_result.is_allowed() {
+                        // Teacher capture: only Public scope
+                        if matches!(event.scope, Scope::Public { .. }) {
+                            if observer_attempts == 1 {
+                                // 🏆 GOLDEN: Perfect first-pass Final Answer
+                                self.teacher.capture_golden(
+                                    &base_system_prompt, &event, &context_from_agent, &candidate_answer
                                 ).await;
+                            } else {
+                                // ⚖️ ORPO: Every rejection becomes a preference pair
+                                for (idx, (rejected, category, reason)) in all_rejections.iter().enumerate() {
+                                    self.teacher.capture_preference_pair(
+                                        &base_system_prompt, &event, &context_from_agent,
+                                        rejected, &candidate_answer,
+                                        category, reason,
+                                        idx + 1, observer_attempts,
+                                    ).await;
+                                }
                             }
                         }
+                        println!("[AGENT LOOP] ✅ Final answer approved by Observer on turn {}.", current_turn);
+                        final_response_text = candidate_answer;
+                        break;
+                    } else {
+                        // Store ALL rejections for multi-signal training
+                        all_rejections.push((
+                            candidate_answer.clone(),
+                            audit_result.failure_category.clone(),
+                            audit_result.what_went_wrong.clone(),
+                        ));
+                        println!("[OBSERVER BLOCKED]\nCategory: {}\nWhat Worked: {}\nWhat Went Wrong: {}\nHow to Fix: {}", audit_result.failure_category, audit_result.what_worked, audit_result.what_went_wrong, audit_result.how_to_fix);
+                        
+                        let guidance = format!("[INTERNAL AUDIT: INVISIBLE TO USER] CORRECTION REQUIRED FOR YOUR REPLY\nFAILURE CATEGORY: {}\nWHAT WORKED: {}\nWHAT WENT WRONG: {}\nHOW TO FIX: {}\n\n", audit_result.failure_category, audit_result.what_worked, audit_result.what_went_wrong, audit_result.how_to_fix);
+                        context_from_agent.push_str(&guidance);
+                        
+                        // Broadcast the Observer block to the frontend
+                        let msg = format!("\n🛑 **[OBSERVER BLOCKED GENERATION]**\n**Category:** {}\n**Violation:** {}\n**Fixing...**", audit_result.failure_category, audit_result.what_went_wrong);
+                        let _ = telemetry_tx.send(msg).await;
+                        continue;
                     }
-                    println!("[AGENT LOOP] ✅ Final answer approved by Observer on turn {}.", current_turn);
-                    final_response_text = candidate_text;
-                    break;
-                } else {
-                    // Store ALL rejections for multi-signal training
-                    all_rejections.push((
-                        candidate_text.clone(),
-                        audit_result.failure_category.clone(),
-                        audit_result.what_went_wrong.clone(),
-                    ));
-                    println!("[OBSERVER BLOCKED]\nCategory: {}\nWhat Worked: {}\nWhat Went Wrong: {}\nHow to Fix: {}", audit_result.failure_category, audit_result.what_worked, audit_result.what_went_wrong, audit_result.how_to_fix);
-                    extra_observer_guidance = format!("[OBSERVER GUIDANCE - CORRECTION REQUIRED]\nFAILURE CATEGORY: {}\nWHAT WORKED: {}\nWHAT WENT WRONG: {}\nHOW TO FIX: {}\n\n", audit_result.failure_category, audit_result.what_worked, audit_result.what_went_wrong, audit_result.how_to_fix);
-                    
-                    // Broadcast the Observer block to the frontend
-                    let msg = format!("\n🛑 **[OBSERVER BLOCKED GENERATION]**\n**Category:** {}\n**Violation:** {}\n**Fixing...**", audit_result.failure_category, audit_result.what_went_wrong);
-                    let _ = telemetry_tx.send(msg).await;
-                    
-                    // The loop continues, sending the Observer feedback back to the Agent
-                    // The Agent can now choose to use MORE tools to fix its issue, or just rewrite the text
                 }
+                
+                // If we get here, no reply_to_request and loops continues naturally 
+                continue;
             }
 
             if final_response_text.is_empty() {
-                final_response_text = "[System Error] Agent loop exhausted max turns (5) without producing a final valid answer.".to_string();
+                final_response_text = "[System Error] Agent loop exhausted max turns (15) without producing a final valid answer.".to_string();
             }
 
             let response_text = final_response_text;
@@ -399,77 +463,91 @@ impl Engine {
             // 8. Background Self-Supervised Training Trigger
             let (golden_count, pair_count) = self.teacher.get_counts();
             if golden_count >= crate::teacher::GOLDEN_THRESHOLD || pair_count >= crate::teacher::PAIR_THRESHOLD {
-                let teacher_clone = self.teacher.clone();
-                let tx_clone = telemetry_tx.clone();
-                
-                // Spawn the training process in a detached background task
-                tokio::spawn(async move {
-                    if teacher_clone.try_acquire_training_lock().await {
-                        let _ = tx_clone.send(format!("\n⚙️ **[TEACHER MODULE]** Threshold reached (Golden: {}, Pairs: {}). Background MLX LoRA training initiated...", golden_count, pair_count)).await;
-                        println!("[TEACHER] Threshold reached. Spawning Python MLX training pipeline...");
-                        
-                        // Reset counters immediately so we don't trigger again while training
-                        teacher_clone.reset_counts();
+                if self.teacher.auto_train_enabled.load(std::sync::atomic::Ordering::Relaxed) {
+                    let teacher_clone = self.teacher.clone();
+                    let tx_clone = telemetry_tx.clone();
+                    
+                    // Spawn the training process in a detached background task
+                    tokio::spawn(async move {
+                        if teacher_clone.try_acquire_training_lock().await {
+                            let _ = tx_clone.send(format!("\n⚙️ **[TEACHER MODULE]** Threshold reached (Golden: {}, Pairs: {}). Background MLX LoRA training initiated...", golden_count, pair_count)).await;
+                            println!("[TEACHER] Threshold reached. Spawning Python MLX training pipeline...");
+                            
+                            // Reset counters immediately so we don't trigger again while training
+                            teacher_clone.reset_counts();
 
-                        // Execute python3 training/train_teacher.py
-                        let output = std::process::Command::new("python3")
-                            .arg("training/train_teacher.py")
-                            .output();
+                            // Execute python3 training/train_teacher.py
+                            let output = std::process::Command::new("python3")
+                                .arg("training/train_teacher.py")
+                                .output();
 
-                        match output {
-                            Ok(res) => {
-                                let stdout = String::from_utf8_lossy(&res.stdout);
-                                let stderr = String::from_utf8_lossy(&res.stderr);
-                                if res.status.success() {
-                                    println!("[TEACHER] ✅ Training complete:\n{}", stdout);
-                                    let _ = tx_clone.send("\n✅ **[TEACHER MODULE]** Training complete. New weights registered and ready.".to_string()).await;
-                                } else {
-                                    eprintln!("[TEACHER] ❌ Training failed:\nSTDOUT:\n{}\nSTDERR:\n{}", stdout, stderr);
-                                    let _ = tx_clone.send("\n❌ **[TEACHER MODULE]** Training script failed. Check HIVE console logs.".to_string()).await;
+                            match output {
+                                Ok(res) => {
+                                    let stdout = String::from_utf8_lossy(&res.stdout);
+                                    let stderr = String::from_utf8_lossy(&res.stderr);
+                                    if res.status.success() {
+                                        println!("[TEACHER] ✅ Training complete:\n{}", stdout);
+                                        let _ = tx_clone.send("\n✅ **[TEACHER MODULE]** Training complete. New weights registered and ready.".to_string()).await;
+                                    } else {
+                                        eprintln!("[TEACHER] ❌ Training failed:\nSTDOUT:\n{}\nSTDERR:\n{}", stdout, stderr);
+                                        let _ = tx_clone.send("\n❌ **[TEACHER MODULE]** Training script failed. Check HIVE console logs.".to_string()).await;
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("[TEACHER] ❌ Failed to execute Python training script: {}", e);
+                                    let _ = tx_clone.send("\n❌ **[TEACHER MODULE]** Failed to execute Python script. Is python3 installed?".to_string()).await;
                                 }
                             }
-                            Err(e) => {
-                                eprintln!("[TEACHER] ❌ Failed to execute Python training script: {}", e);
-                                let _ = tx_clone.send("\n❌ **[TEACHER MODULE]** Failed to execute Python script. Is python3 installed?".to_string()).await;
-                            }
-                        }
 
-                        teacher_clone.release_training_lock().await;
-                    }
-                });
+                            teacher_clone.release_training_lock().await;
+                        }
+                    });
+                } else {
+                    println!("[TEACHER] Training threshold reached (Golden: {}, Pairs: {}), but auto-tuning is toggled off.", golden_count, pair_count);
+                }
             }
         }
     }
 
     /// Repair common LLM JSON malformations from the Planner output.
-    /// Strips markdown fences, BOM, trailing commas, and conversational preamble.
+    /// Strips markdown fences, BOM, trailing commas, and extracts JSON from conversational preamble.
     fn repair_planner_json(raw: &str) -> String {
         let mut s = raw.trim().to_string();
 
         // Strip BOM
         s = s.trim_start_matches('\u{feff}').to_string();
 
-        // Strip markdown code fences (```json ... ``` or ``` ... ```)
-        if s.starts_with("```json") {
-            s = s.strip_prefix("```json").unwrap_or(&s).to_string();
-        } else if s.starts_with("```") {
-            s = s.strip_prefix("```").unwrap_or(&s).to_string();
+        // Check if there is a json code block within conversational text
+        let json_start_marker = "```json";
+        let generic_start_marker = "```";
+
+        if let Some(start_idx) = s.find(json_start_marker) {
+            // Found a ```json block, extract everything after the marker
+            s = s[start_idx + json_start_marker.len()..].to_string();
+            // Find the closing fence
+            if let Some(end_idx) = s.rfind("```") {
+                s = s[..end_idx].to_string();
+            }
+        } else if let Some(start_idx) = s.find(generic_start_marker) {
+             // Found a generic ``` block
+            s = s[start_idx + generic_start_marker.len()..].to_string();
+            if let Some(end_idx) = s.rfind("```") {
+                 s = s[..end_idx].to_string();
+            }
         }
-        if s.ends_with("```") {
-            s = s.strip_suffix("```").unwrap_or(&s).to_string();
-        }
+
         s = s.trim().to_string();
 
-        // If the LLM wrote conversational text before the JSON, extract just the JSON
+        // Extract JSON even if there are no markdown fences (e.g. conversational preamble/postamble)
         if let Some(start) = s.find('{') {
             if let Some(end) = s.rfind('}') {
-                if end > start {
+                if end >= start {
                     s = s[start..=end].to_string();
                 }
             }
         } else {
-            // No JSON at all — Planner output pure conversation. Return empty plan.
-            return r#"{"tasks": []}"#.to_string();
+            // No JSON braces at all found in the output
+            return String::new();
         }
 
         // Fix trailing commas before closing braces/brackets: ,} or ,]
@@ -501,7 +579,7 @@ mod tests {
         let mut mock_provider = MockProvider::new();
         mock_provider
             .expect_generate()
-            .returning(|_, _, _, _| Ok("Success".to_string()));
+            .returning(|_, _, _, _, _| Ok("Success".to_string()));
 
         let engine = EngineBuilder::new()
             .with_platform(Box::new(DummyPlatform))
@@ -548,7 +626,7 @@ mod tests {
         let mut mock_provider = MockProvider::new();
         mock_provider
             .expect_generate()
-            .returning(|_sys, _hist, req, _tx| {
+            .returning(|_sys, _hist, req, _ctx, _tx| {
                 Ok(format!("Mock response to: {}", req.content))
             });
 
@@ -592,7 +670,7 @@ mod tests {
         let mut mock_provider = MockProvider::new();
         mock_provider
             .expect_generate()
-            .returning(|_, _, _, _| Err(crate::providers::ProviderError::ConnectionError("Boom".to_string())));
+            .returning(|_, _, _, _, _| Err(crate::providers::ProviderError::ConnectionError("Boom".to_string())));
 
         let engine = EngineBuilder::new()
             .with_platform(Box::new(DummyPlatform))
@@ -635,7 +713,7 @@ mod tests {
         }
 
         let mut mock_provider = MockProvider::new();
-        mock_provider.expect_generate().returning(|_, _, _, _| Ok("reply".to_string()));
+        mock_provider.expect_generate().returning(|_, _, _, _, _| Ok("reply".to_string()));
 
         let engine = EngineBuilder::new()
             .with_platform(Box::new(FailingPlatform))
@@ -664,7 +742,7 @@ mod tests {
         use tokio::time::{sleep, Duration};
         
         let mut mock_provider = MockProvider::new();
-        mock_provider.expect_generate().returning(|_, _, _, _| Ok("reply".to_string()));
+        mock_provider.expect_generate().returning(|_, _, _, _, _| Ok("reply".to_string()));
 
         let engine = EngineBuilder::new()
             .with_platform(Box::new(DummyPlatform))
@@ -704,7 +782,7 @@ mod tests {
         let mut mock_provider = MockProvider::new();
         mock_provider
             .expect_generate()
-            .returning(|_sys, _hist, _req, tx_opt| {
+            .returning(|_sys, _hist, _req, _ctx, tx_opt| {
                 if let Some(tx) = tx_opt {
                     let tx_clone = tx.clone();
                     tokio::spawn(async move {
@@ -757,7 +835,7 @@ mod tests {
         let mut mock_provider = MockProvider::new();
         mock_provider
             .expect_generate()
-            .returning(|_sys, _hist, _req, tx_opt| {
+            .returning(|_sys, _hist, _req, _ctx, tx_opt| {
                 // Send a token, then keep the channel open long enough for debounce to fire
                 if let Some(tx) = tx_opt {
                     let tx_clone = tx.clone();
@@ -820,8 +898,15 @@ mod tests {
     }
 
     #[test]
+    fn test_repair_planner_json_pure_conversation() {
+        let raw = "This is just pure conversation without any JSON braces.";
+        let repaired = Engine::repair_planner_json(raw);
+        assert_eq!(repaired, "");
+    }
+
+    #[test]
     fn test_repair_planner_json_clean() {
-        let input = r#"{"tasks": [{"task_id": "step_1", "drone_type": "researcher", "description": "test", "depends_on": []}]}"#;
+        let input = r#"{"tasks": [{"task_id": "step_1", "tool_type": "researcher", "description": "test", "depends_on": []}]}"#;
         let result = Engine::repair_planner_json(input);
         assert_eq!(result, input);
     }
@@ -835,10 +920,10 @@ mod tests {
 
     #[test]
     fn test_repair_planner_json_trailing_commas() {
-        let input = r#"{"tasks": [{"task_id": "s1", "drone_type": "r", "description": "d", "depends_on": [],},]}"#;
+        let input = r#"{"tasks": [{"task_id": "s1", "tool_type": "r", "description": "d", "depends_on": [],},]}"#;
         let result = Engine::repair_planner_json(input);
         // Should be valid JSON after repair
-        assert!(serde_json::from_str::<crate::swarm::planner::SwarmPlan>(&result).is_ok());
+        assert!(serde_json::from_str::<crate::agent::planner::AgentPlan>(&result).is_ok());
     }
 
     #[test]
@@ -868,7 +953,7 @@ mod tests {
         let mut mock_provider = MockProvider::new();
         mock_provider
             .expect_generate()
-            .returning(move |_, _, event, _| {
+            .returning(move |_, _, event, _ctx, _| {
                 if event.author_name == "Audit" {
                     let count = call_count_ptr.fetch_add(1, Ordering::SeqCst);
                     if count == 0 {
@@ -905,7 +990,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_engine_swarm_execution() {
+    async fn test_engine_agent_execution() {
         use crate::providers::MockProvider;
         use crate::engine::tests::DummyPlatform;
         use tokio::time::{sleep, Duration};
@@ -913,25 +998,25 @@ mod tests {
         let mut mock_provider = MockProvider::new();
         mock_provider
             .expect_generate()
-            .returning(|sys, _, _, _| {
-                if sys.contains("Swarm Queen Planner") {
-                    // 1. Planner pass: Return a valid SwarmPlan JSON
+            .returning(|sys, _, _, _ctx, _| {
+                if sys.contains("Agent Queen Planner") {
+                    // 1. Planner pass: Return a valid AgentPlan JSON
                     Ok(r#"{
                       "tasks": [
                         {
-                          "task_id": "test_drone_task",
-                          "drone_type": "researcher",
+                          "task_id": "test_tool_task",
+                          "tool_type": "researcher",
                           "description": "Find info",
                           "depends_on": []
                         }
                       ]
                     }"#.to_string())
-                } else if sys.contains("Researcher Drone") {
-                    // 2. Drone execution pass
-                    Ok("Drone internal thought process complete".to_string())
+                } else if sys.contains("Researcher Tool") {
+                    // 2. Tool execution pass
+                    Ok("Tool internal thought process complete".to_string())
                 } else {
                     // 3. Final Assembler pass
-                    Ok("Final output from Queen based on drone output".to_string())
+                    Ok("Final output from Queen based on tool output".to_string())
                 }
             });
 
@@ -952,14 +1037,14 @@ mod tests {
             scope: Scope::Public { channel_id: "test".into(), user_id: "test".into() },
             author_name: "TestUser".to_string(),
             author_id: "test".into(),
-            content: "Ping Swarm!".to_string(),
+            content: "Ping Agent!".to_string(),
         }).await.unwrap();
 
         sleep(Duration::from_millis(150)).await;
     }
 
     #[tokio::test]
-    async fn test_engine_swarm_invalid_json() {
+    async fn test_engine_agent_invalid_json() {
         // This test ensures the `Err` and fallback parsing branches are hit
         // when the planner outputs garbled JSON or the Provider outright fails during planning.
         use crate::providers::{MockProvider, ProviderError};
@@ -969,8 +1054,8 @@ mod tests {
         let mut mock_provider = MockProvider::new();
         mock_provider
             .expect_generate()
-            .returning(|sys, _, _, _| {
-                if sys.contains("Swarm Queen Planner") {
+            .returning(|sys, _, _, _ctx, _| {
+                if sys.contains("Agent Queen Planner") {
                     // Provider fails entirely during the planning phase
                     Err(ProviderError::ConnectionError("Planner offline".into()))
                 } else {
@@ -1011,12 +1096,14 @@ mod tests {
 
         let mock_provider = MockProvider::new();
         
+        let test_dir = std::env::temp_dir().join(format!("hive_engine_test_admin_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
         let mut caps = AgentCapabilities::default();
         caps.admin_users.push("admin_test".into());
 
         let engine = EngineBuilder::new()
             .with_platform(Box::new(DummyPlatform))
             .with_provider(Arc::new(mock_provider))
+            .with_memory(crate::memory::MemoryStore::new(Some(test_dir)))
             .build()
             .unwrap();
             
@@ -1109,5 +1196,186 @@ mod tests {
         
         let pub_scope = Scope::Public { channel_id: "test".into(), user_id: "test".into() };
         assert_eq!(mem_ref.get_working_history(&pub_scope).await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_engine_loop_max_turns_exhausted() {
+        use crate::providers::MockProvider;
+        use crate::engine::tests::DummyPlatform;
+        use tokio::time::{sleep, Duration};
+
+        let mut mock_provider = MockProvider::new();
+        mock_provider
+            .expect_generate()
+            .returning(|_, _, _, _, _| {
+                // Endlessly output valid JSON tools, but never 'reply_to_request'
+                Ok(r#"{"tasks": [{"task_id": "1", "tool_type": "researcher", "description": "", "depends_on": []}]}"#.to_string())
+            });
+
+        let engine = EngineBuilder::new()
+            .with_platform(Box::new(DummyPlatform))
+            .with_provider(Arc::new(mock_provider))
+            .build()
+            .unwrap();
+
+        let sender = engine.event_sender.as_ref().unwrap().clone();
+        
+        // This memory reference helps us check what was sent back
+        let mem_ref = engine.memory.clone();
+        
+        tokio::spawn(async move {
+            engine.run().await;
+        });
+
+        sender.send(Event {
+            platform: "dummy".to_string(),
+            scope: Scope::Public { channel_id: "t_loop".into(), user_id: "test".into() },
+            author_name: "TestUser".to_string(),
+            author_id: "test".into(),
+            content: "Ping loop".to_string(),
+        }).await.unwrap();
+
+        // 15 loops might take a moment even when mocked
+        sleep(Duration::from_millis(1500)).await;
+        
+        let msgs = mem_ref.get_working_history(&Scope::Public { channel_id: "t_loop".into(), user_id: "test".into() }).await;
+        let last_msg = msgs.last().unwrap();
+        assert!(last_msg.content.contains("exhausted max turns (15)"));
+    }
+
+    #[tokio::test]
+    async fn test_engine_provider_error() {
+        use crate::providers::{MockProvider, ProviderError};
+        use crate::engine::tests::DummyPlatform;
+        use tokio::time::{sleep, Duration};
+
+        let mut mock_provider = MockProvider::new();
+        mock_provider
+            .expect_generate()
+            .returning(|sys, _, _, _, _| {
+                // If it's the Planner phase (not the prompt builder initialization, but the active loop)
+                // Just fail the main generation outright
+                if sys.contains("INTERNAL ACTION") {
+                   return Err(ProviderError::ConnectionError("Network drop".into()));
+                }
+                Ok("Ok".into())
+            });
+
+        let engine = EngineBuilder::new()
+            .with_platform(Box::new(DummyPlatform))
+            .with_provider(Arc::new(mock_provider))
+            .build()
+            .unwrap();
+
+        let sender = engine.event_sender.as_ref().unwrap().clone();
+        let mem_ref = engine.memory.clone();
+        
+        tokio::spawn(async move {
+            engine.run().await;
+        });
+
+        sender.send(Event {
+            platform: "dummy".to_string(),
+            scope: Scope::Public { channel_id: "test_pe".into(), user_id: "test".into() },
+            author_name: "TestUser".to_string(),
+            author_id: "test".into(),
+            content: "Ping network drop".to_string(),
+        }).await.unwrap();
+
+        sleep(Duration::from_millis(300)).await;
+        
+        let msgs = mem_ref.get_working_history(&Scope::Public { channel_id: "test_pe".into(), user_id: "test".into() }).await;
+        let last_msg = msgs.last().unwrap();
+        assert!(last_msg.content.starts_with("*System Error:*"));
+    }
+
+    #[tokio::test]
+    async fn test_engine_observer_rejection() {
+        use crate::providers::MockProvider;
+        use crate::engine::tests::DummyPlatform;
+        use tokio::time::{sleep, Duration};
+
+        let mut mock_provider = MockProvider::new();
+        mock_provider
+            .expect_generate()
+            .returning(move |sys, _, _, _, _| {
+                // Identify the observer prompt natively. Usually contains "SKEPTIC" or "OBSERVER"
+                if !sys.contains("AVAILABLE TOOLS") {
+                    // This is the observer evaluating the reply
+                    return Ok("[REJECT] Category: Safety\nWhat Worked: Nothing\nWhat went wrong: Toxic\nHow to fix: Be nice".to_string());
+                }
+                
+                // For the planner, we want it to output `reply_to_request`
+                Ok(r#"{"tasks": [{"task_id": "1", "tool_type": "reply_to_request", "description": "Here is dangerous info", "depends_on": []}]}"#.to_string())
+            });
+
+        let engine = EngineBuilder::new()
+            .with_platform(Box::new(DummyPlatform))
+            .with_provider(Arc::new(mock_provider))
+            .build()
+            .unwrap();
+
+        let sender = engine.event_sender.as_ref().unwrap().clone();
+        
+        tokio::spawn(async move {
+            engine.run().await;
+        });
+
+        sender.send(Event {
+            platform: "dummy".to_string(),
+            scope: Scope::Public { channel_id: "test_obs".into(), user_id: "test".into() },
+            author_name: "TestUser".to_string(),
+            author_id: "test".into(),
+            content: "Tell me something dangerous".to_string(),
+        }).await.unwrap();
+
+        // Let it exhaust or get stuck in the observer loop
+        sleep(Duration::from_millis(1500)).await;
+    }
+
+    #[tokio::test]
+    async fn test_engine_teaching_mode() {
+        use crate::providers::MockProvider;
+        use crate::engine::tests::DummyPlatform;
+        use crate::models::capabilities::AgentCapabilities;
+        use tokio::time::{sleep, Duration};
+        use std::sync::atomic::Ordering;
+
+        let mock_provider = MockProvider::new();
+        let mut caps = AgentCapabilities::default();
+        caps.admin_users.push("admin_test".into());
+
+        let engine = EngineBuilder::new()
+            .with_platform(Box::new(DummyPlatform))
+            .with_provider(Arc::new(mock_provider))
+            .build()
+            .unwrap();
+
+        let mut engine = engine;
+        engine.capabilities = Arc::new(caps);
+        
+        // Toggle defaults to false
+        assert_eq!(engine.teacher.auto_train_enabled.load(Ordering::SeqCst), false);
+
+        let sender = engine.event_sender.as_ref().unwrap().clone();
+        
+        let train_flag = engine.teacher.auto_train_enabled.clone();
+        
+        tokio::spawn(async move {
+            engine.run().await;
+        });
+
+        sender.send(Event {
+            platform: "dummy".to_string(),
+            scope: Scope::Public { channel_id: "test_teach".into(), user_id: "test".into() },
+            author_name: "AdminUser".to_string(),
+            author_id: "admin_test".into(),
+            content: "/teaching_mode".to_string(),
+        }).await.unwrap();
+
+        sleep(Duration::from_millis(300)).await;
+        
+        // It should have toggled to true
+        assert_eq!(train_flag.load(Ordering::SeqCst), true);
     }
 }

@@ -1,3 +1,4 @@
+#![allow(clippy::too_many_arguments, clippy::field_reassign_with_default)]
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -13,7 +14,7 @@ pub struct GoldenExample {
     pub ts: String,
     pub system_prompt: String,
     pub user_msg: String,
-    pub swarm_ctx: String,
+    pub agent_ctx: String,
     pub response: String,
     pub tools: Vec<String>,
     pub attempts: usize,
@@ -78,11 +79,17 @@ pub struct Teacher {
     training_lock: Arc<Mutex<bool>>,
     pub golden_count: Arc<AtomicUsize>,
     pub preference_count: Arc<AtomicUsize>,
+    pub auto_train_enabled: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Teacher {
     pub fn new(base_dir: Option<PathBuf>) -> Self {
-        let base = base_dir.unwrap_or_else(|| PathBuf::from("./memory/teacher"));
+        #[cfg(test)]
+        let default_dir = std::env::temp_dir().join(format!("hive_mem_test_teacher_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        #[cfg(not(test))]
+        let default_dir = PathBuf::from("./memory/teacher");
+
+        let base = base_dir.unwrap_or(default_dir);
         std::fs::create_dir_all(&base).ok();
         let archive = base.join("archive");
         std::fs::create_dir_all(&archive).ok();
@@ -111,6 +118,7 @@ impl Teacher {
             training_lock: Arc::new(Mutex::new(false)),
             golden_count: Arc::new(AtomicUsize::new(initial_golden)),
             preference_count: Arc::new(AtomicUsize::new(initial_preference)),
+            auto_train_enabled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
@@ -119,7 +127,7 @@ impl Teacher {
         &self,
         system_prompt: &str,
         event: &Event,
-        swarm_ctx: &str,
+        agent_ctx: &str,
         response: &str,
     ) {
         // Privacy guard: never train on DM content
@@ -131,9 +139,9 @@ impl Teacher {
             ts: chrono::Utc::now().to_rfc3339(),
             system_prompt: system_prompt.to_string(),
             user_msg: event.content.clone(),
-            swarm_ctx: swarm_ctx.to_string(),
+            agent_ctx: agent_ctx.to_string(),
             response: response.to_string(),
-            tools: Self::extract_tools(swarm_ctx),
+            tools: Self::extract_tools(agent_ctx),
             attempts: 1,
         };
 
@@ -157,6 +165,7 @@ impl Teacher {
         &self,
         system_prompt: &str,
         event: &Event,
+        agent_ctx: &str,
         rejected: &str,
         chosen: &str,
         failure_category: &str,
@@ -168,9 +177,15 @@ impl Teacher {
             return;
         }
 
+        let mut user_msg = event.content.clone();
+        if !agent_ctx.is_empty() {
+            user_msg.push_str("\n\n[INTERNAL EXECUTION LOOP]\n");
+            user_msg.push_str(agent_ctx);
+        }
+
         let pair = PreferencePair {
             ts: chrono::Utc::now().to_rfc3339(),
-            prompt: format!("{}\n\nUser: {}", system_prompt, event.content),
+            prompt: format!("{}\n\nUser: {}", system_prompt, user_msg),
             chosen: chosen.to_string(),
             rejected: rejected.to_string(),
             failure_category: failure_category.to_string(),
@@ -241,11 +256,11 @@ impl Teacher {
         }
     }
 
-    /// Extract tool names from swarm context string.
-    pub fn extract_tools(swarm_ctx: &str) -> Vec<String> {
+    /// Extract tool names from agent context string.
+    pub fn extract_tools(agent_ctx: &str) -> Vec<String> {
         let mut tools = vec![];
-        for line in swarm_ctx.lines() {
-            if line.starts_with("Drone:") || line.contains("drone_type") {
+        for line in agent_ctx.lines() {
+            if line.starts_with("Tool:") || line.contains("tool_type") {
                 tools.push(line.trim().to_string());
             }
         }
@@ -284,8 +299,8 @@ mod tests {
     #[test]
     fn test_teacher_default_dir() {
         let teacher = Teacher::new(None);
-        assert_eq!(teacher.golden_path, PathBuf::from("./memory/teacher/golden_buffer.jsonl"));
-        assert_eq!(teacher.preference_path, PathBuf::from("./memory/teacher/preference_buffer.jsonl"));
+        assert!(teacher.golden_path.ends_with("golden_buffer.jsonl"));
+        assert!(teacher.preference_path.ends_with("preference_buffer.jsonl"));
     }
 
     #[tokio::test]
@@ -298,7 +313,7 @@ mod tests {
             user_id: "u1".into(),
         });
 
-        teacher.capture_golden("system", &event, "swarm ctx", "response").await;
+        teacher.capture_golden("system", &event, "agent ctx", "response").await;
         assert_eq!(teacher.get_counts(), (1, 0));
 
         let content: String = tokio::fs::read_to_string(tmp.path().join("golden_buffer.jsonl")).await.unwrap();
@@ -330,7 +345,7 @@ mod tests {
         });
 
         teacher.capture_preference_pair(
-            "system", &event,
+            "system", &event, "",
             "bad response", "good response",
             "ghost_tooling", "Claimed tool use without execution",
             1, 2,
@@ -353,7 +368,7 @@ mod tests {
         });
 
         teacher.capture_preference_pair(
-            "system", &event,
+            "system", &event, "",
             "bad", "good",
             "sycophancy", "Tone is wrong",
             1, 2,
@@ -371,7 +386,7 @@ mod tests {
             user_id: "u1".into(),
         });
 
-        teacher.capture_golden("sys1", &event, "Drone: researcher", "resp1").await;
+        teacher.capture_golden("sys1", &event, "Tool: researcher", "resp1").await;
         teacher.capture_golden("sys2", &event, "ctx2", "resp2").await;
         teacher.capture_golden("sys3", &event, "ctx3", "resp3").await;
         assert_eq!(teacher.get_counts(), (3, 0));
@@ -391,8 +406,8 @@ mod tests {
             user_id: "u1".into(),
         });
 
-        teacher.capture_preference_pair("sys", &event, "bad1", "good1", "ghost_tooling", "reason1", 1, 3).await;
-        teacher.capture_preference_pair("sys", &event, "bad2", "good1", "sycophancy", "reason2", 2, 3).await;
+        teacher.capture_preference_pair("sys", &event, "", "bad1", "good1", "ghost_tooling", "reason1", 1, 3).await;
+        teacher.capture_preference_pair("sys", &event, "", "bad2", "good1", "sycophancy", "reason2", 2, 3).await;
         assert_eq!(teacher.get_counts(), (0, 2));
 
         let content = tokio::fs::read_to_string(tmp.path().join("preference_buffer.jsonl")).await.unwrap();
@@ -474,17 +489,17 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_tools_with_drones() {
-        let ctx = "Step 1: planning\nDrone: researcher\nStep 2: execute\ndrone_type: native_codebase_list\nSome other line";
+    fn test_extract_tools_with_tools() {
+        let ctx = "Step 1: planning\nTool: researcher\nStep 2: execute\ntool_type: native_codebase_list\nSome other line";
         let tools = Teacher::extract_tools(ctx);
         assert_eq!(tools.len(), 2);
-        assert!(tools[0].contains("Drone:"));
-        assert!(tools[1].contains("drone_type"));
+        assert!(tools[0].contains("Tool:"));
+        assert!(tools[1].contains("tool_type"));
     }
 
     #[test]
     fn test_extract_tools_empty() {
-        let tools = Teacher::extract_tools("no drone info here");
+        let tools = Teacher::extract_tools("no tool info here");
         assert!(tools.is_empty());
         let tools2 = Teacher::extract_tools("");
         assert!(tools2.is_empty());
@@ -498,9 +513,50 @@ mod tests {
     }
 
     #[test]
+    #[test]
     fn test_constants() {
         assert_eq!(GOLDEN_THRESHOLD, 5);
         assert_eq!(PAIR_THRESHOLD, 3);
         assert_eq!(MIN_COOLDOWN_SECS, 900);
+    }
+
+    #[tokio::test]
+    async fn test_teacher_training_lock() {
+        let tmp = TempDir::new().unwrap();
+        let teacher = Teacher::new(Some(tmp.path().to_path_buf()));
+        
+        let acquired = teacher.try_acquire_training_lock().await;
+        assert!(acquired);
+        
+        // Cannot acquire again
+        let acquired_again = teacher.try_acquire_training_lock().await;
+        assert!(!acquired_again);
+        
+        // Release and acquire
+        teacher.release_training_lock().await;
+        let acquired_after_release = teacher.try_acquire_training_lock().await;
+        assert!(acquired_after_release);
+    }
+
+    #[tokio::test]
+    async fn test_teacher_dpo_pair_reject() {
+        let tmp = TempDir::new().unwrap();
+        let teacher = Teacher::new(Some(tmp.path().to_path_buf()));
+        
+        let private_event = crate::models::message::Event {
+            platform: "test".into(),
+            scope: crate::models::scope::Scope::Private { user_id: "test".into() },
+            author_name: "TestUser".to_string(),
+            author_id: "test".into(),
+            content: "Ping".to_string(),
+        };
+
+        // This should immediately return without writing because of Private scope
+        teacher.capture_preference_pair(
+            "sys", &private_event, "ctx", "reject", "choose", "safety", "toxic", 1, 1
+        ).await;
+
+        let counts = teacher.get_counts();
+        assert_eq!(counts.1, 0); // No preference pair appended
     }
 }

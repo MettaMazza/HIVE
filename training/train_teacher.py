@@ -83,13 +83,14 @@ def format_golden_for_sft(examples: list) -> list:
     for ex in examples:
         system_content = ex.get("system_prompt", "")
         swarm_ctx = ex.get("swarm_ctx", "")
+        user_msg = ex.get("user_msg", "")
         if swarm_ctx:
-            system_content += f"\n\n{swarm_ctx}"
+            user_msg += f"\n\n[INTERNAL EXECUTION LOOP]\n{swarm_ctx}"
 
         formatted.append({
             "messages": [
                 {"role": "system", "content": system_content},
-                {"role": "user", "content": ex["user_msg"]},
+                {"role": "user", "content": user_msg},
                 {"role": "assistant", "content": ex["response"]},
             ]
         })

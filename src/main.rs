@@ -6,7 +6,7 @@ mod models;
 mod platforms;
 pub mod prompts;
 mod providers;
-pub mod swarm;
+pub mod agent;
 pub mod teacher;
 
 use std::sync::Arc;
@@ -40,11 +40,11 @@ pub async fn run_app() {
     let memory_store = Arc::new(crate::memory::MemoryStore::default());
     let provider = Arc::new(OllamaProvider::new());
     
-    // 2. Initialize Swarm Manager to gather Native Tolls (Drones)
-    let swarm_manager = crate::swarm::SwarmManager::new(provider.clone(), memory_store.clone());
-    let native_drones = swarm_manager.get_drone_names();
+    // 2. Initialize Agent Manager to gather Native Tolls (Tools)
+    let agent_manager = crate::agent::AgentManager::new(provider.clone(), memory_store.clone());
+    let native_tools = agent_manager.get_tool_names();
 
-    // 3. Inject Dynamic Drone Tooling into Capabilities 
+    // 3. Inject Dynamic Tool Tooling into Capabilities 
     let capabilities = AgentCapabilities {
         admin_users: vec![
             "1299810741984956449".into(), // metta_mazza
@@ -58,7 +58,7 @@ pub async fn run_app() {
             "write_file".into(),
             "delete_file".into(),
         ],
-        default_tools: native_drones, // <-- Dynamically Assigned 
+        default_tools: native_tools, // <-- Dynamically Assigned 
     };
 
     // 4. Build the engine with our defined platforms and injected contexts
@@ -67,7 +67,7 @@ pub async fn run_app() {
         .with_platform(Box::new(CliPlatform::new(reader)))
         .with_provider(provider)
         .with_capabilities(capabilities)
-        .with_swarm(Arc::new(swarm_manager))
+        .with_agent(Arc::new(agent_manager))
         .build()
         .expect("Failed to build Engine");
 
