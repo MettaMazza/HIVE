@@ -103,6 +103,45 @@ pub async fn execute_file_writer(
                 Err(e) => format!("Failed to render PDF: {}", e),
             }
         }
+        "compose" => {
+            let title = extract_tag(&description, "title:").unwrap_or("Untitled".to_string());
+            let theme = extract_tag(&description, "theme:").unwrap_or("professional".to_string());
+            let content = if let Some(idx) = description.find("content:[") {
+                let s = &description[idx + 9..];
+                if let Some(e) = s.rfind(']') {
+                    s[..e].trim().to_string()
+                } else {
+                    s.trim().to_string()
+                }
+            } else {
+                return ToolResult {
+                    task_id,
+                    output: "Error: Missing content:[...] payload.".into(),
+                    tokens_used: 0,
+                    status: ToolStatus::Failed("Missing Content".into()),
+                };
+            };
+            
+            if let Some(tx) = &telemetry_tx {
+                let _ = tx.send("⚙️ Composing and Rendering full Document Draft...\n".to_string()).await;
+                let _ = tx.send("typing_indicator".into()).await;
+            }
+            let _ = composer.create_draft(&doc_id, &title, "Apis", &theme).await;
+            let _ = composer.add_section(&doc_id, "", &content).await;
+            
+            match composer.render_pdf(&doc_id).await {
+                Ok(pdf_path) => {
+                    if let Some(tx) = &telemetry_tx {
+                        let _ = tx.send("✨ Document complete.\n".to_string()).await;
+                    }
+                    format!(
+                        "Document rendering complete. YOU MUST include this EXACT tag in your response to deliver it:\n\n[ATTACH_FILE]({})\n",
+                        pdf_path
+                    )
+                }
+                Err(e) => format!("Failed to render PDF: {}", e),
+            }
+        }
         _ => format!("Unknown document action: {}", action),
     };
 

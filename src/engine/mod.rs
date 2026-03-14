@@ -76,13 +76,7 @@ impl EngineBuilder {
         self.memory = mem;
         self
     }
-    
-    /// Injects a pre-configured AgentManager (e.g., dynamically built native tools)
-    pub fn with_agent(mut self, agent: Arc<AgentManager>) -> Self {
-        self.agent = Some(agent);
-        self
-    }
-    
+
     pub fn build(self) -> Result<Engine, &'static str> {
         let provider = self.provider.ok_or("Engine requires a Provider to be set")?;
         let (tx, rx) = mpsc::channel(100);

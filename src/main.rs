@@ -88,7 +88,6 @@ pub async fn run_app() {
         .with_platform(Box::new(CliPlatform::new(reader)))
         .with_provider(provider)
         .with_capabilities(capabilities)
-        .with_agent(Arc::new(agent_manager))
         .build()
         .expect("Failed to build Engine");
 

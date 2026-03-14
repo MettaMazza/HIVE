@@ -129,7 +129,11 @@ impl AgentManager {
         };
         let file_writer = ToolTemplate {
             name: "file_writer".into(),
-            system_prompt: "Document Composer Drone. Used to create professional PDF/BDF documents. Requires multi-turn usage. 1: action:[start] id:[doc_id] title:[...] author:[...] theme:[...]. 2: action:[add_section] id:[doc_id] heading:[...] content:[...payload...]. 3: action:[render] id:[doc_id]".into(),
+            system_prompt: "You can create richly formatted PDF documents and save them to your document library. \
+            For a single-shot document, use 'action:[compose] id:[doc1] title:[...] theme:[professional/cyberpunk/minimal] content:[Markdown text...]'. \
+            For multi-turn piece-by-piece drafting, first use 'action:[start] id:[doc1] title:[...] theme:[professional]'. \
+            Then in subsequent turns, use 'action:[add_section] id:[doc1] heading:[...] content:[...]'. \
+            Finally, use 'action:[render] id:[doc1]'.".into(),
             tools: vec![],
         };
         let read_attachment = ToolTemplate {

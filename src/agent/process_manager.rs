@@ -81,7 +81,8 @@ pub async fn execute_process_manager(
             match child {
                 Ok(out) => {
                     let pid_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                    if let Ok(pid) = pid_str.parse::<u32>() {
+                    let pid_clean = pid_str.split_whitespace().last().unwrap_or("");
+                    if let Ok(pid) = pid_clean.parse::<u32>() {
                         let mut map = daemons().lock().await;
                         map.insert(pid, (cmd.clone(), log_file.clone()));
                         output = format!("Daemon started successfully.\nPID: {}\nCommand: {}\nLog File: {}", pid, cmd, log_file);

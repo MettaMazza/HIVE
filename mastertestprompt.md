@@ -35,7 +35,7 @@ The following prompt is designed to push the HIVE Agent stack to its absolute li
 > 
 > **Turn 5: Final Verification, Document Composition & Synthesis**
 > 23. Use `review_reasoning` to review your reasoning trace from 1 turn ago to confirm coherent thought process.
-> 24. Use `file_writer` to draft a professional PDF document titled "Master Gauntlet v2 Report" summarizing your success across all turns.
+> 24. Use `file_writer` to autonomously compose and render the pdf in one step: `action:[compose] id:[report] title:[Master Gauntlet v2] theme:[cyberpunk] content:[# Success across all turns.]`.
 > 25. Use `synthesizer` to fan-in all observations, parse the results, and generate the final response.
 > 26. Your final response MUST end with the following formatted report card. For each tool, write PASS if it executed successfully or FAIL with a reason:
 > 
