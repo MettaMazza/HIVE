@@ -16,7 +16,6 @@ The following prompt is designed to push the HIVE Agent stack to its absolute li
 > 7. Use `store_lesson` to permanently store a lesson that "The Master Gauntlet v2 requires absolute precision." with keywords "gauntlet,testing" and confidence [1.0].
 > 8. Use `operate_turing_grid` with `action:[write]` to write a JSON payload `{"gauntlet": "active", "version": 2}` to your current cell.
 > 9. Use `manage_routine` to create a new routine file (action:[create] name:[gauntlet_routine.md] content:[Never skip a turn.])
-> 10. Use `voice_synthesizer` to speak aloud the phrase "The Master Gauntlet is complete. All systems nominal."
 > 
 > **Turn 3: Platform Integration & Introspection**
 > 11. Use `operate_turing_grid` with `action:[scan]` radius 2 to radar ping the grid.
@@ -55,7 +54,6 @@ The following prompt is designed to push the HIVE Agent stack to its absolute li
 > ║ operate_turing_grid       │ PASS / FAIL             ║
 > ║ manage_routine            │ PASS / FAIL             ║
 > ║ manage_skill              │ PASS / FAIL (or ADMIN)  ║
-> ║ voice_synthesizer         │ PASS / FAIL             ║
 > ║ outreach                  │ PASS / FAIL             ║
 > ║ channel_reader            │ PASS / FAIL             ║
 > ║ emoji_react               │ PASS / FAIL             ║
@@ -69,7 +67,7 @@ The following prompt is designed to push the HIVE Agent stack to its absolute li
 > ║ run_bash_command          │ PASS / FAIL (or ADMIN)  ║
 > ║ synthesizer               │ PASS / FAIL             ║
 > ╠══════════════════════════════════════════════════════╣
-> ║ TOTAL                     │ XX / 22 PASSED          ║
+> ║ TOTAL                     │ XX / 21 PASSED          ║
 > ╚══════════════════════════════════════════════════════╝
 > ```
 > 

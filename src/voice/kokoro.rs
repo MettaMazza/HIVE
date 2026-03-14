@@ -67,6 +67,7 @@ impl KokoroTTS {
                 .arg(&self.worker_path)
                 .arg(text)
                 .arg(&output_path)
+                .kill_on_drop(true)
                 .output()
         ).await;
 
