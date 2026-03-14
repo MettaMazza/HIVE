@@ -340,6 +340,7 @@ mod tests {
                 tool_type: t.into(),
                 description: "mock action:[read]".into(),
                 depends_on: vec![],
+            source: None,
             };
             
             let handle = dispatch_native_tool(
@@ -363,6 +364,7 @@ mod tests {
             tool_type: "generate_image".into(),
             description: "mock".into(),
             depends_on: vec![],
+            source: None,
         };
         let dup_handle = dispatch_native_tool(
             &img_task,
@@ -383,6 +385,7 @@ mod tests {
             tool_type: "fake_drone_99".into(),
             description: "mock".into(),
             depends_on: vec![],
+            source: None,
         };
         let none_handle = dispatch_native_tool(
             &missing,

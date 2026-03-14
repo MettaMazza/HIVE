@@ -109,6 +109,7 @@ pub async fn execute_react_loop(
                             tool_type: "reply_to_request".to_string(),
                             description: candidate_text.trim().to_string(),
                             depends_on: vec![],
+                            source: None,
                         }],
                     }
                 } else {
@@ -221,7 +222,32 @@ pub async fn execute_react_loop(
         
         if let Some(reply) = reply_task {
             observer_attempts += 1;
-            let candidate_answer = reply.description;
+            let mut candidate_answer = reply.description;
+
+            // OUTPUT FORWARDING: If the reply references a source task_id,
+            // find that task's raw output in the execution timeline and append it.
+            if let Some(ref source_id) = reply.source {
+                // Search context_from_agent for the referenced task's output block
+                let search_prefix = format!("Task {}: Success", source_id);
+                let output_prefix = "Output: ";
+                let mut found_output = None;
+                
+                for line_block in context_from_agent.split("\n\n") {
+                    if line_block.contains(&search_prefix) {
+                        // Extract the "Output: ..." portion
+                        if let Some(output_start) = line_block.find(output_prefix) {
+                            found_output = Some(line_block[output_start + output_prefix.len()..].to_string());
+                        }
+                    }
+                }
+                
+                if let Some(raw_output) = found_output {
+                    candidate_answer = format!("{}\n\n{}", candidate_answer.trim(), raw_output.trim());
+                    tracing::info!("[OUTPUT FORWARD] Appended raw output from task '{}' to reply.", source_id);
+                } else {
+                    tracing::warn!("[OUTPUT FORWARD] Source task '{}' not found in timeline. Delivering description only.", source_id);
+                }
+            }
 
             let audit_result = crate::prompts::observer::run_skeptic_audit(
                 provider.clone(),

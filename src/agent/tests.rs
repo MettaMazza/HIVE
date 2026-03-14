@@ -36,6 +36,7 @@ async fn test_agent_execute_plan_success() {
                 tool_type: "researcher".into(),
                 description: "do research".into(),
                 depends_on: vec![],
+                source: None,
             }
         ],
     };
@@ -66,6 +67,7 @@ async fn test_agent_execute_plan_tool_not_found() {
                 tool_type: "missing_tool".into(),
                 description: "fail".into(),
                 depends_on: vec![],
+                source: None,
             }
         ],
     };
@@ -100,6 +102,7 @@ async fn test_agent_channel_reader() {
                 tool_type: "channel_reader".into(),
                 description: "read test_chan".into(),
                 depends_on: vec![],
+                source: None,
             }
         ],
     };
@@ -123,6 +126,7 @@ async fn test_agent_codebase_list() {
                 tool_type: "codebase_list".into(),
                 description: "".into(),
                 depends_on: vec![],
+                source: None,
             }
         ],
     };
@@ -146,6 +150,7 @@ async fn test_agent_codebase_read() {
                 tool_type: "codebase_read".into(),
                 description: "Cargo.toml".into(),
                 depends_on: vec![],
+                source: None,
             }
         ],
     };
@@ -169,6 +174,7 @@ async fn test_agent_codebase_read_security() {
                 tool_type: "codebase_read".into(),
                 description: "../Cargo.toml".into(),
                 depends_on: vec![],
+                source: None,
             }
         ],
     };
@@ -192,6 +198,7 @@ async fn test_agent_web_search() {
                 tool_type: "web_search".into(),
                 description: "Rust programming language".into(),
                 depends_on: vec![],
+                source: None,
             }
         ],
     };
