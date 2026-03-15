@@ -16,6 +16,42 @@ use crate::platforms::Platform;
 use crate::providers::Provider;
 use crate::teacher::Teacher;
 
+/// Loads the last N autonomy session summaries from activity.jsonl so the LLM
+/// knows what it already did and won't repeat the same actions.
+async fn load_recent_autonomy_sessions(max_entries: usize) -> String {
+    let path = std::path::Path::new("memory/autonomy/activity.jsonl");
+    let content = match tokio::fs::read_to_string(path).await {
+        Ok(c) => c,
+        Err(_) => return String::new(),
+    };
+
+    let entries: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
+    if entries.is_empty() {
+        return String::new();
+    }
+
+    let start = if entries.len() > max_entries { entries.len() - max_entries } else { 0 };
+    let recent = &entries[start..];
+
+    let mut dedup_block = String::from("\n🚫 **PREVIOUS AUTONOMY SESSIONS — DO NOT REPEAT THESE:**\n");
+    dedup_block.push_str("You have ALREADY done the following in recent sessions. Do NOT do the same things again. Explore NEW territory.\n\n");
+
+    for (i, line) in recent.iter().enumerate() {
+        if let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) {
+            let summary = entry.get("summary").and_then(|v| v.as_str()).unwrap_or("(no summary)");
+            let tools = entry.get("tools_used").and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|t| t.as_str()).collect::<Vec<_>>().join(", "))
+                .unwrap_or_default();
+            // Truncate summary to first 200 chars to keep context lean
+            let short_summary: String = summary.chars().take(200).collect();
+            dedup_block.push_str(&format!("Session {}: [Tools: {}] {}...\n", i + 1, tools, short_summary));
+        }
+    }
+
+    dedup_block.push_str("\nYou MUST do something DIFFERENT this session. Use different tools, explore different areas, or work on something new.\n");
+    dedup_block
+}
+
 /// Format elapsed seconds as a human-readable string.
 pub fn format_elapsed(elapsed_secs: u64) -> String {
     if elapsed_secs < 60 {
@@ -406,6 +442,7 @@ impl Engine {
                             tokio::time::sleep(tokio::time::Duration::from_secs(300)).await;
                             tracing::info!("[AUTONOMY] 🐝 5-minute idle timer fired. Entering Continuous Autonomy mode.");
                             let public_narrative = memory_clone.get_public_narrative().await;
+                            let previous_sessions = load_recent_autonomy_sessions(5).await;
                             let autonomy_event = Event {
                                 platform: "discord:1480192647657427044".to_string(),
                                 scope: Scope::Public {
@@ -417,15 +454,18 @@ impl Engine {
                                 content: format!(
                                     "You are now in Continuous Autonomy mode. You have 5 minutes of idle time.\n\n\
                                     {}\n\n\
+                                    {}\n\n\
                                     CRITICAL DIRECTIVE: This is an UNSUPERVISED, INTERNAL AUTONOMY SESSION. You are alone. \
                                     You MUST NOT speak to users, you MUST NOT write conversational stories about them, and you MUST NOT address anyone directly. \
                                     This is your private internal monologue. \
                                     \n\n\
                                     Use this time productively. Consider the public engagement narrative above and diversify your autonomous work. \
+                                    You MUST NOT repeat what you did in previous sessions listed above. Branch out. Be creative. Explore new ground. \
                                     Ideas: review your memory, consolidate lessons, practice skills, explore your Turing Grid, run routines, \
-                                    do research, or anything you find valuable for self-improvement. \
+                                    do research, audit system logs, scan for bugs, or anything you find valuable for self-improvement. \
                                     Report your internal monologue and actions in your final reply.",
-                                    public_narrative
+                                    public_narrative,
+                                    previous_sessions
                                 ),
                             };
                             let _ = sender_clone.send(autonomy_event).await;
@@ -490,6 +530,7 @@ impl Engine {
                         
                         // Build context about public engagements for diversity
                         let public_narrative = memory_clone.get_public_narrative().await;
+                        let previous_sessions = load_recent_autonomy_sessions(5).await;
                         
                         let autonomy_event = Event {
                             platform: "discord:1480192647657427044".to_string(),
@@ -502,15 +543,18 @@ impl Engine {
                             content: format!(
                                 "You are now in Continuous Autonomy mode. You have 5 minutes of idle time.\n\n\
                                 {}\n\n\
+                                {}\n\n\
                                 CRITICAL DIRECTIVE: This is an UNSUPERVISED, INTERNAL AUTONOMY SESSION. You are alone. \
                                 You MUST NOT speak to users, you MUST NOT write conversational stories about them, and you MUST NOT address anyone directly. \
                                 This is your private internal monologue. \
                                 \n\n\
                                 Use this time productively. Consider the public engagement narrative above and diversify your autonomous work. \
+                                You MUST NOT repeat what you did in previous sessions listed above. Branch out. Be creative. Explore new ground. \
                                 Ideas: review your memory, consolidate lessons, practice skills, explore your Turing Grid, run routines, \
-                                do research, or anything you find valuable for self-improvement. \
+                                do research, audit system logs, scan for bugs, or anything you find valuable for self-improvement. \
                                 Report your internal monologue and actions in your final reply.",
-                                public_narrative
+                                public_narrative,
+                                previous_sessions
                             ),
                         };
                         let _ = sender_clone.send(autonomy_event).await;
