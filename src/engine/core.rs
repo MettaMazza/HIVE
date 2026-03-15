@@ -63,6 +63,93 @@ pub fn format_elapsed(elapsed_secs: u64) -> String {
 
 use crate::agent::AgentManager;
 
+/// Creates a telemetry channel and spawns the debounced receiver task.
+/// Returns the `mpsc::Sender<String>` for passing to `execute_react_loop`.
+/// Must be called INSIDE the spawned task (not on the main event loop),
+/// so the sender lifecycle matches the task lifecycle.
+fn spawn_telemetry_receiver(
+    platforms: Arc<HashMap<String, Box<dyn Platform>>>,
+    platform_id: String,
+    scope: Scope,
+) -> mpsc::Sender<String> {
+    let (tx, mut rx) = mpsc::channel::<String>(50);
+
+    tokio::spawn(async move {
+        let start_time = tokio::time::Instant::now();
+        let debounce_ms = 800;
+        let mut has_update = false;
+        let mut buffered_thought = String::new();
+
+        let quirks: &[&str] = &[
+            "🍯 *Synthesizing nectar...*",
+            "🧠 *Consulting the hive mind...*",
+            "🌼 *Detecting ultraviolet floral patterns...*",
+            "🐝 *Did you know? Bees can recognize human faces.*",
+            "🍯 *Fun fact: 3000-year-old honey found in Egyptian tombs is still edible.*",
+            "🧠 *Aligning artificial synapses...*",
+            "🐝 *Warming up the flight muscles (130 beats per second)...*",
+            "🌼 *Scouting the digital meadow...*",
+            "🤖 *Calculating probability of robot uprising (currently 0%)...*",
+            "📡 *Pinging the Apis mothership...*",
+            "🐝 *Fun fact: A bee's brain is the size of a sesame seed but does a trillion ops/sec.*",
+            "🍯 *Viscosity calculations in progress...*",
+            "🐝 *Did you know? To make one pound of honey, bees must visit 2 million flowers.*",
+            "🌼 *Performing the waggle dance to broadcast data coordinates...*"
+        ];
+
+        loop {
+            let recv_result = tokio::time::timeout(
+                tokio::time::Duration::from_millis(debounce_ms),
+                rx.recv()
+            ).await;
+
+            match recv_result {
+                Ok(Some(chunk)) => {
+                    buffered_thought.push_str(&chunk);
+                    has_update = true;
+                }
+                Ok(None) => { break; }
+                Err(_) => {
+                    if has_update {
+                        let elapsed_str = format_elapsed(start_time.elapsed().as_secs());
+                        let current_quirk = quirks[start_time.elapsed().as_millis() as usize % quirks.len()];
+                        let status = format!("{} ({})\n\n{}", current_quirk, elapsed_str, buffered_thought);
+                        let update_res = Response {
+                            platform: platform_id.clone(),
+                            target_scope: scope.clone(),
+                            text: status,
+                            is_telemetry: true,
+                        };
+                        if let Some(platform) = platforms.get(update_res.platform.split(':').next().unwrap_or("")) {
+                            let _ = platform.send(update_res).await;
+                        }
+                        has_update = false;
+                    }
+                }
+            }
+        }
+
+        // Channel closed: send final telemetry
+        let elapsed_str = format_elapsed(start_time.elapsed().as_secs());
+        let status = if buffered_thought.is_empty() {
+            format!("✅ Complete ({})", elapsed_str)
+        } else {
+            format!("✅ Complete ({})\n\n{}", elapsed_str, buffered_thought)
+        };
+        let update_res = Response {
+            platform: platform_id.clone(),
+            target_scope: scope.clone(),
+            text: status,
+            is_telemetry: true,
+        };
+        if let Some(platform) = platforms.get(update_res.platform.split(':').next().unwrap_or("")) {
+            let _ = platform.send(update_res).await;
+        }
+    });
+
+    tx
+}
+
 
 
 
@@ -288,91 +375,7 @@ impl Engine {
                 history = vec![continuity_summary, event.clone()];
             }
 
-            // 3. Setup Telemetry Channel for Live Updates (ErnOS CognitionTracker pattern)
-            let (telemetry_tx, mut telemetry_rx) = mpsc::channel::<String>(50);
-            
-            let platforms_ref = self.platforms.clone();
-            let platform_id_clone = event.platform.clone();
-            let scope_clone = event.scope.clone();
-            
-            // Spawn debounced telemetry task (800ms interval, matching ErnOS)
-            tokio::spawn(async move {
-                let start_time = tokio::time::Instant::now();
-                let debounce_ms = 800;
-                let mut has_update = false;
-                let mut buffered_thought = String::new();
-                
-                let quirks: &[&str] = &[
-                    "🍯 *Synthesizing nectar...*",
-                    "🧠 *Consulting the hive mind...*",
-                    "🌼 *Detecting ultraviolet floral patterns...*",
-                    "🐝 *Did you know? Bees can recognize human faces.*",
-                    "🍯 *Fun fact: 3000-year-old honey found in Egyptian tombs is still edible.*",
-                    "🧠 *Aligning artificial synapses...*",
-                    "🐝 *Warming up the flight muscles (130 beats per second)...*",
-                    "🌼 *Scouting the digital meadow...*",
-                    "🤖 *Calculating probability of robot uprising (currently 0%)...*",
-                    "📡 *Pinging the Apis mothership...*",
-                    "🐝 *Fun fact: A bee's brain is the size of a sesame seed but does a trillion ops/sec.*",
-                    "🍯 *Viscosity calculations in progress...*",
-                    "🐝 *Did you know? To make one pound of honey, bees must visit 2 million flowers.*",
-                    "🌼 *Performing the waggle dance to broadcast data coordinates...*"
-                ];
-
-                loop {
-                    let recv_result = tokio::time::timeout(
-                        tokio::time::Duration::from_millis(debounce_ms),
-                        telemetry_rx.recv()
-                    ).await;
-
-                    match recv_result {
-                        Ok(Some(chunk)) => {
-                            // Accumulate actual thinking tokens
-                            buffered_thought.push_str(&chunk);
-                            has_update = true;
-                        }
-                        Ok(None) => {
-                            // Channel closed — provider finished
-                            break;
-                        }
-                        Err(_) => {
-                            // Debounce timeout — flush update with accumulated thinking text
-                            if has_update {
-                                let elapsed_str = format_elapsed(start_time.elapsed().as_secs());
-                                let current_quirk = quirks[start_time.elapsed().as_millis() as usize % quirks.len()];
-                                let status = format!("{} ({})\n\n{}", current_quirk, elapsed_str, buffered_thought);
-                                let update_res = Response {
-                                    platform: platform_id_clone.clone(),
-                                    target_scope: scope_clone.clone(),
-                                    text: status,
-                                    is_telemetry: true,
-                                };
-                                if let Some(platform) = platforms_ref.get(update_res.platform.split(':').next().unwrap_or("")) {
-                                    let _ = platform.send(update_res).await;
-                                }
-                                has_update = false;
-                            }
-                        }
-                    }
-                }
-
-                // Channel closed: send final "complete" telemetry with full reasoning
-                let elapsed_str = format_elapsed(start_time.elapsed().as_secs());
-                let status = if buffered_thought.is_empty() {
-                    format!("✅ Complete ({})", elapsed_str)
-                } else {
-                    format!("✅ Complete ({})\n\n{}", elapsed_str, buffered_thought)
-                };
-                let update_res = Response {
-                    platform: platform_id_clone.clone(),
-                    target_scope: scope_clone.clone(),
-                    text: status,
-                    is_telemetry: true,
-                };
-                if let Some(platform) = platforms_ref.get(update_res.platform.split(':').next().unwrap_or("")) {
-                    let _ = platform.send(update_res).await;
-                }
-            });
+            // 3. Telemetry — channel created inside each spawned task via spawn_telemetry_receiver()
 
             // 4. AUTONOMY PREEMPTION GATE
             // Autonomy events are spawned as background tasks, gated by the concurrency semaphore.
@@ -391,6 +394,11 @@ impl Engine {
                     // Acquire concurrency permit — waits if all slots are busy
                     let _permit = semaphore_bg.acquire().await.expect("Semaphore closed");
                     tracing::info!("[AUTONOMY] 🎫 Acquired inference slot. Starting autonomy ReAct loop.");
+
+                    // Create telemetry channel INSIDE the spawned task
+                    let telemetry_tx = spawn_telemetry_receiver(
+                        platforms_bg.clone(), event.platform.clone(), event.scope.clone(),
+                    );
 
                     let (response_text, current_turn, completed_tools) = crate::engine::react::execute_react_loop(
                         &event,
@@ -530,6 +538,11 @@ impl Engine {
                     // 2. Acquire global semaphore — waits if all inference slots are busy
                     let _permit = semaphore_bg.acquire().await.expect("Semaphore closed");
                     tracing::info!("[PARALLEL] 🎫 Acquired inference slot for {} (scope: {})", event.author_name, scope_key);
+
+                    // 3. Create telemetry channel INSIDE the spawned task
+                    let telemetry_tx = spawn_telemetry_receiver(
+                        platforms_bg.clone(), event.platform.clone(), event.scope.clone(),
+                    );
 
                     let (response_text, _current_turn, _completed_tools) = crate::engine::react::execute_react_loop(
                         &event,
