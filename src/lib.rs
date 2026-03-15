@@ -32,6 +32,21 @@ pub fn get_reader() -> Box<dyn AsyncBufRead + Unpin + Send + Sync> {
     Box::new(std::io::Cursor::new(b""))
 }
 
+/// Returns the list of admin user IDs from ADMIN_USER_IDS env var.
+/// Format: comma-separated list of user IDs
+/// Falls back to the hardcoded defaults if not set.
+fn get_admin_users() -> Vec<String> {
+    std::env::var("ADMIN_USER_IDS")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.split(',').map(|id| id.trim().to_string()).filter(|id| !id.is_empty()).collect())
+        .unwrap_or_else(|| vec![
+            "1299810741984956449".into(),
+            "1282286389953695745".into(),
+            "local_admin".into(),
+        ])
+}
+
 #[cfg(not(tarpaulin_include))]
 pub async fn run() {
     let file_appender = tracing_appender::rolling::daily("logs", "hive.log");
@@ -61,11 +76,7 @@ pub async fn run() {
     let native_tools = agent_manager.get_tool_names();
 
     let capabilities = AgentCapabilities {
-        admin_users: vec![
-            "1299810741984956449".into(),
-            "1282286389953695745".into(),
-            "local_admin".into(),
-        ],
+        admin_users: get_admin_users(),
         has_terminal_access: true,
         has_internet_access: true,
         admin_tools: vec![
