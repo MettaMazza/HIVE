@@ -13,6 +13,7 @@ pub async fn handle_message(handler: &super::Handler, ctx: Context, msg: Message
         return;
     }
 
+    let mut bot_chunked_text: Option<String> = None;
     if msg.author.bot {
         // Ignore embed-only messages from other bots
         if !msg.embeds.is_empty() && msg.content.trim().is_empty() {
@@ -23,10 +24,21 @@ pub async fn handle_message(handler: &super::Handler, ctx: Context, msg: Message
         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
 
         // Check if there's a newer message from this bot in the channel; if so, skip this one
-        if let Ok(recent) = msg.channel_id.messages(&ctx.http, serenity::builder::GetMessages::new().limit(5)).await {
-            if recent.into_iter().any(|m| m.author.id == msg.author.id && m.id.get() > msg.id.get()) {
+        if let Ok(recent) = msg.channel_id.messages(&ctx.http, serenity::builder::GetMessages::new().limit(10)).await {
+            if recent.iter().any(|m| m.author.id == msg.author.id && m.id.get() > msg.id.get()) {
                 return;
             }
+            
+            // We are the final message in the 5-second burst. Gather the recent consecutive chunks.
+            let mut chunks = Vec::new();
+            for m in recent.into_iter() {
+                if m.author.id != msg.author.id { break; } // stop at first msg not from this bot
+                if !m.content.trim().is_empty() {
+                    chunks.push(m.content);
+                }
+            }
+            chunks.reverse(); // Chronological order
+            bot_chunked_text = Some(chunks.join("\n"));
         }
     }
 
@@ -180,7 +192,7 @@ pub async fn handle_message(handler: &super::Handler, ctx: Context, msg: Message
 
     // Capture attachment metadata only — no downloads, no disk writes.
     // Apis can use the `read_attachment` tool to fetch content on-demand (in-memory).
-    let mut enriched_content = msg.content.clone();
+    let mut enriched_content = bot_chunked_text.unwrap_or_else(|| msg.content.clone());
 
     // Context from Replies and Forwarded Messages
     if let Some(ref_msg) = &msg.referenced_message {

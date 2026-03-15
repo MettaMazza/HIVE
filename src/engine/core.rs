@@ -307,7 +307,7 @@ impl Engine {
             });
 
             // 4. Multi-Turn Agentic Action Loop
-            let (response_text, current_turn, completed_tools) = crate::engine::react::execute_react_loop(
+            let react_fut = crate::engine::react::execute_react_loop(
                 &event,
                 &history,
                 telemetry_tx.clone(),
@@ -318,7 +318,29 @@ impl Engine {
                 self.drives.clone(),
                 self.capabilities.clone(),
                 self.teacher.clone(),
-            ).await;
+            );
+
+            let (response_text, current_turn, completed_tools) = if event.author_id == "apis_autonomy" {
+                let interrupt_flag = self.memory.interrupt_autonomy.clone();
+                let interrupt_flag_ret = self.memory.interrupt_autonomy.clone();
+                tokio::select! {
+                    res = react_fut => res,
+                    _ = async move {
+                        loop {
+                            if interrupt_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                                break;
+                            }
+                            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                        }
+                    } => {
+                        interrupt_flag_ret.store(false, std::sync::atomic::Ordering::Relaxed);
+                        tracing::info!("🛑 Core Engine: Aborted active autonomy execution because a user message arrived.");
+                        ("🐝 *Autonomy session interrupted by incoming user.*".to_string(), 1, vec![])
+                    }
+                }
+            } else {
+                react_fut.await
+            };
 
             let response = Response {
                 platform: event.platform.clone(),
