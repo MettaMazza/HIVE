@@ -221,6 +221,8 @@ impl Provider for LMStudioProvider {
                                 }
                             }
                         }
+                    } else {
+                        return Err(ProviderError::ParseError(format!("Failed to parse SSE chunk: {}", json_part)));
                     }
                 } else {
                     return Err(ProviderError::ParseError("Failed to parse JSON stream chunk".into()));
