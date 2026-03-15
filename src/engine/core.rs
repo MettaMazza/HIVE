@@ -398,12 +398,14 @@ impl Engine {
                                 {}\n\n\
                                 CRITICAL DIRECTIVE: This is an UNSUPERVISED, INTERNAL AUTONOMY SESSION. You are alone. \
                                 You MUST NOT speak to users, you MUST NOT write conversational stories about them, and you MUST NOT address anyone directly. \
-                                This is your private internal monologue. \
+                                Do NOT respond to any previous conversations or messages in the history. \n\
+                                This is your private internal monologue and system status update. \
                                 \n\n\
                                 Use this time productively. Consider the public engagement narrative above and diversify your autonomous work. \
                                 Ideas: review your memory, consolidate lessons, practice skills, explore your Turing Grid, run routines, \
                                 do research, or anything you find valuable for self-improvement. \
-                                Report your internal monologue and actions in your final reply.",
+                                Report your internal monologue and actions in your final reply. \n\
+                                You MUST start your reply exactly like this: 'Autonomy session complete. Here is what I accomplished:'",
                                 public_narrative
                             ),
                         };

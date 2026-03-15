@@ -45,6 +45,7 @@ pub struct MemoryStore {
     pub alu: Arc<ALU>,
     /// Tracks recent active participants in Public channels. Maps channel_id -> Vec<author_name>
     rosters: Arc<RwLock<HashMap<String, Vec<String>>>>,
+    pub interrupt_autonomy: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Default for MemoryStore {
@@ -88,6 +89,7 @@ impl MemoryStore {
             alu,
             activity_stream: Arc::new(RwLock::new(VecDeque::new())),
             rosters: Arc::new(RwLock::new(HashMap::new())),
+            interrupt_autonomy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 

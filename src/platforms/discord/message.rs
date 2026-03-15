@@ -9,8 +9,25 @@ pub async fn handle_message(handler: &super::Handler, ctx: Context, msg: Message
         let id_lock = handler.bot_user_id.lock().await;
         id_lock.map(|id| id == msg.author.id).unwrap_or(false)
     };
-    if is_self || msg.author.bot {
+    if is_self {
         return;
+    }
+
+    if msg.author.bot {
+        // Ignore embed-only messages from other bots
+        if !msg.embeds.is_empty() && msg.content.trim().is_empty() {
+            return;
+        }
+
+        // Wait 5 seconds to group chunks from chatty bots
+        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+        // Check if there's a newer message from this bot in the channel; if so, skip this one
+        if let Ok(recent) = msg.channel_id.messages(&ctx.http, serenity::builder::GetMessages::new().limit(5)).await {
+            if recent.into_iter().any(|m| m.author.id == msg.author.id && m.id.get() > msg.id.get()) {
+                return;
+            }
+        }
     }
 
     // Intercept text-based /sweep command (since slash commands take an hour to sync)
@@ -201,5 +218,9 @@ pub async fn handle_message(handler: &super::Handler, ctx: Context, msg: Message
         content: enriched_content,
     };
 
+    if !msg.author.bot {
+        handler.memory.interrupt_autonomy.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    
     let _ = handler.event_sender.send(ev).await;
 }

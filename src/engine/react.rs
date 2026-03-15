@@ -51,6 +51,14 @@ pub async fn execute_react_loop(
     loop {
         current_turn += 1;
 
+        // Check for preemption during continuous autonomy
+        if event.author_id == "apis_autonomy" && memory.interrupt_autonomy.load(std::sync::atomic::Ordering::Relaxed) {
+            tracing::info!("[AGENT LOOP] 🛑 Preempting autonomy loop due to incoming user message.");
+            memory.interrupt_autonomy.store(false, std::sync::atomic::Ordering::Relaxed);
+            final_response_text = "🐝 *Autonomy session paused due to incoming message.*".to_string();
+            break;
+        }
+
         if current_turn > 1 && current_turn % checkpoint_interval == 1 {
             let platform_name = event.platform.split(':').next().unwrap_or("");
             let channel_id: u64 = event.platform.split(':').nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
