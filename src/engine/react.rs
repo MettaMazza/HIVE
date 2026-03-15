@@ -99,15 +99,28 @@ pub async fn execute_react_loop(
                 tracing::error!("[AGENT LOOP] ❌ RAW TEXT THAT FAILED PARSING (serde error: {}):\n==========\n{}\n==========", e, candidate_text);
                 
                 if consecutive_json_failures >= 2 {
-                    // Auto-wrap: The LLM gave us a perfectly good response, it just wasn't JSON.
-                    // Wrap it into a synthetic reply_to_request rather than burning another LLM call.
-                    tracing::warn!("[AGENT LOOP] 🔧 Auto-wrapping plain text into reply_to_request after {} failures.", consecutive_json_failures);
+                    // SAFETY: Check if the raw text looks like a JSON tool plan that just
+                    // couldn't parse (e.g. complex markdown content with unescaped chars).
+                    // If so, do NOT forward it to the user — send a graceful fallback instead.
+                    let looks_like_json_plan = candidate_text.contains("\"tool_type\"")
+                        || candidate_text.contains("\"tasks\"")
+                        || (candidate_text.trim().starts_with('{') || candidate_text.trim().starts_with("```json"));
+                    
+                    let auto_reply_text = if looks_like_json_plan {
+                        tracing::warn!("[AGENT LOOP] 🛡️ Blocked JSON tool plan from leaking to user after {} parse failures.", consecutive_json_failures);
+                        "*I tried to process your request but ran into a formatting issue. Let me try again — could you rephrase or simplify your request?*".to_string()
+                    } else {
+                        // Genuinely conversational text — safe to forward
+                        tracing::warn!("[AGENT LOOP] 🔧 Auto-wrapping plain text into reply_to_request after {} failures.", consecutive_json_failures);
+                        candidate_text.trim().to_string()
+                    };
+                    
                     crate::agent::planner::AgentPlan {
                         thought: Some("Auto-wrapped from plain text output.".to_string()),
                         tasks: vec![crate::agent::planner::AgentTask {
                             task_id: "auto_reply".to_string(),
                             tool_type: "reply_to_request".to_string(),
-                            description: candidate_text.trim().to_string(),
+                            description: auto_reply_text,
                             depends_on: vec![],
                             source: None,
                         }],

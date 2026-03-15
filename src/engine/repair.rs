@@ -31,8 +31,28 @@ pub fn repair_planner_json(raw: &str) -> String {
     let mut candidates = Vec::new();
     let mut brace_level = 0;
     let mut start_idx = None;
+    let mut in_string = false;
+    let mut escape_next = false;
 
     for (i, c) in s.char_indices() {
+        // Track string boundaries so braces inside strings are ignored
+        if escape_next {
+            escape_next = false;
+            continue;
+        }
+        if c == '\\' && in_string {
+            escape_next = true;
+            continue;
+        }
+        if c == '"' {
+            in_string = !in_string;
+            continue;
+        }
+        // Skip braces inside string values (e.g. markdown with Arc<RwLock<{}>>, etc.)
+        if in_string {
+            continue;
+        }
+
         if c == '{' {
             if brace_level == 0 {
                 start_idx = Some(i);
