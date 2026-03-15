@@ -3,6 +3,14 @@ name = "HIVE"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "hive"
+path = "src/lib.rs"
+
+[[bin]]
+name = "HIVE"
+path = "src/main.rs"
+
 [dependencies]
 async-trait = "0.1.89"
 chrono = "0.4.44"
