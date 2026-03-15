@@ -306,6 +306,9 @@ impl Engine {
                 }
             });
 
+            // Reset any lingering interrupt flags before starting a new execution
+            self.memory.interrupt_autonomy.store(false, std::sync::atomic::Ordering::Relaxed);
+
             // 4. Multi-Turn Agentic Action Loop
             let react_fut = crate::engine::react::execute_react_loop(
                 &event,
