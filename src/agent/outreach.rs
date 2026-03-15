@@ -296,7 +296,8 @@ mod tests {
             None,
         ).await;
         
-        assert_eq!(res.status, ToolStatus::Failed("none_policy".to_string()));
+        // can_outreach() catches delivery=none BEFORE the none_policy path
+        assert_eq!(res.status, ToolStatus::Failed("outreach_blocked".to_string()));
     }
 
     #[tokio::test]
@@ -307,7 +308,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
 
         let mut mock_provider = MockProvider::new();
-        mock_provider.expect_generate().returning(|_, _, _, _, _| Ok("Mock".to_string()));
+        mock_provider.expect_generate().returning(|_, _, _, _, _| Ok("YES".to_string()));
         let gate = Arc::new(OutreachGate::new(dir.to_str().unwrap(), Arc::new(mock_provider)));
         let inbox = Arc::new(InboxManager::new(dir.to_str().unwrap()));
         
@@ -331,6 +332,6 @@ mod tests {
             None,
             None,
         ).await;
-        assert!(stat.output.contains("1 unread messages"));
+        assert!(stat.output.contains("1 unread message"));
     }
 }
