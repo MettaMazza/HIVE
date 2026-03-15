@@ -194,6 +194,102 @@ impl DocumentComposer {
 
         Ok(absolute_pdf_path)
     }
+
+    /// Lists all draft IDs in the drafts directory.
+    pub async fn list_drafts(&self) -> std::io::Result<Vec<String>> {
+        let mut ids = Vec::new();
+        if !self.drafts_dir.exists() {
+            return Ok(ids);
+        }
+        let mut reader = fs::read_dir(&self.drafts_dir).await?;
+        while let Some(entry) = reader.next_entry().await? {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("json") {
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    ids.push(stem.to_string());
+                }
+            }
+        }
+        Ok(ids)
+    }
+
+    /// Returns a formatted summary of a draft's metadata and sections.
+    pub async fn get_draft_info(&self, id: &str) -> std::io::Result<String> {
+        let path = self.drafts_dir.join(format!("{}.json", id));
+        if !path.exists() {
+            return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "Draft not found"));
+        }
+        let json = fs::read_to_string(&path).await?;
+        let draft: DocumentDraft = serde_json::from_str(&json)?;
+
+        let mut info = format!("📄 **Draft: {}**\nTitle: {}\nAuthor: {}\nTheme: {}\nSections: {}\n\n",
+            draft.id, draft.title, draft.author, draft.theme, draft.sections.len());
+
+        for (i, section) in draft.sections.iter().enumerate() {
+            let preview: String = section.content.chars().take(120).collect();
+            let heading_display = if section.heading.is_empty() { "(no heading)" } else { &section.heading };
+            info.push_str(&format!("[{}] **{}**: {}...\n", i, heading_display, preview.replace('\n', " ")));
+        }
+        Ok(info)
+    }
+
+    /// Replaces a section at the given index with new heading and content.
+    pub async fn edit_section(&self, id: &str, index: usize, new_heading: &str, new_content: &str) -> std::io::Result<()> {
+        let path = self.drafts_dir.join(format!("{}.json", id));
+        if !path.exists() {
+            return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "Draft not found"));
+        }
+        let json = fs::read_to_string(&path).await?;
+        let mut draft: DocumentDraft = serde_json::from_str(&json)?;
+
+        if index >= draft.sections.len() {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput,
+                format!("Section index {} out of range (draft has {} sections)", index, draft.sections.len())));
+        }
+
+        draft.sections[index] = DocumentSection {
+            heading: new_heading.to_string(),
+            content: new_content.to_string(),
+        };
+
+        let updated = serde_json::to_string_pretty(&draft)?;
+        fs::write(path, updated).await?;
+        Ok(())
+    }
+
+    /// Removes a section at the given index.
+    pub async fn remove_section(&self, id: &str, index: usize) -> std::io::Result<()> {
+        let path = self.drafts_dir.join(format!("{}.json", id));
+        if !path.exists() {
+            return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "Draft not found"));
+        }
+        let json = fs::read_to_string(&path).await?;
+        let mut draft: DocumentDraft = serde_json::from_str(&json)?;
+
+        if index >= draft.sections.len() {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput,
+                format!("Section index {} out of range (draft has {} sections)", index, draft.sections.len())));
+        }
+
+        draft.sections.remove(index);
+        let updated = serde_json::to_string_pretty(&draft)?;
+        fs::write(path, updated).await?;
+        Ok(())
+    }
+
+    /// Updates the theme of an existing draft.
+    pub async fn update_theme(&self, id: &str, new_theme: &str) -> std::io::Result<()> {
+        let path = self.drafts_dir.join(format!("{}.json", id));
+        if !path.exists() {
+            return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "Draft not found"));
+        }
+        let json = fs::read_to_string(&path).await?;
+        let mut draft: DocumentDraft = serde_json::from_str(&json)?;
+        draft.theme = new_theme.to_string();
+        let updated = serde_json::to_string_pretty(&draft)?;
+        fs::write(path, updated).await?;
+        Ok(())
+    }
 }
 
 // Simple HTML Escaper

@@ -316,6 +316,39 @@ pub async fn execute_react_loop(
         final_response_text = "*I ran for a while without producing a final answer. Let me know if you'd like me to try again.*".to_string();
     }
 
+    // 🛡️ ATTACHMENT SAFETY NET: Auto-append any ATTACH tags from tool outputs
+    // that the LLM forgot to include in its final reply.
+    {
+        let tag_patterns = ["[ATTACH_FILE]", "[ATTACH_IMAGE]", "[ATTACH_AUDIO]"];
+        let mut missing_tags = Vec::new();
+
+        for pattern in &tag_patterns {
+            // Find all instances of this tag type in tool outputs
+            let mut search_from = 0;
+            while let Some(start) = context_from_agent[search_from..].find(pattern) {
+                let abs_start = search_from + start;
+                // Extract the full tag including the path: [ATTACH_FILE](/path/to/file)
+                if let Some(paren_start) = context_from_agent[abs_start..].find('(') {
+                    if let Some(paren_end) = context_from_agent[abs_start + paren_start..].find(')') {
+                        let full_tag = &context_from_agent[abs_start..abs_start + paren_start + paren_end + 1];
+                        // Only append if this exact tag is NOT in the final response
+                        if !final_response_text.contains(full_tag) {
+                            missing_tags.push(full_tag.to_string());
+                        }
+                    }
+                }
+                search_from = abs_start + pattern.len();
+            }
+        }
+
+        if !missing_tags.is_empty() {
+            tracing::warn!("[SAFETY NET] 🛡️ Auto-appending {} missing attachment tag(s) that the LLM forgot to include.", missing_tags.len());
+            for tag in &missing_tags {
+                final_response_text.push_str(&format!("\n\n{}", tag));
+            }
+        }
+    }
+
     // Capture internal thoughts generated in the loop before returning!
     if !context_from_agent.trim().is_empty() {
         let internal_event = Event {

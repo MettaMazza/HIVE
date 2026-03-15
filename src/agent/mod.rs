@@ -133,11 +133,15 @@ impl AgentManager {
         };
         let file_writer = ToolTemplate {
             name: "file_writer".into(),
-            system_prompt: "You can create richly formatted PDF documents and save them to your document library. \
-            For a single-shot document, use 'action:[compose] id:[doc1] title:[...] theme:[professional/cyberpunk/minimal] content:[Markdown text...]'. \
-            For multi-turn piece-by-piece drafting, first use 'action:[start] id:[doc1] title:[...] theme:[professional]'. \
-            Then in subsequent turns, use 'action:[add_section] id:[doc1] heading:[...] content:[...]'. \
-            Finally, use 'action:[render] id:[doc1]'.".into(),
+            system_prompt: "You can create and EDIT richly formatted PDF documents. \
+            **Create:** 'action:[compose] id:[doc1] title:[...] theme:[professional/cyberpunk/minimal] content:[Markdown text...]' for single-shot. \
+            For multi-turn: 'action:[start] id:[doc1] title:[...] theme:[...]' then 'action:[add_section] id:[doc1] heading:[...] content:[...]' then 'action:[render] id:[doc1]'. \
+            **Edit existing:** 'action:[inspect] id:[doc1]' to see sections by index. \
+            'action:[edit_section] id:[doc1] index:[N] heading:[New Heading] content:[New content...]' to modify a section. \
+            'action:[remove_section] id:[doc1] index:[N]' to delete a section. \
+            'action:[update_theme] id:[doc1] theme:[cyberpunk]' to change the visual theme. \
+            After any edit, call 'action:[render] id:[doc1]' to regenerate the PDF. \
+            'action:[list_drafts] id:[any]' shows all available drafts.".into(),
             tools: vec![],
         };
         let read_attachment = ToolTemplate {
