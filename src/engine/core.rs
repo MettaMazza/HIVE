@@ -61,6 +61,15 @@ pub fn format_elapsed(elapsed_secs: u64) -> String {
     }
 }
 
+/// Returns the Discord channel ID for autonomy mode events.
+/// Falls back to the hardcoded default if not set.
+fn get_autonomy_channel_id() -> String {
+    std::env::var("DISCORD_AUTONOMY_CHANNEL_ID")
+        .ok()
+        .filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()))
+        .unwrap_or_else(|| "1480192647657427044".to_string())
+}
+
 use crate::agent::AgentManager;
 
 /// Creates a telemetry channel and spawns the debounced receiver task.
@@ -472,9 +481,9 @@ impl Engine {
                             let public_narrative = memory_clone.get_public_narrative().await;
                             let previous_sessions = load_recent_autonomy_sessions(5).await;
                             let autonomy_event = Event {
-                                platform: "discord:1480192647657427044".to_string(),
+                                platform: format!("discord:{}", get_autonomy_channel_id()),
                                 scope: Scope::Public {
-                                    channel_id: "1480192647657427044".to_string(),
+                                    channel_id: get_autonomy_channel_id(),
                                     user_id: "apis_autonomy".to_string(),
                                 },
                                 author_name: "Apis".to_string(),
@@ -599,9 +608,9 @@ impl Engine {
                                 let previous_sessions = load_recent_autonomy_sessions(5).await;
                                 
                                 let autonomy_event = Event {
-                                    platform: "discord:1480192647657427044".to_string(),
+                                    platform: format!("discord:{}", get_autonomy_channel_id()),
                                     scope: Scope::Public {
-                                        channel_id: "1480192647657427044".to_string(),
+                                        channel_id: get_autonomy_channel_id(),
                                         user_id: "apis_autonomy".to_string(),
                                     },
                                     author_name: "Apis".to_string(),

@@ -3,6 +3,7 @@ use mockall::automock;
 
 use crate::models::message::Event;
 
+pub mod lmstudio;
 pub mod ollama;
 
 #[derive(thiserror::Error, Debug)]

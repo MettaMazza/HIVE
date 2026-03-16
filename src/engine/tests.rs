@@ -492,7 +492,7 @@ string ending with an unescaped quote \" and an emoji 😊.",
 
         let sender = engine.event_sender.as_ref().unwrap().clone();
         
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             engine.run().await;
         });
 
@@ -505,6 +505,7 @@ string ending with an unescaped quote \" and an emoji 😊.",
         }).await.unwrap();
 
         sleep(Duration::from_millis(150)).await;
+        handle.abort();
     }
 
     #[tokio::test]
@@ -550,7 +551,7 @@ string ending with an unescaped quote \" and an emoji 😊.",
 
         let sender = engine.event_sender.as_ref().unwrap().clone();
         
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             engine.run().await;
         });
 
@@ -563,6 +564,7 @@ string ending with an unescaped quote \" and an emoji 😊.",
         }).await.unwrap();
 
         sleep(Duration::from_millis(150)).await;
+        handle.abort();
     }
 
     #[tokio::test]
