@@ -19,6 +19,7 @@ pub struct Handler {
     pub(crate) tts_cache: Arc<Mutex<std::collections::HashMap<u64, String>>>,
     pub(crate) continue_responses: Arc<Mutex<std::collections::HashMap<u64, tokio::sync::oneshot::Sender<bool>>>>,
     pub(crate) is_tending: Arc<std::sync::atomic::AtomicBool>,
+    pub(crate) aicoms_enabled: Arc<std::sync::atomic::AtomicBool>,
     pub(crate) memory: Arc<crate::memory::MemoryStore>,
 }
 
@@ -82,6 +83,7 @@ pub struct DiscordPlatform {
     tts_cache: Arc<Mutex<std::collections::HashMap<u64, String>>>,
     continue_responses: Arc<Mutex<std::collections::HashMap<u64, tokio::sync::oneshot::Sender<bool>>>>,
     is_tending: Arc<std::sync::atomic::AtomicBool>,
+    aicoms_enabled: Arc<std::sync::atomic::AtomicBool>,
     memory: Arc<crate::memory::MemoryStore>,
 }
 
@@ -94,6 +96,7 @@ impl DiscordPlatform {
             tts_cache: Arc::new(Mutex::new(std::collections::HashMap::new())),
             continue_responses: Arc::new(Mutex::new(std::collections::HashMap::new())),
             is_tending: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            aicoms_enabled: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             memory,
         }
     }
@@ -115,6 +118,7 @@ impl Platform for DiscordPlatform {
             tts_cache: self.tts_cache.clone(),
             continue_responses: self.continue_responses.clone(),
             is_tending: self.is_tending.clone(),
+            aicoms_enabled: self.aicoms_enabled.clone(),
             memory: self.memory.clone(),
         };
 

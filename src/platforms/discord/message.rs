@@ -4,12 +4,40 @@ use crate::models::message::Event;
 use crate::models::scope::Scope;
 
 pub async fn handle_message(handler: &super::Handler, ctx: Context, msg: Message) {
-    // Ignore self
+    // Always ignore self
     let is_self = {
         let id_lock = handler.bot_user_id.lock().await;
         id_lock.map(|id| id == msg.author.id).unwrap_or(false)
     };
-    if is_self || msg.author.bot {
+    if is_self {
+        return;
+    }
+
+    // Bot message handling: allow text from other bots when aicoms is enabled,
+    // but always skip embed-only messages (no text content).
+    if msg.author.bot {
+        let aicoms_on = handler.aicoms_enabled.load(std::sync::atomic::Ordering::SeqCst);
+        if !aicoms_on {
+            return; // aicoms is off — ignore all bot messages
+        }
+        // Skip embed-only messages (no text content to respond to)
+        if msg.content.trim().is_empty() {
+            return;
+        }
+        tracing::info!("[AICOMS] Processing message from bot '{}': {} chars", msg.author.name, msg.content.len());
+    }
+
+    // /aicoms — Toggle bot-to-bot communication on/off
+    if msg.content.trim() == "/aicoms" {
+        if msg.author.id.get() == 1299810741984956449 {
+            let current = handler.aicoms_enabled.load(std::sync::atomic::Ordering::SeqCst);
+            handler.aicoms_enabled.store(!current, std::sync::atomic::Ordering::SeqCst);
+            let state_str = if !current { "**enabled** 🤖✅" } else { "**disabled** 🤖❌" };
+            let _ = msg.reply(&ctx.http, format!("🤖 AI Comms toggled: Bot-to-bot communication is now {}.", state_str)).await;
+            tracing::info!("[AICOMS] Toggled to {} by {}", if !current { "ON" } else { "OFF" }, msg.author.name);
+        } else {
+            let _ = msg.reply(&ctx.http, "🚫 Only administrators can toggle AI communications.").await;
+        }
         return;
     }
 
