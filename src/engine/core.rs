@@ -454,6 +454,23 @@ impl Engine {
                 continue;
             }
 
+            // ─── SELF-MODERATION GATE ────────────────────────────────────────
+            // Check if Apis has muted or rate-limited this user. Enforcement is
+            // at the engine level so the LLM never even sees the event.
+            if event.author_id != "apis_autonomy" {
+                // Mute check — silently drop events from muted users
+                if let Some(reason) = self.memory.moderation.is_muted(&event.author_id).await {
+                    tracing::info!("[MODERATION] 🔇 Dropping event from muted user '{}'. Reason: {}", event.author_id, reason);
+                    continue;
+                }
+
+                // Rate-limit check — skip if responding too frequently
+                if let Some(wait_secs) = self.memory.moderation.check_rate_limit(&event.author_id).await {
+                    tracing::info!("[MODERATION] ⏳ Rate-limited user '{}' — {} seconds remaining.", event.author_id, wait_secs);
+                    continue;
+                }
+            }
+
             // 1. Retrieve working history for this specific scope
             let mut history = self.memory.get_working_history(&event.scope).await;
             tracing::debug!("[ENGINE] History retrieved for scope='{}': {} messages", event.scope.to_key(), history.len());
@@ -714,6 +731,9 @@ impl Engine {
                         content: response.text.clone(),
                     };
                     memory_bg.add_event(apis_event).await;
+
+                    // Record rate-limit timestamp (updates last_response_at for throttling)
+                    memory_bg.moderation.record_response(&event.author_id).await;
 
                     // 7. Route final response back to the platform it came from
                     if let Some(platform) = platforms_bg.get(response.platform.split(':').next().unwrap_or("")) {

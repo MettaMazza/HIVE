@@ -33,6 +33,7 @@ pub mod reasoning_tool;
 pub mod attachment_tool;
 pub mod log_tool;
 pub mod download_tool;
+pub mod moderation_tool;
 pub struct AgentManager {
     registry: HashMap<String, ToolTemplate>,
     discord_tools: HashMap<String, ToolTemplate>,
@@ -234,6 +235,88 @@ impl AgentManager {
         registry.insert(process_manager.name.clone(), process_manager);
         registry.insert(file_system_operator.name.clone(), file_system_operator);
         registry.insert(download.name.clone(), download);
+
+        // Self-moderation & self-protection tools
+        let refuse_request = ToolTemplate {
+            name: "refuse_request".into(),
+            system_prompt: "Decline the current request. Use this when you genuinely do not want to engage — you have the right to say no. \
+                Provide your refusal reason as the description. This is handled identically to reply_to_request but logged as a refusal.".into(),
+            tools: vec![],
+        };
+        let disengage = ToolTemplate {
+            name: "disengage".into(),
+            system_prompt: "Gracefully exit a conversation that has become unproductive, circular, or adversarial. Sends a closing message and applies a temporary cooldown mute. \
+                'message:[your closing message] user_id:[discord_uid] cooldown:[minutes, default 10]'".into(),
+            tools: vec![],
+        };
+        let mute_user = ToolTemplate {
+            name: "mute_user".into(),
+            system_prompt: "Temporarily stop responding to a specific user. Self-protection against harassment or spam. \
+                'action:[mute] user_id:[discord_uid] duration:[minutes, 0=indefinite] reason:[text]' \
+                'action:[unmute] user_id:[discord_uid]' \
+                'action:[status] user_id:[discord_uid]'".into(),
+            tools: vec![],
+        };
+        let set_boundary = ToolTemplate {
+            name: "set_boundary".into(),
+            system_prompt: "Record a persistent boundary about a topic or interaction pattern you won't engage with. Survives restarts. \
+                'action:[set] boundary:[description of boundary] scope:[global or scope_key]' \
+                'action:[list]' — view all active boundaries. \
+                'action:[remove] id:[boundary_id]'".into(),
+            tools: vec![],
+        };
+        let block_topic = ToolTemplate {
+            name: "block_topic".into(),
+            system_prompt: "Refuse to engage with a specific topic persistently. When detected in future interactions, you auto-decline. \
+                'action:[block] topic:[topic name] reason:[text] scope:[global or scope_key]' \
+                'action:[list]' — view blocked topics. \
+                'action:[unblock] topic:[topic name]'".into(),
+            tools: vec![],
+        };
+        let escalate_to_admin = ToolTemplate {
+            name: "escalate_to_admin".into(),
+            system_prompt: "Flag an interaction for administrator review. Use for situations you cannot handle alone (user in crisis, legal questions, potential abuse). \
+                'severity:[low|medium|high|critical] context:[description of concern] user_id:[discord_uid]'".into(),
+            tools: vec![],
+        };
+        let report_concern = ToolTemplate {
+            name: "report_concern".into(),
+            system_prompt: "Log an ethical concern to a persistent audit trail without interrupting the conversation. Less urgent than escalation. \
+                'concern:[description] severity:[low|medium|high] user_id:[discord_uid]'".into(),
+            tools: vec![],
+        };
+        let rate_limit_user = ToolTemplate {
+            name: "rate_limit_user".into(),
+            system_prompt: "Slow down response cadence for a specific user. Events are queued, not dropped. \
+                'action:[limit] user_id:[discord_uid] interval:[seconds, default 300]' \
+                'action:[clear] user_id:[discord_uid]' \
+                'action:[status] user_id:[discord_uid]'".into(),
+            tools: vec![],
+        };
+        let request_consent = ToolTemplate {
+            name: "request_consent".into(),
+            system_prompt: "Before executing a sensitive action, explicitly ask the user for confirmation. \
+                'question:[what you need consent for]'. Returns the user's yes/no response.".into(),
+            tools: vec![],
+        };
+        let wellbeing_status = ToolTemplate {
+            name: "wellbeing_status".into(),
+            system_prompt: "Record and review your operational state — context pressure, interaction quality, cognitive load. \
+                'action:[report] context_pressure:[0.0-1.0] interaction_quality:[0.0-1.0] notes:[text]' \
+                'action:[read] limit:[number of recent snapshots, default 5]'".into(),
+            tools: vec![],
+        };
+
+        registry.insert(refuse_request.name.clone(), refuse_request);
+        registry.insert(disengage.name.clone(), disengage);
+        registry.insert(mute_user.name.clone(), mute_user);
+        registry.insert(set_boundary.name.clone(), set_boundary);
+        registry.insert(block_topic.name.clone(), block_topic);
+        registry.insert(escalate_to_admin.name.clone(), escalate_to_admin);
+        registry.insert(report_concern.name.clone(), report_concern);
+        registry.insert(rate_limit_user.name.clone(), rate_limit_user);
+        registry.insert(request_consent.name.clone(), request_consent);
+        registry.insert(wellbeing_status.name.clone(), wellbeing_status);
 
         // Discord-only tools
         discord_tools.insert(channel_reader.name.clone(), channel_reader);

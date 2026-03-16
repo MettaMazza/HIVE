@@ -389,6 +389,22 @@ pub fn dispatch_native_tool(
         return Some(handle);
     }
 
+    // Self-moderation & self-protection tools (all 10 route through moderation_tool::execute_moderation)
+    let moderation_tools = [
+        "refuse_request", "disengage", "mute_user", "set_boundary", "block_topic",
+        "escalate_to_admin", "report_concern", "rate_limit_user", "request_consent", "wellbeing_status"
+    ];
+    if moderation_tools.contains(&tool_type) {
+        let tool_type_clone = tool_type.to_string();
+        let scope_clone = scope.clone();
+        let handle = tokio::spawn(async move {
+            crate::agent::moderation_tool::execute_moderation(
+                &tool_type_clone, task_id, desc, &scope_clone, memory, tx_clone,
+            ).await
+        });
+        return Some(handle);
+    }
+
     tracing::warn!("[AGENT:Dispatch] Unknown tool_type='{}' task_id='{}' — no handler found", tool_type, task_id);
     None
 }
@@ -416,7 +432,10 @@ mod tests {
             "review_reasoning", "read_attachment", "manage_user_preferences",
             "manage_skill", "manage_routine", "manage_lessons", "search_timeline",
             "manage_scratchpad", "operate_synaptic_graph", "read_core_memory",
-            "synthesizer", "download", "list_cached_images"
+            "synthesizer", "download", "list_cached_images",
+            // Self-moderation tools
+            "refuse_request", "disengage", "mute_user", "set_boundary", "block_topic",
+            "escalate_to_admin", "report_concern", "rate_limit_user", "request_consent", "wellbeing_status",
         ];
         
         for t in tools {

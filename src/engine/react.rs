@@ -153,7 +153,7 @@ pub async fn execute_react_loop(
         let no_tools = plan.tasks.is_empty();
         
         for t in plan.tasks {
-            if t.tool_type == "reply_to_request" {
+            if t.tool_type == "reply_to_request" || t.tool_type == "refuse_request" || t.tool_type == "disengage" {
                 reply_task = Some(t);
             } else if t.tool_type == "emoji_react" {
                 react_tasks.push(t);

@@ -11,6 +11,7 @@ pub mod timelines;
 pub mod temporal;
 pub mod scratch;
 pub mod lessons;
+pub mod moderation;
 
 pub use working::*;
 pub use autosave::*;
@@ -41,6 +42,7 @@ pub struct MemoryStore {
     pub timelines: Arc<TimelineStore>,
     pub activity_stream: Arc<RwLock<VecDeque<String>>>,
     pub lessons: LessonsManager,
+    pub moderation: Arc<moderation::ModerationStore>,
     pub turing_grid: Arc<Mutex<TuringGrid>>,
     pub alu: Arc<ALU>,
     /// Tracks recent active participants in Public channels. Maps channel_id -> Vec<author_name>
@@ -68,6 +70,7 @@ impl MemoryStore {
         let scratch = Scratchpad::new(Some(memory_dir.clone()));
         let preferences = PreferenceStore::new(Some(memory_dir.clone()));
         let lessons = LessonsManager::new(Some(memory_dir.clone()));
+        let moderation = Arc::new(moderation::ModerationStore::new(Some(memory_dir.clone())));
         
         let temporal = Arc::new(RwLock::new(TemporalTracker::new(&memory_dir.join("core"))));
         let timelines = Arc::new(TimelineStore::new(&memory_dir.join("core")));
@@ -82,6 +85,7 @@ impl MemoryStore {
             autosave,
             preferences,
             lessons,
+            moderation,
             temporal,
             timelines,
             turing_grid,
@@ -94,6 +98,7 @@ impl MemoryStore {
     pub async fn init(&self) {
         tracing::info!("[MEMORY] ▶ Initializing MemoryStore...");
         self.working.load_persisted().await;
+        self.moderation.load().await;
         // Init grid logic:
         let grid_path = self.turing_grid.lock().await.persistence_path.clone();
         if let Ok(loaded) = TuringGrid::load(grid_path).await {
