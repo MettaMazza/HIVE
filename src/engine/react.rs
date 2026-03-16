@@ -47,6 +47,7 @@ pub async fn execute_react_loop(
     let mut observer_attempts = 0;
     let mut all_rejections: Vec<(String, String, String)> = vec![];
     let mut completed_tools: Vec<(String, String)> = vec![]; // (task_id, tool_type)
+    let mut tool_outputs: HashMap<String, String> = HashMap::new(); // task_id -> raw output for source forwarding
     let mut consecutive_json_failures: u8 = 0;
 
     // The inner ReAct loop
@@ -237,6 +238,12 @@ pub async fn execute_react_loop(
             let result_count = tool_results.len();
             for res in &tool_results {
                 context_from_agent.push_str(&format!("Turn {} - Task {}: {:?}\nOutput: {}\n\n", current_turn, res.task_id, res.status, res.output));
+                // Store raw output in the HashMap for reliable source forwarding.
+                // This avoids the split("\n\n") fragmentation bug where multi-line
+                // tool outputs containing double-newlines would get truncated.
+                if matches!(res.status, crate::models::tool::ToolStatus::Success) {
+                    tool_outputs.insert(res.task_id.clone(), res.output.clone());
+                }
             }
             completed_tools.extend(task_meta);
             tracing::info!("[AGENT LOOP] 🔄 Turn {} executed {} tools. Looping...", current_turn, result_count);
@@ -247,27 +254,13 @@ pub async fn execute_react_loop(
             let mut candidate_answer = reply.description;
 
             // OUTPUT FORWARDING: If the reply references a source task_id,
-            // find that task's raw output in the execution timeline and append it.
+            // look up the raw output directly from the tool_outputs HashMap.
             if let Some(ref source_id) = reply.source {
-                // Search context_from_agent for the referenced task's output block
-                let search_prefix = format!("Task {}: Success", source_id);
-                let output_prefix = "Output: ";
-                let mut found_output = None;
-                
-                for line_block in context_from_agent.split("\n\n") {
-                    if line_block.contains(&search_prefix) {
-                        // Extract the "Output: ..." portion
-                        if let Some(output_start) = line_block.find(output_prefix) {
-                            found_output = Some(line_block[output_start + output_prefix.len()..].to_string());
-                        }
-                    }
-                }
-                
-                if let Some(raw_output) = found_output {
+                if let Some(raw_output) = tool_outputs.get(source_id) {
                     candidate_answer = format!("{}\n\n{}", candidate_answer.trim(), raw_output.trim());
-                    tracing::info!("[OUTPUT FORWARD] Appended raw output from task '{}' to reply.", source_id);
+                    tracing::info!("[OUTPUT FORWARD] Appended raw output from task '{}' ({} bytes) to reply.", source_id, raw_output.len());
                 } else {
-                    tracing::warn!("[OUTPUT FORWARD] Source task '{}' not found in timeline. Delivering description only.", source_id);
+                    tracing::warn!("[OUTPUT FORWARD] Source task '{}' not found in tool_outputs map. Delivering description only.", source_id);
                 }
             }
 
