@@ -89,7 +89,7 @@ impl AgentManager {
 
         let manage_user_prefs = ToolTemplate {
             name: "manage_user_preferences".into(),
-            system_prompt: "You are the User Preference Tool. You manage long-term psychological profiling and factual preferences of the user. Updates MUST include an 'action:' tag and a 'value:' tag. Valid actions are: update_name, add_hobby, add_topic, update_narrative, update_psychoanalysis. Example description: 'action:[add_hobby] value:[Archery]'".into(),
+            system_prompt: "You are the User Preference Tool. You manage long-term psychological profiling and factual preferences of the user. 'action:[read]' — view all stored preferences. Write actions require 'action:' AND 'value:' tags. Valid write actions: update_name, add_hobby, add_topic, update_narrative, update_psychoanalysis. Example: 'action:[add_hobby] value:[Archery]'".into(),
             tools: vec![],
         };
 

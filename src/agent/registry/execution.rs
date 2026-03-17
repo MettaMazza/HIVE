@@ -29,10 +29,16 @@ pub fn dispatch_native_tool(
             if let Some(ref tx) = tx_clone {
                 let _ = tx.send(format!("🧠 Native Channel Reader Tool executing...\n")).await;
             }
-            let target_id = desc.split_whitespace()
-                .find(|s| s.chars().all(|c| c.is_ascii_digit()) && s.len() > 10)
-                .unwrap_or("")
-                .to_string();
+            // Try extracting from tag format first (e.g. "channel_id:[123]")
+            let target_id = crate::agent::preferences::extract_tag(&desc, "channel_id:")
+                .or_else(|| crate::agent::preferences::extract_tag(&desc, "channel:"))
+                .unwrap_or_else(|| {
+                    // Fallback: find any standalone numeric token > 10 digits
+                    desc.split_whitespace()
+                        .find(|s| s.chars().all(|c| c.is_ascii_digit()) && s.len() > 10)
+                        .unwrap_or("")
+                        .to_string()
+                });
 
             if target_id.is_empty() {
                 return ToolResult {
