@@ -17,20 +17,15 @@ pub async fn execute_search_timeline(
         let _ = tx.send("🧠 Timeline Drone executing...\n".to_string()).await;
     }
     tracing::debug!("[AGENT:timeline] ▶ task_id={}", task_id);
-
-    let query = extract_tag(&description, "query:").unwrap_or_default().to_lowercase();
+    let action = extract_tag(&description, "action:").unwrap_or("search".to_string()).to_lowercase();
+    let query_raw = extract_tag(&description, "query:").unwrap_or_default().to_lowercase();
     let limit_str = extract_tag(&description, "limit:").unwrap_or("20".to_string());
     let limit: usize = limit_str.parse().unwrap_or(20);
     let scope_override = extract_tag(&description, "scope:").unwrap_or_default().to_lowercase();
 
-    if query.is_empty() {
-        return ToolResult { 
-            task_id, 
-            output: "Error: Missing 'query:' field.".to_string(), 
-            tokens_used: 0, 
-            status: ToolStatus::Failed("Missing field".into()) 
-        };
-    }
+    // Split query into individual search terms for ANY-word matching
+    let query_terms: Vec<&str> = query_raw.split_whitespace().collect();
+    let is_browse = action == "recent" || action == "browse" || action == "read" || (action == "search" && query_raw.is_empty());
 
     // The real directory structure is:
     //   memory/public_{channel_id}/{user_id}/timeline.jsonl   (public)
@@ -73,8 +68,8 @@ pub async fn execute_search_timeline(
         vec![path]
     };
 
-    tracing::debug!("[AGENT:timeline] query='{}' scope_override='{}' paths_count={} paths={:?}", 
-        query, scope_override, timeline_paths.len(), timeline_paths);
+    tracing::debug!("[AGENT:timeline] query_raw='{}' query_terms={:?} scope_override='{}' paths_count={} paths={:?}", 
+        query_raw, query_terms, scope_override, timeline_paths.len(), timeline_paths);
 
     if timeline_paths.is_empty() {
         return ToolResult {
@@ -100,8 +95,8 @@ pub async fn execute_search_timeline(
                     all_lines.push(line);
                 }
 
-                tracing::debug!("[AGENT:timeline] Opened {:?}, read {} lines, searching for '{}'", 
-                    timeline_path, all_lines.len(), query);
+                tracing::debug!("[AGENT:timeline] Opened {:?}, read {} lines, is_browse={}, searching for any of {:?}", 
+                    timeline_path, all_lines.len(), is_browse, query_terms);
 
                 // Label for multi-file results: extract user_id from path
                 let parent_name = timeline_path.parent()
@@ -110,7 +105,15 @@ pub async fn execute_search_timeline(
                     .unwrap_or("unknown");
 
                 for line in all_lines.iter().rev() {
-                    if line.to_lowercase().contains(&query)
+                    // Browse mode: return all entries. Search mode: match any query term.
+                    let matches = if is_browse {
+                        true
+                    } else {
+                        let line_lower = line.to_lowercase();
+                        query_terms.iter().any(|term| line_lower.contains(term))
+                    };
+
+                    if matches
                         && let Ok(json) = serde_json::from_str::<serde_json::Value>(line)
                             && let (Some(author), Some(content)) = (json["author_name"].as_str(), json["content"].as_str()) {
                                 let prefix = if timeline_paths.len() > 1 {
@@ -149,14 +152,14 @@ pub async fn execute_search_timeline(
     if results.is_empty() {
         ToolResult {
             task_id,
-            output: format!("No matches found for '{}' across {} timeline(s) searched.", query, searched_count),
+            output: format!("No matches found for '{}' across {} timeline(s) searched.", query_raw, searched_count),
             tokens_used: 0,
             status: ToolStatus::Success,
         }
     } else {
         ToolResult {
             task_id,
-            output: format!("Timeline Search Results for '{}' ({} timeline(s) searched):\n\n{}", query, searched_count, results.join("\n\n")),
+            output: format!("Timeline Search Results for '{}' ({} timeline(s) searched):\n\n{}", query_raw, searched_count, results.join("\n\n")),
             tokens_used: 0,
             status: ToolStatus::Success,
         }
@@ -204,9 +207,9 @@ mod tests {
         let mem = Arc::new(MemoryStore::default());
         let scope = Scope::Private { user_id: "test_tl_user".to_string() };
 
-        // Ensure missing query fails
+        // Empty query triggers browse mode (returns recent entries, not an error)
         let res = execute_search_timeline("1".into(), "limit:[5]".into(), mem.clone(), None, &scope).await;
-        assert_eq!(res.status, ToolStatus::Failed("Missing field".into()));
+        assert_eq!(res.status, ToolStatus::Success);
 
         // Empty timeline search should yield success but "no timeline"
         let res = execute_search_timeline("1".into(), "query:[apple]".into(), mem.clone(), None, &scope).await;
