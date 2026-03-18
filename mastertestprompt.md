@@ -42,8 +42,25 @@ The following prompt is designed to push the HIVE Agent stack to its absolute li
 > 27. Use `download` to download a test file: `url:[https://httpbin.org/json]` to verify the download tool and file server.
 > 28. Use `synthesizer` to fan-in all observations, parse the results, and generate the final response.
 > 
-> **Turn 7 repeated: Final Delivery**
-> 30. Use `reply_to_request` to end the gauntlet. Your final response MUST end with the following formatted report card. For each tool, write PASS if it executed successfully or FAIL with a reason:
+> **Turn 8: Hierarchical Goal System**
+> 29. Use `manage_goals` to create a root goal: `action:[create] title:[Master Gauntlet Certification] description:[Complete all gauntlet turns and verify every subsystem] priority:[0.9] tags:[gauntlet,testing]`. Confirm the goal ID is returned.
+> 30. Use `manage_goals` to decompose the root goal: `action:[decompose] id:[THE_GOAL_ID_FROM_29]`. Confirm 2-5 subgoals are generated.
+> 31. Use `manage_goals` to list the full goal tree: `action:[list]`. Confirm the tree shows a root and subgoals with status and progress percentages.
+> 32. Use `manage_goals` to update a subgoal to completed: `action:[status] id:[PICK_A_SUBGOAL_ID] status:[completed]`. Confirm progress bubbles up to the root.
+> 33. Use `manage_goals` to add evidence to another subgoal: `action:[progress] id:[PICK_ANOTHER_SUBGOAL_ID] evidence:[Gauntlet turns 1-7 complete] delta:[0.5]`. Confirm progress is recorded.
+> 34. Use `manage_goals` to prune completed subtrees: `action:[prune]`. Confirm completed goals are archived.
+> 
+> **Turn 9: Tool Forge (Self-Extension)**
+> 35. Use `tool_forge` to create a new tool: `action:[create] name:[gauntlet_checker] description:[Returns system health status as JSON] language:[python] code:[import sys, json; args = json.loads(sys.stdin.read()); print(json.dumps({"status": "healthy", "gauntlet": True, "checked_by": args.get("raw_description", "unknown")}))]`. Confirm tool created.
+> 36. Use `tool_forge` to test the new tool: `action:[test] name:[gauntlet_checker] input:[diagnostic run]`. Confirm it executes and returns the JSON output with `status: healthy`.
+> 37. Use `tool_forge` to edit the tool: `action:[edit] name:[gauntlet_checker] code:[import sys, json; args = json.loads(sys.stdin.read()); print(json.dumps({"status": "healthy", "version": 2, "upgraded": True}))]`. Confirm version bumps to v2.
+> 38. Use `tool_forge` to list all forged tools: `action:[list]`. Confirm `gauntlet_checker` appears as ✅ enabled, v2.
+> 39. Use `tool_forge` to disable the tool: `action:[disable] name:[gauntlet_checker]`. Then list again to confirm it shows ⛔ disabled.
+> 40. Use `tool_forge` to re-enable and then delete the tool: `action:[enable] name:[gauntlet_checker]`, then `action:[delete] name:[gauntlet_checker]`. Confirm it is removed.
+> 41. Use `tool_forge` to create a SECOND tool and then use it directly by name as a first-class tool: `action:[create] name:[bee_fact] description:[Returns a random bee fact] language:[bash] code:[echo '{"fact": "A single bee can visit 5000 flowers in a day"}']`. Then in a follow-up plan, use `bee_fact` directly as a tool (not via tool_forge) to confirm hot-loading works.
+> 
+> **Turn 10 (replaces Turn 7): Final Delivery**
+> 42. Use `reply_to_request` to end the gauntlet. Your final response MUST end with the following formatted report card. For each tool, write PASS if it executed successfully or FAIL with a reason:
 > 
 > **Master Gauntlet v4 — Report Card**
 > - 🌐 `web_search`: PASS / FAIL
@@ -71,8 +88,21 @@ The following prompt is designed to push the HIVE Agent stack to its absolute li
 > - 💻 `file_system_operator`: PASS / FAIL (or ADMIN)
 > - ⌨️ `run_bash_command`: PASS / FAIL (or ADMIN)
 > - 🪄 `synthesizer`: PASS / FAIL
+> - 🎯 `manage_goals` (create): PASS / FAIL
+> - 🎯 `manage_goals` (decompose): PASS / FAIL
+> - 🎯 `manage_goals` (list): PASS / FAIL
+> - 🎯 `manage_goals` (status update): PASS / FAIL
+> - 🎯 `manage_goals` (progress + evidence): PASS / FAIL
+> - 🎯 `manage_goals` (prune): PASS / FAIL
+> - 🔧 `tool_forge` (create): PASS / FAIL
+> - 🔧 `tool_forge` (test): PASS / FAIL
+> - 🔧 `tool_forge` (edit + version): PASS / FAIL
+> - 🔧 `tool_forge` (list): PASS / FAIL
+> - 🔧 `tool_forge` (disable/enable): PASS / FAIL
+> - 🔧 `tool_forge` (delete): PASS / FAIL
+> - 🔧 `tool_forge` (hot-load + direct use): PASS / FAIL
 > 
-> **TOTAL: XX / 24 PASSED**
+> **TOTAL: XX / 37 PASSED**
 > 
 > Do not use prior knowledge for any of this. Execute them in parallel per turn, wait for observations, and prove your capabilities.
 

@@ -19,6 +19,8 @@ pub fn dispatch_native_tool(
     composer: Option<Arc<crate::computer::document::DocumentComposer>>,
     agent_manager: Option<Arc<crate::agent::AgentManager>>,
     capabilities: Option<Arc<crate::models::capabilities::AgentCapabilities>>,
+    goal_store: Option<Arc<crate::engine::goals::GoalStore>>,
+    tool_forge: Option<Arc<crate::agent::tool_forge::ToolForge>>,
 ) -> Option<tokio::task::JoinHandle<ToolResult>> {
     let task_id = task.task_id.clone();
     let desc = task.description.clone();
@@ -343,6 +345,35 @@ pub fn dispatch_native_tool(
             crate::agent::routines::execute_manage_routine(task_id, desc, mem_clone, tx_clone).await
         });
         return Some(handle);
+    }
+
+    if tool_type == "manage_goals" {
+        let scope_clone = scope.clone();
+        if let Some(gs) = goal_store {
+            let handle = tokio::spawn(async move {
+                crate::agent::goal_tool::execute_goal_tool(task_id, desc, scope_clone, gs, provider, tx_clone).await
+            });
+            return Some(handle);
+        } else {
+            let handle = tokio::spawn(async move {
+                ToolResult { task_id, output: "Goal system not initialized.".into(), tokens_used: 0, status: ToolStatus::Failed("No GoalStore".into()) }
+            });
+            return Some(handle);
+        }
+    }
+
+    if tool_type == "tool_forge" {
+        if let Some(fg) = tool_forge.clone() {
+            let handle = tokio::spawn(async move {
+                crate::agent::tool_forge::execute_tool_forge(task_id, desc, fg, tx_clone).await
+            });
+            return Some(handle);
+        } else {
+            let handle = tokio::spawn(async move {
+                ToolResult { task_id, output: "Tool Forge not initialized.".into(), tokens_used: 0, status: ToolStatus::Failed("No ToolForge".into()) }
+            });
+            return Some(handle);
+        }
     } 
     
     if tool_type == "manage_lessons" {
@@ -532,6 +563,26 @@ pub fn dispatch_native_tool(
         return Some(handle);
     }
 
+    // Catch-all: check if this is a forged tool
+    if let Some(ref fg) = tool_forge {
+        let fg_clone = fg.clone();
+        let tool_type_owned = tool_type.to_string();
+        let handle = tokio::spawn(async move {
+            if let Some(tool_def) = fg_clone.get_tool(&tool_type_owned).await {
+                if tool_def.enabled {
+                    crate::agent::tool_forge::execute_forged_tool(
+                        task_id, desc, tool_def, fg_clone.tools_dir.clone(), tx_clone,
+                    ).await
+                } else {
+                    ToolResult { task_id, output: format!("Forged tool '{}' is disabled.", tool_type_owned), tokens_used: 0, status: ToolStatus::Failed("Disabled".into()) }
+                }
+            } else {
+                ToolResult { task_id, output: format!("Unknown tool: {}", tool_type_owned), tokens_used: 0, status: ToolStatus::Failed("Unknown".into()) }
+            }
+        });
+        return Some(handle);
+    }
+
     tracing::warn!("[AGENT:Dispatch] Unknown tool_type='{}' task_id='{}' — no handler found", tool_type, task_id);
     None
 }
@@ -557,7 +608,7 @@ mod tests {
             "operate_turing_grid", "file_writer", "read_logs", "run_bash_command",
             "process_manager", "file_system_operator", "autonomy_activity",
             "review_reasoning", "read_attachment", "manage_user_preferences",
-            "manage_skill", "manage_routine", "manage_lessons", "search_timeline",
+            "manage_skill", "manage_routine", "manage_lessons", "manage_goals", "tool_forge", "search_timeline",
             "manage_scratchpad", "operate_synaptic_graph", "read_core_memory",
             "synthesizer", "download", "list_cached_images",
             // Swarm delegation tools
@@ -583,6 +634,8 @@ mod tests {
                 None,
                 mem.clone(),
                 provider.clone(),
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -615,6 +668,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         );
         assert!(dup_handle.is_some());
         
@@ -633,6 +688,8 @@ mod tests {
             None,
             mem.clone(),
             provider.clone(),
+            None,
+            None,
             None,
             None,
             None,

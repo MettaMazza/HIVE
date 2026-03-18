@@ -9,6 +9,7 @@ use crate::providers::Provider;
 use crate::agent::AgentManager;
 use crate::engine::core::Engine;
 use crate::engine::drives;
+use crate::engine::goals;
 use crate::engine::outreach;
 use crate::engine::inbox;
 use crate::teacher::Teacher;
@@ -74,7 +75,9 @@ impl EngineBuilder {
         let drives = Arc::new(drives::DriveSystem::new(&self.project_root));
         let outreach_gate = Arc::new(outreach::OutreachGate::new(&self.project_root, provider.clone()));
         let inbox = Arc::new(inbox::InboxManager::new(&self.project_root));
-        tracing::debug!("[ENGINE:Builder] Subsystems initialized: DriveSystem, OutreachGate, InboxManager");
+        let goal_store = Arc::new(goals::GoalStore::new(&self.project_root));
+        let tool_forge = Arc::new(crate::agent::tool_forge::ToolForge::new(&self.project_root));
+        tracing::debug!("[ENGINE:Builder] Subsystems initialized: DriveSystem, OutreachGate, InboxManager, GoalStore, ToolForge");
         
         let agent = match self.agent {
             Some(s) => {
@@ -83,10 +86,12 @@ impl EngineBuilder {
             },
             None => {
                 tracing::debug!("[ENGINE:Builder] Constructing new AgentManager with outreach integration");
-                Arc::new(
-                    AgentManager::new(provider.clone(), memory.clone())
-                        .with_outreach(drives.clone(), outreach_gate.clone(), inbox.clone())
-                )
+                let mut agent = AgentManager::new(provider.clone(), memory.clone())
+                    .with_outreach(drives.clone(), outreach_gate.clone(), inbox.clone())
+                    .with_goals(goal_store.clone())
+                    .with_forge(tool_forge.clone());
+                agent.load_forged_tools(&tool_forge);
+                Arc::new(agent)
             },
         };
 

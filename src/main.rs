@@ -84,6 +84,7 @@ pub async fn run_app() {
             "1299810741984956449".into(), // metta_mazza
             "1282286389953695745".into(), // afreakyfrog
             "local_admin".into(),         // CLI access
+            "apis_autonomy".into(),       // Autonomy loop — full tool access
         ],
         has_terminal_access: true,
         has_internet_access: true,

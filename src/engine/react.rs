@@ -32,8 +32,21 @@ pub async fn execute_react_loop(
     drives.update().await;
     let drive_hud = drives.format_for_prompt().await;
     
+    // Inject active goals summary
+    let goal_hud = if let Some(ref gs) = agent.goal_store {
+        let tree = gs.get_tree(&event.scope).await;
+        let formatted = tree.format_for_prompt().await;
+        if formatted != "No active goals." {
+            format!("\nACTIVE GOALS:\n{}", formatted)
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+
     let mut base_system_prompt = crate::prompts::SystemPromptBuilder::assemble(&event.scope, memory.clone()).await;
-    base_system_prompt.push_str(&format!("\n\n{}\n", drive_hud));
+    base_system_prompt.push_str(&format!("\n\n{}\n{}", drive_hud, goal_hud));
     if event.author_id == "apis_autonomy" {
         base_system_prompt.push_str("\n\n[AUTONOMY MODE ACTIVE] You are currently operating in Continuous Autonomy mode. You are a first-class user of your own system. Use your time productively and diversely. Report what you did in your reply.\n");
     }

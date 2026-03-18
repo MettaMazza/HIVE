@@ -38,6 +38,9 @@ pub mod sub_agent;
 pub mod spawner;
 pub mod aggregator;
 pub mod lifecycle;
+pub mod goal_planner;
+pub mod goal_tool;
+pub mod tool_forge;
 pub struct AgentManager {
     registry: HashMap<String, ToolTemplate>,
     discord_tools: HashMap<String, ToolTemplate>,
@@ -47,6 +50,8 @@ pub struct AgentManager {
     pub drives: Option<Arc<crate::engine::drives::DriveSystem>>,
     pub outreach_gate: Option<Arc<crate::engine::outreach::OutreachGate>>,
     pub inbox: Option<Arc<crate::engine::inbox::InboxManager>>,
+    pub goal_store: Option<Arc<crate::engine::goals::GoalStore>>,
+    pub tool_forge: Option<Arc<crate::agent::tool_forge::ToolForge>>,
 }
 
 impl AgentManager {
@@ -115,6 +120,30 @@ impl AgentManager {
         let read_core_memory = ToolTemplate { name: "read_core_memory".into(), system_prompt: "System introspection. 'action:[temporal]' — check boot time, total uptime, turn counts. 'action:[tokens]' — check working memory context size / token pressure limit.".into(), tools: vec![] };
         let manage_skill = ToolTemplate { name: "manage_skill".into(), system_prompt: "[ADMIN ONLY] Create, list, or execute custom Python or Bash scripts. Stored and scoped to the current user/channel. Description format: 'action:[create/list/execute] name:[skill_name.py] content:[RAW CODE]'".into(), tools: vec![] };
         let manage_routine = ToolTemplate { name: "manage_routine".into(), system_prompt: "Create, read, or list OpenClaw-style declarative markdown Routines. Routines instruct you on how to solve complex tasks. Description format: 'action:[create/read/list] name:[routine.md] content:[RAW MARKDOWN]'".into(), tools: vec![] };
+        let manage_goals = ToolTemplate {
+            name: "manage_goals".into(),
+            system_prompt: "Persistent hierarchical goal tree. Track, decompose, and pursue long-horizon objectives. \
+                'action:[create] title:[Goal Title] description:[What to achieve] priority:[0.0-1.0] tags:[tag1,tag2]' — create a new root goal. \
+                'action:[decompose] id:[goal_uuid]' — use AI to break a goal into 2-5 concrete subgoals. \
+                'action:[list]' — view entire goal tree with status and progress. \
+                'action:[status] id:[goal_uuid] status:[completed/active/pending/failed/blocked]' — update goal status. Progress auto-bubbles to parents. \
+                'action:[progress] id:[goal_uuid] evidence:[what was accomplished] delta:[0.0-1.0]' — record incremental progress. \
+                'action:[prune]' — archive completed goal subtrees.".into(),
+            tools: vec![],
+        };
+        let tool_forge_template = ToolTemplate {
+            name: "tool_forge".into(),
+            system_prompt: "[ADMIN ONLY] Create, test, edit, and manage custom forged tools that become first-class tools in your registry. \
+                'action:[create] name:[tool_name] description:[What the tool does] language:[python/bash] code:[THE CODE]' — write a new tool. \
+                'action:[test] name:[tool_name] input:[test input]' — dry-run a tool. \
+                'action:[edit] name:[tool_name] code:[UPDATED CODE]' — update code, bumps version. \
+                'action:[enable] name:[tool_name]' / 'action:[disable] name:[tool_name]' — toggle without deleting. \
+                'action:[delete] name:[tool_name]' — remove tool. \
+                'action:[list]' — show all forged tools. \
+                Scripts receive input as JSON via stdin and should print results to stdout. \
+                Forged tools appear in your tool registry immediately after creation.".into(),
+            tools: vec![],
+        };
         let synthesizer = ToolTemplate { name: "synthesizer".into(), system_prompt: "Fan-in aggregator drone. Reads all DRONE OUTPUT blocks already in context and condenses them into a single compact synthesis. Use this as the final task in a multi-wave plan when you need to merge results before replying. Description: plain English instruction on what to synthesise, e.g. 'Summarise the web and memory results into 3 key findings.'. CRITICAL INSTRUCTION: If any drone output includes a tag like [ATTACH_IMAGE](...), [ATTACH_FILE](...), or [ATTACH_AUDIO](...), you MUST include that EXACT tag verbatim in your output so it reaches the user.".into(), tools: vec![] };
         let read_logs = ToolTemplate { name: "read_logs".into(), system_prompt: "Reads deep spans of the core system log (logs/hive.log) for debug introspection. Description format: 'action:[read] lines:[number of lines to read starting from the tail]'".into(), tools: vec![] };
         let review_reasoning = ToolTemplate { name: "review_reasoning".into(), system_prompt: "Read historical ReAct reasoning traces from working memory. Use this to remember why you made specific decisions turns ago. Description format: 'action:[read] turns_ago:[number of turns ago to start reading]'".into(), tools: vec![] };
@@ -232,6 +261,8 @@ impl AgentManager {
         registry.insert(read_core_memory.name.clone(), read_core_memory);
         registry.insert(manage_skill.name.clone(), manage_skill);
         registry.insert(manage_routine.name.clone(), manage_routine);
+        registry.insert(manage_goals.name.clone(), manage_goals);
+        registry.insert(tool_forge_template.name.clone(), tool_forge_template);
         registry.insert(synthesizer.name.clone(), synthesizer);
         registry.insert(read_logs.name.clone(), read_logs);
         registry.insert(review_reasoning.name.clone(), review_reasoning);
@@ -342,6 +373,8 @@ impl AgentManager {
             drives: None,
             outreach_gate: None,
             inbox: None,
+            goal_store: None,
+            tool_forge: None,
         }
     }
 
@@ -356,6 +389,45 @@ impl AgentManager {
         self.outreach_gate = Some(outreach_gate);
         self.inbox = Some(inbox);
         self
+    }
+
+    pub fn with_goals(mut self, goal_store: Arc<crate::engine::goals::GoalStore>) -> Self {
+        self.goal_store = Some(goal_store);
+        self
+    }
+
+    pub fn with_forge(mut self, forge: Arc<crate::agent::tool_forge::ToolForge>) -> Self {
+        self.tool_forge = Some(forge);
+        self
+    }
+
+    /// Hot-load forged tools into the registry so the planner sees them.
+    pub fn load_forged_tools(&mut self, forge: &crate::agent::tool_forge::ToolForge) {
+        // Synchronous load from the forge's data (already loaded from disk)
+        let tools_dir = &forge.tools_dir;
+        let registry_path = tools_dir.join("registry.json");
+        if registry_path.exists() {
+            if let Ok(raw) = std::fs::read_to_string(&registry_path) {
+                if let Ok(data) = serde_json::from_str::<serde_json::Value>(&raw) {
+                    if let Some(tools) = data.get("tools").and_then(|t| t.as_array()) {
+                        for tool_val in tools {
+                            let enabled = tool_val.get("enabled").and_then(|e| e.as_bool()).unwrap_or(false);
+                            if !enabled { continue; }
+                            let name = tool_val.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                            let desc = tool_val.get("description").and_then(|d| d.as_str()).unwrap_or("");
+                            if name.is_empty() { continue; }
+                            let template = ToolTemplate {
+                                name: name.to_string(),
+                                system_prompt: format!("[FORGED TOOL] {}", desc),
+                                tools: vec![],
+                            };
+                            self.registry.insert(name.to_string(), template);
+                            tracing::info!("[FORGE] Hot-loaded forged tool: {}", name);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     pub fn register_tool(&mut self, template: ToolTemplate) {
@@ -426,6 +498,8 @@ impl AgentManager {
                 Some(self.composer.clone()),
                 swarm_agent.clone(),
                 swarm_caps.clone(),
+                self.goal_store.clone(),
+                self.tool_forge.clone(),
             ) {
                 futures.push(handle);
                 continue;
