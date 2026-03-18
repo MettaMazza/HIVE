@@ -274,7 +274,10 @@ pub async fn execute_react_loop(
             };
 
             let tx_clone = telemetry_tx.clone();
-            let mut tool_results = agent.execute_plan(safe_plan, &event.content, event.scope.clone(), Some(tx_clone), Some(agent.clone()), Some(capabilities.clone())).await;
+            // Pass accumulated ReAct context (all prior tool outputs + reasoning)
+            // so context-dependent tools like synthesizer can see prior results.
+            let full_context = format!("{}\n\n{}", event.content, context_from_agent);
+            let mut tool_results = agent.execute_plan(safe_plan, &full_context, event.scope.clone(), Some(tx_clone), Some(agent.clone()), Some(capabilities.clone())).await;
             
             // Inject the failed security tools back into the results so the agent sees them fail
             tool_results.extend(failed_admin_attempts);
