@@ -168,6 +168,33 @@ pub async fn execute_react_loop(
         // ─── TELEMETRY: Send thought + tool list after plan parsing ───────
         {
             let thought_str = plan.thought.as_deref().unwrap_or("(no thought)");
+            // Strip any embedded JSON from the thought before telemetry display.
+            // The model's thought often previews the JSON plan structure which leaks
+            // into Discord if humanize_telemetry can't parse partially-balanced braces.
+            let clean_thought = {
+                let mut result = String::new();
+                let mut depth: i32 = 0;
+                let mut in_string = false;
+                let mut prev_escape = false;
+                for ch in thought_str.chars() {
+                    if in_string {
+                        if ch == '\\' && !prev_escape { prev_escape = true; continue; }
+                        if ch == '"' && !prev_escape { in_string = false; }
+                        prev_escape = false;
+                        if depth == 0 { result.push(ch); }
+                        continue;
+                    }
+                    match ch {
+                        '"' if depth > 0 => { in_string = true; }
+                        '{' | '[' => { depth += 1; }
+                        '}' | ']' if depth > 0 => { depth -= 1; }
+                        _ if depth == 0 => { result.push(ch); }
+                        _ => {}
+                    }
+                }
+                let trimmed = result.trim().to_string();
+                if trimmed.is_empty() { "(planning)".to_string() } else { trimmed }
+            };
             let tool_list: Vec<String> = standard_tasks.iter()
                 .map(|t| format!("🔧 {}", t.tool_type))
                 .chain(react_tasks.iter().map(|t| format!("⚡ {}", t.tool_type)))
@@ -175,7 +202,7 @@ pub async fn execute_react_loop(
                 .collect();
             let telemetry_msg = format!(
                 "💭 **Thinking:**\n{}\n\n**Plan (Turn {}):**\n{}",
-                thought_str, current_turn, tool_list.join("\n")
+                clean_thought, current_turn, tool_list.join("\n")
             );
             let _ = telemetry_tx.send(telemetry_msg).await;
         }

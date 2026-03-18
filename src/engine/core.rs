@@ -227,7 +227,10 @@ fn spawn_telemetry_receiver(
                 // Discord embed description limit is 4096 chars; keep under with room for the quirk prefix
                 let max_len = 3800;
                 let display_text = if humanized.len() > max_len {
-                    format!("…{}", &humanized[humanized.len() - max_len..])
+                    // Find a valid char boundary to avoid panicking on multi-byte UTF-8 (emojis etc.)
+                    let mut start = humanized.len() - max_len;
+                    while !humanized.is_char_boundary(start) && start < humanized.len() { start += 1; }
+                    format!("…{}", &humanized[start..])
                 } else {
                     humanized
                 };
@@ -260,7 +263,9 @@ fn spawn_telemetry_receiver(
             let humanized = humanize_telemetry(&buffered_thought);
             let max_len = 3800;
             let display_text = if humanized.len() > max_len {
-                format!("…{}", &humanized[humanized.len() - max_len..])
+                let mut start = humanized.len() - max_len;
+                while !humanized.is_char_boundary(start) && start < humanized.len() { start += 1; }
+                format!("…{}", &humanized[start..])
             } else {
                 humanized
             };
