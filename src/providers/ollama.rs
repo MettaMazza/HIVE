@@ -85,6 +85,7 @@ struct OllamaRequest {
     model: String,
     messages: Vec<OllamaMessage>,
     stream: bool,
+    keep_alive: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     options: Option<OllamaOptions>,
 }
@@ -235,6 +236,7 @@ impl Provider for OllamaProvider {
             model: self.model.clone(),
             messages,
             stream: true,
+            keep_alive: "30m".to_string(),
             options: max_tokens.map(|n| OllamaOptions { num_predict: Some(n) }),
         };
 

@@ -3,11 +3,12 @@ use crate::models::scope::Scope;
 use crate::memory::MemoryStore;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 pub async fn execute_review_reasoning(
     task_id: String,
     desc: String,
-    memory: Arc<MemoryStore>,
+    _memory: Arc<MemoryStore>,
     scope: Scope,
     telemetry_tx: Option<mpsc::Sender<String>>,
 ) -> ToolResult {
@@ -16,41 +17,76 @@ pub async fn execute_review_reasoning(
     }
     tracing::debug!("[AGENT:reasoning] ▶ task_id={}", task_id);
 
-    let mut turns_ago = 5;
-    if let Some(turns_str) = desc.split("turns_ago:[").nth(1)
-        && let Some(num_str) = turns_str.split("]").next()
-            && let Ok(num) = num_str.parse::<usize>() {
-                turns_ago = num;
+    // Parse parameters
+    let mut limit: usize = 5;
+    if let Some(turns_str) = desc.split("turns_ago:[").nth(1) {
+        if let Some(num_str) = turns_str.split("]").next() {
+            if let Ok(num) = num_str.parse::<usize>() {
+                limit = num;
             }
-
-    let history = memory.working.get_history(&scope).await;
-    let mut extracted = Vec::new();
-    for event in history.iter().rev() {
-        if event.author_name == "Apis (Internal Timeline)" {
-            extracted.push(event.content.clone());
+        }
+    }
+    if let Some(limit_str) = desc.split("limit:[").nth(1) {
+        if let Some(num_str) = limit_str.split("]").next() {
+            if let Ok(num) = num_str.parse::<usize>() {
+                limit = num;
+            }
         }
     }
 
-    if extracted.is_empty() {
+    // Resolve the timeline file path from the current scope
+    let timeline_path = match &scope {
+        Scope::Public { channel_id, user_id } => {
+            std::path::PathBuf::from(format!("memory/public_{}/{}/timeline.jsonl", channel_id, user_id))
+        }
+        Scope::Private { user_id } => {
+            std::path::PathBuf::from(format!("memory/private_{}/timeline.jsonl", user_id))
+        }
+    };
+
+    // Read the persistent timeline file and extract only internal reasoning traces
+    let file = match tokio::fs::File::open(&timeline_path).await {
+        Ok(f) => f,
+        Err(_) => {
+            return ToolResult {
+                task_id,
+                output: "No persistent timeline found — no reasoning traces available.".to_string(),
+                tokens_used: 0,
+                status: ToolStatus::Success,
+            };
+        }
+    };
+
+    let reader = BufReader::new(file);
+    let mut lines = reader.lines();
+    let mut all_traces = Vec::new();
+
+    while let Ok(Some(line)) = lines.next_line().await {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) {
+            if json["author_id"].as_str() == Some("internal") {
+                if let Some(content) = json["content"].as_str() {
+                    all_traces.push(content.to_string());
+                }
+            }
+        }
+    }
+
+    if all_traces.is_empty() {
         return ToolResult {
             task_id,
-            output: "No reasoning traces found in active memory.".to_string(),
+            output: "No reasoning traces found in the persistent timeline.".to_string(),
             tokens_used: 0,
             status: ToolStatus::Success,
         };
     }
 
-    let start_idx = if turns_ago >= extracted.len() { extracted.len() - 1 } else { turns_ago };
-    
-    let slice = if start_idx + 5 <= extracted.len() {
-        &extracted[start_idx..start_idx + 5]
-    } else {
-        &extracted[start_idx..]
-    };
+    // Return the most recent N traces (from the end of the file)
+    let start = if all_traces.len() > limit { all_traces.len() - limit } else { 0 };
+    let slice = &all_traces[start..];
 
     let mut out = String::new();
     for (i, trace) in slice.iter().enumerate() {
-        out.push_str(&format!("--- TRACE {} TURNS AGO ---\n{}\n\n", start_idx + i, trace));
+        out.push_str(&format!("--- REASONING TRACE {} of {} ---\n{}\n\n", start + i + 1, all_traces.len(), trace));
     }
 
     ToolResult {

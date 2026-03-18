@@ -260,9 +260,14 @@ impl MemoryStore {
         let mut narrative = String::new();
         narrative.push_str("📋 **Public Engagement Log**\n");
         narrative.push_str(&format!("• Users engaged: {}\n\n", users_seen.into_iter().collect::<Vec<_>>().join(", ")));
-        narrative.push_str("**Full Conversation History:**\n");
+        narrative.push_str("**Conversation Summary:**\n");
         for line in &conversations {
             narrative.push_str(&format!("{}\n", line));
+            // Hard cap: stop if narrative exceeds 50K chars
+            if narrative.len() > 50_000 {
+                narrative.push_str("\n[... narrative truncated for autonomy context]\n");
+                break;
+            }
         }
 
         narrative

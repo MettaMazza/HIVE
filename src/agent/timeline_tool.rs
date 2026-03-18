@@ -122,6 +122,11 @@ pub async fn execute_search_timeline(
                     if matches
                         && let Ok(json) = serde_json::from_str::<serde_json::Value>(line)
                             && let (Some(author), Some(content)) = (json["author_name"].as_str(), json["content"].as_str()) {
+                                // Skip internal reasoning traces — these are accessed via review_reasoning
+                                let author_id = json["author_id"].as_str().unwrap_or("");
+                                if author_id == "internal" {
+                                    continue;
+                                }
                                 let prefix = if timeline_paths.len() > 1 {
                                     format!("[{}] {}", parent_name, author)
                                 } else {
