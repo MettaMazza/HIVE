@@ -327,8 +327,19 @@ pub async fn execute_react_loop(
             while let Ok(outbound_res) = outbound_rx.try_recv() {
                 let platform_name = outbound_res.platform.split(':').next().unwrap_or("discord");
                 if let Some(platform) = platforms.get(platform_name) {
-                    let _ = platform.send(outbound_res).await;
+                    let _ = platform.send(outbound_res.clone()).await;
                 }
+                
+                // Inject the proactive dispatch directly into the agent's physical timeline context
+                // so the agent actually remembers sending it!
+                let dispatch_event = crate::models::message::Event {
+                    platform: outbound_res.platform,
+                    scope: outbound_res.target_scope,
+                    author_id: "apis".into(),
+                    author_name: "Apis".to_string(),
+                    content: outbound_res.text,
+                };
+                memory.add_event(dispatch_event).await;
             }
             
             
