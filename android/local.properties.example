@@ -1,0 +1,9 @@
+# local.properties — Android SDK & build configuration
+# This file should NOT be committed to git.
+# Copy this file to `local.properties` and fill in your values.
+
+# Path to your Android SDK
+sdk.dir=/path/to/your/android/sdk
+
+# GitHub token for accessing private dependencies (if any)
+# github_token=ghp_YOUR_TOKEN_HERE

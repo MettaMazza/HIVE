@@ -7,6 +7,7 @@ pub mod discord;
 pub mod attachments;
 pub mod telemetry;
 pub mod cli;
+pub mod glasses;
 
 /// The foundational interface for any platform that HIVE connects to.
 /// This ensures HIVE is entirely platform-neutral.

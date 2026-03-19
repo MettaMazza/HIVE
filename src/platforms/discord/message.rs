@@ -147,6 +147,30 @@ pub async fn handle_message(handler: &super::Handler, ctx: Context, msg: Message
         return;
     }
 
+    // /link <code> — Link a glasses/app session to this Discord account
+    if let Some(code) = msg.content.trim().strip_prefix("/link ") {
+        let code = code.trim();
+        if code.len() == 6 && code.chars().all(|c| c.is_ascii_digit()) {
+            let discord_id = msg.author.id.get().to_string();
+            let discord_name = msg.author.name.clone();
+            match crate::platforms::glasses::link::claim_link_code(code, &discord_id, &discord_name).await {
+                Ok((device_token, platform_id)) => {
+                    let _ = msg.reply(&ctx.http, format!(
+                        "🔗 **Glasses linked!** Your glasses session is now connected to your Discord identity. All conversations through your glasses will use your private memory scope.\n\n🔑 Device token: `{}...` (stored on your device for auto-reconnect)",
+                        &device_token[..8]
+                    )).await;
+                    tracing::info!("[LINK] ✅ Discord user {} linked glasses {} via /link command", discord_name, platform_id);
+                }
+                Err(reason) => {
+                    let _ = msg.reply(&ctx.http, format!("❌ {}", reason)).await;
+                }
+            }
+        } else {
+            let _ = msg.reply(&ctx.http, "❌ Invalid code format. Use `/link <6-digit code>` from your glasses.").await;
+        }
+        return;
+    }
+
     // Intercept text-based /sweep command (since slash commands take an hour to sync)
     if msg.content.trim() == "/sweep" {
         // Hardcoded Admin ID Check

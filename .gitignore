@@ -40,3 +40,14 @@ memory/autosave/
 
 # Telemetry
 logs/telemetry.jsonl
+
+# Android secrets (contains local network IP + tokens)
+android/app/src/main/java/com/meta/wearable/dat/externalsampleapps/cameraaccess/Secrets.kt
+
+# Android build outputs
+android/app/build/
+android/build/
+android/.gradle/
+
+# Persistent glasses links (contains Discord IDs)
+memory/glasses_links.json

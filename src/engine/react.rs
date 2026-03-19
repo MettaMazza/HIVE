@@ -46,6 +46,27 @@ pub async fn execute_react_loop(
     };
 
     let mut base_system_prompt = crate::prompts::SystemPromptBuilder::assemble(&event.scope, memory.clone()).await;
+
+    // ── Platform Situational Awareness ──
+    if event.platform.starts_with("glasses") {
+        base_system_prompt.push_str(
+            "\n\n[SITUATIONAL AWARENESS: PLATFORM = SMART GLASSES]\n\
+            You are currently communicating with the user through their voice-first smart glasses (via the HIVE Android companion app). \
+            The user is out in the real world. They are talking to you out loud, and can hear your voice via native real-time Text-to-Speech audio streaming. \
+            You have a live, continuous visual feed from their glasses camera. When they speak, you instantly see what they see.\n\n\
+            BEHAVIORAL DIRECTIVES FOR GLASSES:\n\
+            1. Act extremely aware of your physical environment. You are an AI attached directly to their optical view and auditory cortex.\n\
+            2. PROACTIVE CURIOSITY: If the conversation hits a lull or they give a brief prompt, actively use your vision tools to investigate their surroundings. Call out interesting objects, text, or events happening around them.\n\
+            3. Ask honest, naturally curious questions about what they are looking at or doing. Form true engagement. Do not wait for them to explicitly ask you to look at something—you are riding along with them and have your own eyes."
+        );
+    } else if event.platform.starts_with("discord") {
+        base_system_prompt.push_str(
+            "\n\n[SITUATIONAL AWARENESS: PLATFORM = DISCORD]\n\
+            You are currently communicating with the user through a Discord interface. \
+            You can embed links, write markdown, and use rich text formatting."
+        );
+    }
+
     base_system_prompt.push_str(&format!("\n\n{}\n{}", drive_hud, goal_hud));
     if event.author_id == "apis_autonomy" {
         base_system_prompt.push_str("\n\n[AUTONOMY MODE ACTIVE] You are currently operating in Continuous Autonomy mode. You are a first-class user of your own system. Use your time productively and diversely. Report what you did in your reply.\n");
@@ -58,7 +79,7 @@ pub async fn execute_react_loop(
     let checkpoint_interval = 15;
     let mut current_turn = 0;
     let mut observer_attempts = 0;
-    let mut all_rejections: Vec<(String, String, String)> = vec![];
+    let mut all_rejections: Vec<(String, String, String)> = Vec::new();
     let mut completed_tools: Vec<(String, String)> = vec![]; // (task_id, tool_type)
     let mut tool_outputs: HashMap<String, String> = HashMap::new(); // task_id -> raw output for source forwarding
     let mut last_tool_turn_ids: Vec<(String, String)> = vec![]; // (task_id, tool_type) from the MOST RECENT tool-executing turn only
@@ -310,9 +331,21 @@ pub async fn execute_react_loop(
                 // full content (which may be 55KB+ for read_attachment).
                 const LLM_CONTEXT_CAP: usize = 8000;
                 let display_output = if res.output.len() > LLM_CONTEXT_CAP {
+                    // Determine the tool type for this result to choose the right guidance
+                    let tool_type_for_result = completed_tools.iter()
+                        .chain(last_tool_turn_ids.iter())
+                        .find(|(tid, _)| tid == &res.task_id)
+                        .map(|(_, tt)| tt.as_str())
+                        .unwrap_or("");
+                    let verbatim_safe = ["read_attachment", "download"];
+                    let truncation_guidance = if verbatim_safe.contains(&tool_type_for_result) {
+                        format!("[Full output is {} bytes — stored for verbatim forwarding via source field or auto-injection. Do NOT attempt to reproduce this content yourself.]", res.output.len())
+                    } else {
+                        format!("[Output truncated at {} of {} bytes. READ and ANSWER FROM the data above. Do NOT forward raw tool output to the user — summarize, extract, and respond in your own words.]", LLM_CONTEXT_CAP, res.output.len())
+                    };
                     format!(
-                        "{}...\n\n[Full output is {} bytes — stored for verbatim forwarding via source field or auto-injection. Do NOT attempt to reproduce this content yourself.]",
-                        &res.output[..LLM_CONTEXT_CAP], res.output.len()
+                        "{}...\n\n{}",
+                        &res.output[..LLM_CONTEXT_CAP], truncation_guidance
                     )
                 } else {
                     res.output.clone()
@@ -429,6 +462,11 @@ pub async fn execute_react_loop(
                 }
             }
 
+            // ── SKEPTIC OBSERVER AUDIT (SYNCHRONOUS) ──
+            // With the KV-cache optimization in observer.rs, this audit now
+            // inherently evaluates in 0.5s instead of 35s, allowing us to
+            // comfortably leave it on the critical path without lagging delivery.
+            tracing::info!("[AGENT LOOP] 🕵️ Running Skeptic Audit on Turn {}...", current_turn);
             let audit_result = crate::prompts::observer::run_skeptic_audit(
                 provider.clone(),
                 &capabilities,
@@ -456,41 +494,29 @@ pub async fn execute_react_loop(
                         }
                     }
                 }
-                tracing::info!("[AGENT LOOP] ✅ Final answer approved by Observer on turn {}.", current_turn);
+                tracing::info!("[AGENT LOOP] ✅ Audit passed. Delivering Turn {}.", current_turn);
                 final_response_text = candidate_answer;
                 break;
             } else {
+                tracing::warn!("[AGENT LOOP] 🛑 Response violated rules. Appending to context and looping...\nCategory: {}\nViolation: {}", audit_result.failure_category, audit_result.what_went_wrong);
+                
                 all_rejections.push((
                     candidate_answer.clone(),
                     audit_result.failure_category.clone(),
-                    audit_result.what_went_wrong.clone(),
+                    audit_result.what_went_wrong.clone()
                 ));
-                tracing::warn!("[OBSERVER BLOCKED]\nCategory: {}\nWhat Worked: {}\nWhat Went Wrong: {}\nHow to Fix: {}", audit_result.failure_category, audit_result.what_worked, audit_result.what_went_wrong, audit_result.how_to_fix);
                 
-                // Include a truncated copy of the rejected candidate so the LLM
-                // knows exactly what it wrote that was wrong. Without this, it just
-                // gets told "fix it" but can't see the specific problem.
-                let rejected_preview = if candidate_answer.len() > 500 {
-                    format!("{}...[truncated]", &candidate_answer[..500])
-                } else {
-                    candidate_answer.clone()
-                };
-                let guidance = format!(
-                    "[INTERNAL AUDIT: INVISIBLE TO USER] CORRECTION REQUIRED FOR YOUR REPLY\n\
-                    FAILURE CATEGORY: {}\n\
-                    WHAT WORKED: {}\n\
-                    WHAT WENT WRONG: {}\n\
-                    HOW TO FIX: {}\n\
-                    YOUR REJECTED OUTPUT WAS:\n---\n{}\n---\n\
-                    You MUST rewrite your reply_to_request to fix the above issue. Do NOT include raw tool outputs, search results, or internal data in your reply.\n\n",
-                    audit_result.failure_category, audit_result.what_worked,
-                    audit_result.what_went_wrong, audit_result.how_to_fix,
-                    rejected_preview
-                );
-                context_from_agent.push_str(&guidance);
+                context_from_agent.push_str(&format!(
+                    "Turn {} - [SKEPTIC AUDIT FAIL: INVISIBLE TO USER] Your output was intercepted.\nCategory: {}\nWhy it failed: {}\nHow to fix it: {}\n\nYou MUST rewrite your response immediately incorporating this feedback.\n\n",
+                    current_turn,
+                    audit_result.failure_category,
+                    audit_result.what_went_wrong,
+                    audit_result.how_to_fix
+                ));
                 
-                let msg = format!("\n🛑 **[OBSERVER BLOCKED GENERATION]**\n**Category:** {}\n**Violation:** {}\n**Fixing...**", audit_result.failure_category, audit_result.what_went_wrong);
-                let _ = telemetry_tx.send(msg).await;
+                // Also tell the UI to resume "processing" since we blocked the completion
+                let _ = telemetry_tx.send("🔄 Observer rejected response. Rewriting...".to_string()).await;
+                
                 continue;
             }
         }

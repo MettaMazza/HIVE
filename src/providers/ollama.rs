@@ -100,13 +100,19 @@ pub struct OllamaProvider {
 impl OllamaProvider {
     /// Connects to a local Ollama instance defaulting to `qwen3.5:35b` as requested.
     pub fn new() -> Self {
+        Self::with_model("qwen3.5:35b")
+    }
+
+    /// Creates an OllamaProvider targeting a specific model.
+    /// Use this for platform-specific model routing (e.g., `qwen3.5:9b` for glasses).
+    pub fn with_model(model: &str) -> Self {
         Self {
             client: Client::builder()
                 .timeout(std::time::Duration::from_secs(300))
                 .build()
                 .unwrap_or_else(|_| Client::new()),
             endpoint: "http://localhost:11434/api/chat".to_string(),
-            model: "qwen3.5:35b".to_string(),
+            model: model.to_string(),
         }
     }
     fn map_chunk_err(e: reqwest::Error) -> ProviderError {
@@ -223,7 +229,14 @@ impl Provider for OllamaProvider {
         let images_opt = if b64_images.is_empty() { None } else { Some(b64_images) };
 
         // Strict enforcement for Turn 1 "Monkey see, monkey do" conversational degradation
-        final_user_message.push_str("\n\n[SYSTEM ENFORCEMENT: You must output EXACTLY ONE valid JSON block. Do not output raw conversational text. Use the `reply_to_request` tool to speak to the user.]");
+        // Skip this explicit reply_to_request coercion for internal audit runs so the
+        // Observer doesn't waste 12+ seconds hallucinating a massive 500-token ReAct envelope.
+        if !agent_context.contains("[=== INTERNAL ENGINE INSTRUCTION: SWITCH TO AUDIT MODE ===]") {
+            final_user_message.push_str("\n\n[SYSTEM ENFORCEMENT: You must output EXACTLY ONE valid JSON block. Do not output raw conversational text. Use the `reply_to_request` tool to speak to the user.]");
+        } else {
+            // Give the Observer a lighter hint so it just prints the tiny verdict JSON.
+            final_user_message.push_str("\n\n[SYSTEM ENFORCEMENT: Output EXACTLY ONE valid JSON block representing your audit verdict.]");
+        }
 
         // Add the current triggering event
         messages.push(OllamaMessage {

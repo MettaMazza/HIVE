@@ -298,6 +298,9 @@ fn spawn_telemetry_receiver(
 pub struct Engine {
     pub platforms: Arc<HashMap<String, Box<dyn Platform>>>,
     pub provider: Arc<dyn Provider>,
+    /// Platform-specific providers (e.g., glasses → qwen3.5:9b for fast responses).
+    /// Falls back to `self.provider` if no platform-specific provider is registered.
+    pub platform_providers: Arc<HashMap<String, Arc<dyn Provider>>>,
     pub capabilities: Arc<AgentCapabilities>,
     pub memory: Arc<MemoryStore>,
     pub agent: Arc<AgentManager>,
@@ -320,10 +323,33 @@ pub struct Engine {
 }
 
 impl Engine {
+    #[allow(dead_code)]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         platforms: Arc<HashMap<String, Box<dyn Platform>>>,
         provider: Arc<dyn Provider>,
+        capabilities: Arc<AgentCapabilities>,
+        memory: Arc<MemoryStore>,
+        agent: Arc<AgentManager>,
+        teacher: Arc<Teacher>,
+        drives: Arc<drives::DriveSystem>,
+        outreach_gate: Arc<outreach::OutreachGate>,
+        inbox: Arc<inbox::InboxManager>,
+        event_sender: Option<mpsc::Sender<Event>>,
+        event_receiver: mpsc::Receiver<Event>,
+    ) -> Self {
+        Self::with_platform_providers(
+            platforms, provider, HashMap::new(),
+            capabilities, memory, agent, teacher, drives, outreach_gate, inbox,
+            event_sender, event_receiver,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_platform_providers(
+        platforms: Arc<HashMap<String, Box<dyn Platform>>>,
+        provider: Arc<dyn Provider>,
+        platform_providers: HashMap<String, Arc<dyn Provider>>,
         capabilities: Arc<AgentCapabilities>,
         memory: Arc<MemoryStore>,
         agent: Arc<AgentManager>,
@@ -341,11 +367,28 @@ impl Engine {
             .unwrap_or(8);
         tracing::info!("[ENGINE] 🐝 Parallel mode: max {} concurrent ReAct loops (HIVE_MAX_PARALLEL)", max_parallel);
 
+        if !platform_providers.is_empty() {
+            for (name, _) in &platform_providers {
+                tracing::info!("[ENGINE] 🎯 Platform-specific provider registered for '{}'", name);
+            }
+        }
+
         Self {
-            platforms, provider, capabilities, memory, agent, teacher, drives, outreach_gate, inbox, event_sender, event_receiver,
+            platforms, provider, platform_providers: Arc::new(platform_providers),
+            capabilities, memory, agent, teacher, drives, outreach_gate, inbox, event_sender, event_receiver,
             concurrency_semaphore: Arc::new(Semaphore::new(max_parallel)),
             scope_locks: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Resolve the provider for a given platform identifier.
+    /// Checks `platform_providers` first, falls back to the default provider.
+    fn resolve_provider(&self, platform_id: &str) -> Arc<dyn Provider> {
+        let platform_name = platform_id.split(':').next().unwrap_or("");
+        self.platform_providers
+            .get(platform_name)
+            .cloned()
+            .unwrap_or_else(|| self.provider.clone())
     }
 }
 
@@ -551,7 +594,7 @@ impl Engine {
             if event.author_id == "apis_autonomy" {
                 let platforms_bg = self.platforms.clone();
                 let agent_bg = self.agent.clone();
-                let provider_bg = self.provider.clone();
+                let provider_bg = self.resolve_provider(&event.platform);
                 let memory_bg = self.memory.clone();
                 let drives_bg = self.drives.clone();
                 let capabilities_bg = self.capabilities.clone();
@@ -685,7 +728,7 @@ impl Engine {
             {
                 let platforms_bg = self.platforms.clone();
                 let agent_bg = self.agent.clone();
-                let provider_bg = self.provider.clone();
+                let provider_bg = self.resolve_provider(&event.platform);
                 let memory_bg = self.memory.clone();
                 let drives_bg = self.drives.clone();
                 let capabilities_bg = self.capabilities.clone();

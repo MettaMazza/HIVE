@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.CameraAccess" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:colorBackground">#0D0D0D</item>
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:navigationBarColor">#0D0D0D</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

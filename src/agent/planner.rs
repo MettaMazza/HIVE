@@ -11,6 +11,7 @@ pub struct AgentTask {
     pub task_id: String,
     pub tool_type: String,
     pub description: String,
+    #[serde(default)]
     pub depends_on: Vec<String>,
     /// Optional: Reference a previous task_id whose raw output should be
     /// appended to this task's description. Used by `reply_to_request` to

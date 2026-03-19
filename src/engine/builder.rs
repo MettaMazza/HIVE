@@ -17,6 +17,7 @@ use crate::teacher::Teacher;
 pub struct EngineBuilder {
     platforms: HashMap<String, Box<dyn Platform>>,
     provider: Option<Arc<dyn Provider>>,
+    platform_providers: HashMap<String, Arc<dyn Provider>>,
     capabilities: AgentCapabilities,
     memory: MemoryStore,
     agent: Option<Arc<AgentManager>>,
@@ -32,6 +33,7 @@ impl EngineBuilder {
         Self {
             platforms: HashMap::new(),
             provider: None,
+            platform_providers: HashMap::new(),
             capabilities: AgentCapabilities::default(),
             memory: MemoryStore::new(None),
             agent: None,
@@ -55,6 +57,14 @@ impl EngineBuilder {
     pub fn with_provider(mut self, provider: Arc<dyn Provider>) -> Self {
         tracing::debug!("[ENGINE:Builder] Provider registered");
         self.provider = Some(provider);
+        self
+    }
+
+    /// Register a platform-specific provider (e.g., faster model for glasses).
+    /// Events from this platform will use this provider instead of the default.
+    pub fn with_platform_provider(mut self, platform_name: &str, provider: Arc<dyn Provider>) -> Self {
+        tracing::debug!("[ENGINE:Builder] Platform-specific provider registered for '{}'", platform_name);
+        self.platform_providers.insert(platform_name.to_string(), provider);
         self
     }
 
@@ -96,9 +106,10 @@ impl EngineBuilder {
         };
 
         tracing::info!("[ENGINE:Builder] ✅ Engine built successfully");
-        Ok(Engine::new(
+        Ok(Engine::with_platform_providers(
             Arc::new(self.platforms),
             provider.clone(),
+            self.platform_providers,
             Arc::new(self.capabilities),
             memory,
             agent,

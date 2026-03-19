@@ -18,6 +18,7 @@ use crate::engine::EngineBuilder;
 use crate::models::capabilities::AgentCapabilities;
 use crate::platforms::discord::DiscordPlatform;
 use crate::platforms::cli::CliPlatform;
+use crate::platforms::glasses::GlassesPlatform;
 use crate::providers::ollama::OllamaProvider;
 
 #[cfg(not(tarpaulin_include))]
@@ -48,17 +49,14 @@ pub async fn run_app() {
 
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
-    // Dynamic verbosity via RUST_LOG env var (default: info globally, debug for HIVE)
+    // Dynamic verbosity via RUST_LOG env var (default: info globally and for HIVE)
+    // The user requested cleaner logs, so we drop debug chunk telemetry from the CLI console natively.
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,HIVE=debug"));
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,HIVE=info"));
 
     let subscriber = tracing_subscriber::fmt()
         .with_env_filter(env_filter)
         .with_writer(std::io::stdout.and(non_blocking))
-        .with_target(true)          // Tags each line with the Rust module path (e.g. HIVE::engine::core)
-        .with_thread_ids(true)      // Thread IDs for concurrency debugging
-        .with_file(true)            // Source file name on every log line
-        .with_line_number(true)     // Source line number on every log line
         .finish();
 
     let _ = tracing::subscriber::set_global_default(subscriber);
@@ -98,10 +96,13 @@ pub async fn run_app() {
     };
 
     // 4. Build the engine with our defined platforms and injected contexts
+    let glasses_provider: Arc<dyn crate::providers::Provider> = Arc::new(OllamaProvider::with_model("qwen3.5:35b"));
     let engine = EngineBuilder::new()
         .with_platform(Box::new(DiscordPlatform::new(discord_token, memory_store.clone())))
         .with_platform(Box::new(CliPlatform::new(reader)))
+        .with_platform(Box::new(GlassesPlatform::new()))
         .with_provider(provider)
+        .with_platform_provider("glasses", glasses_provider)
         .with_capabilities(capabilities)
         .build()
         .expect("Failed to build Engine");

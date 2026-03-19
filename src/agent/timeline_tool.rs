@@ -132,7 +132,12 @@ pub async fn execute_search_timeline(
                                 } else {
                                     author.to_string()
                                 };
-                                results.push(format!("{}: {}", prefix, content));
+                                let truncated_content = if content.len() > 500 {
+                                    format!("{}... [truncated, {} total chars]", &content[..500], content.len())
+                                } else {
+                                    content.to_string()
+                                };
+                                results.push(format!("{}: {}", prefix, truncated_content));
                                 if results.len() >= limit {
                                     break;
                                 }
