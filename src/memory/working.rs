@@ -114,6 +114,11 @@ impl WorkingMemory {
         history
     }
     
+    pub async fn get_absolute_count(&self, requesting_scope: &Scope) -> usize {
+        let r = self.events.read().await;
+        r.iter().filter(|e| requesting_scope.can_read(&e.scope)).count()
+    }
+    
     pub async fn current_tokens(&self) -> usize {
         *self.token_count.read().await
     }
@@ -225,6 +230,8 @@ mod tests {
             author_name: "Alice".into(),
             author_id: "test".into(),
             content: "Hello working memory".into(), // length 20 -> 5 tokens
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         };
         
         let event2 = Event {
@@ -233,6 +240,8 @@ mod tests {
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Secret".into(), // length 6 -> 1 token
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         };
 
         mem.add_event(event1).await;
@@ -263,6 +272,8 @@ mod tests {
             author_name: "Alice".into(),
             author_id: "test".into(),
             content: "Test event".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         };
 
         mem.add_event(event).await;
@@ -298,6 +309,8 @@ mod tests {
             author_name: "Alice".into(),
             author_id: "test".into(),
             content: "Public event".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         }).await;
 
         mem.add_event(Event {
@@ -306,6 +319,8 @@ mod tests {
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Private event".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         }).await;
 
         assert_eq!(mem.current_tokens().await, 6); // 3 (Public) + 3 (Private) tokens
@@ -334,6 +349,8 @@ mod tests {
             author_name: "DiskUser".into(),
             author_id: "test".into(),
             content: "Loaded from disk".into(), // length 16 -> 4 tokens
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         };
         
         let json = serde_json::to_string(&event).unwrap();
@@ -373,6 +390,8 @@ mod tests {
                 author_name: format!("User{}", i),
                 author_id: "test".into(),
                 content: "ping".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
             }).await;
         }
 

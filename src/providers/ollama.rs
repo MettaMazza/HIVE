@@ -145,9 +145,13 @@ impl Provider for OllamaProvider {
                 "user"
             };
 
+            let ts = event.timestamp.as_deref().unwrap_or("00:00:00");
+            let mid = event.message_index.unwrap_or(0);
+            let prefix = format!("[{} | Msg {}]", ts, mid);
+
             // Inject the author name softly into user messages so Apis knows who is talking
             let content = if role == "user" {
-                format!("{}: {}", event.author_name, event.content)
+                format!("{} {}: {}", prefix, event.author_name, event.content)
             } else {
                 // SPRINT 3: JSON Content Forcing
                 // If Apis responded in plain text, wrap it into a mock `reply_to_request` execution.
@@ -156,11 +160,13 @@ impl Provider for OllamaProvider {
                     // Properly escape the original string into a JSON string
                     let escaped_content = serde_json::to_string(&event.content).unwrap_or_else(|_| "\"Failed to escape\"".to_string());
                     format!(
-                        "```json\n{{\n  \"tasks\": [\n    {{\n      \"task_id\": \"hist_1\",\n      \"tool_type\": \"reply_to_request\",\n      \"description\": {},\n      \"depends_on\": []\n    }}\n  ]\n}}\n```",
+                        "{} \n```json\n{{\n  \"tasks\": [\n    {{\n      \"task_id\": \"hist_{}\",\n      \"tool_type\": \"reply_to_request\",\n      \"description\": {},\n      \"depends_on\": []\n    }}\n  ]\n}}\n```",
+                        prefix,
+                        mid,
                         escaped_content
                     )
                 } else {
-                    event.content.clone()
+                    format!("{} \n{}", prefix, event.content)
                 }
             };
 
@@ -364,8 +370,8 @@ mod tests {
             .await;
 
         let history = vec![
-            Event { platform: "cli".into(), scope: Scope::Public { channel_id: "t".into(), user_id: "t".into() }, author_name: "Apis".into(), author_id: "test".into(), content: "I am here.".into() },
-            Event { platform: "cli".into(), scope: Scope::Public { channel_id: "t".into(), user_id: "t".into() }, author_name: "Alice".into(), author_id: "test".into(), content: "Hi!".into() },
+            Event { platform: "cli".into(), scope: Scope::Public { channel_id: "t".into(), user_id: "t".into() }, author_name: "Apis".into(), author_id: "test".into(), content: "I am here.".into(), timestamp: None, message_index: None },
+            Event { platform: "cli".into(), scope: Scope::Public { channel_id: "t".into(), user_id: "t".into() }, author_name: "Alice".into(), author_id: "test".into(), content: "Hi!".into(), timestamp: None, message_index: None },
         ];
         
         // Single JSON response is technically a 1-line stream chunk
@@ -375,6 +381,8 @@ mod tests {
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "What's up?".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         };
         let res = provider.generate("sys", &history, &new_event, "", None, None).await.unwrap();
 
@@ -400,6 +408,8 @@ mod tests {
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Bork?".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         }, "", None, None).await;
 
         assert!(matches!(res, Err(ProviderError::ParseError(_))));
@@ -416,6 +426,8 @@ mod tests {
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Bork?".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         }, "", None, None).await;
 
         assert!(matches!(res, Err(ProviderError::ConnectionError(_))));
@@ -439,6 +451,8 @@ mod tests {
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Bork?".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         }, "", None, None).await;
 
         assert!(matches!(res, Err(ProviderError::ParseError(_))));
@@ -463,6 +477,8 @@ mod tests {
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Bork?".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         }, "", None, None).await;
 
         assert_eq!(res.unwrap(), "");
@@ -490,6 +506,8 @@ mod tests {
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Bork?".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         }, "", Some(tx), None).await;
 
         let first_recv = rx.recv().await.unwrap();
@@ -517,6 +535,8 @@ mod tests {
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Bork?".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         }, "", None, None).await;
 
         assert_eq!(res.unwrap(), "");
@@ -542,6 +562,8 @@ mod tests {
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Stream?".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         }, "", None, None).await;
 
         assert_eq!(res.unwrap(), "part1 part2 done!");
@@ -565,6 +587,8 @@ mod tests {
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Disconnect?".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         }, "", None, None).await;
 
         assert!(res.is_err());

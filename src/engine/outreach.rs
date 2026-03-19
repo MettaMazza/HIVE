@@ -225,6 +225,8 @@ impl OutreachGate {
             author_name: "OutreachGate".into(),
             author_id: "apis_self".into(),
             content: prompt.clone(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         };
 
         match self.provider.generate(&prompt, &[], &event, "", None, None).await {

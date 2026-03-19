@@ -395,6 +395,8 @@ async fn handle_connection(
                                             author_name: username,
                                             author_id: user_id,
                                             content: final_content,
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
                                         };
 
                                         if event_sender.send(event).await.is_err() {
@@ -453,6 +455,8 @@ async fn handle_connection(
                                                 author_name: username,
                                                 author_id: user_id,
                                                 content: final_content,
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
                                             };
 
                                             if event_sender.send(event).await.is_err() {

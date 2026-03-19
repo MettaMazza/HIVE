@@ -117,6 +117,8 @@ mod tests {
             author_name: "Alice".into(),
             author_id: "test".into(),
             content: "Hello".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         };
 
         let event2 = Event {
@@ -125,6 +127,8 @@ mod tests {
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Secret".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         };
 
         timeline_manager.append_event(&event1).await;
@@ -182,6 +186,8 @@ mod tests {
             author_name: "Alice".into(),
             author_id: "test".into(),
             content: "Msg1".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         };
 
         let event2 = Event {
@@ -190,6 +196,8 @@ mod tests {
             author_name: "Alice".into(),
             author_id: "test".into(),
             content: "Msg2".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         };
 
         timeline_manager.append_event(&event1).await;
@@ -233,6 +241,8 @@ mod tests {
             author_name: "test".into(),
             author_id: "test".into(),
             content: "test".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         }).await;
 
         let hud2 = manager.get_formatted_hud().await;

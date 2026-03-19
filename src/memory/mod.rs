@@ -114,7 +114,12 @@ impl MemoryStore {
     }
 
     /// Stores a new event into the primary working memory and appends to the timeline.
-    pub async fn add_event(&self, event: Event) {
+    pub async fn add_event(&self, mut event: Event) {
+        if event.message_index.is_none() {
+            let current_count = self.working.get_absolute_count(&event.scope).await;
+            event.message_index = Some(current_count + 1);
+        }
+
         // Track roster for Public scopes
         if let Scope::Public { channel_id, .. } = &event.scope {
             let mut rosters: tokio::sync::RwLockWriteGuard<'_, HashMap<String, Vec<String>>> = self.rosters.write().await;
@@ -204,6 +209,8 @@ impl MemoryStore {
                         You are now operating in a fresh context window. Continue seamlessly.",
                         title, summary, title
                     ),
+                    timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                    message_index: None,
                 };
                 
                 // Inject the continuity event into the fresh working memory AND timeline
@@ -299,6 +306,8 @@ mod tests {
             author_name: "User".into(),
             author_id: "test".into(),
             content: "Ping".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         };
 
         store.add_event(event).await;
@@ -330,6 +339,8 @@ mod tests {
             author_name: "User".into(),
             author_id: "test".into(),
             content: giant_content,
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         };
 
         store.add_event(event).await;
@@ -362,6 +373,8 @@ mod tests {
             author_name: "User".into(),
             author_id: "test".into(),
             content: "Test factory wipe".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         };
 
         store.add_event(event).await;
@@ -384,9 +397,9 @@ mod tests {
         let test_dir = std::env::temp_dir().join(format!("hive_mem_test_roster_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
         let store = MemoryStore::new(Some(test_dir.clone()));
         let s = Scope::Public { channel_id: "reorder".into(), user_id: "u".into() };
-        store.add_event(Event { platform: "t".into(), scope: s.clone(), author_name: "Alice".into(), author_id: "a".into(), content: "1".into() }).await;
-        store.add_event(Event { platform: "t".into(), scope: s.clone(), author_name: "Bob".into(), author_id: "b".into(), content: "2".into() }).await;
-        store.add_event(Event { platform: "t".into(), scope: s.clone(), author_name: "Alice".into(), author_id: "a".into(), content: "3".into() }).await;
+        store.add_event(Event { platform: "t".into(), scope: s.clone(), author_name: "Alice".into(), author_id: "a".into(), content: "1".into(), timestamp: None, message_index: None }).await;
+        store.add_event(Event { platform: "t".into(), scope: s.clone(), author_name: "Bob".into(), author_id: "b".into(), content: "2".into(), timestamp: None, message_index: None }).await;
+        store.add_event(Event { platform: "t".into(), scope: s.clone(), author_name: "Alice".into(), author_id: "a".into(), content: "3".into(), timestamp: None, message_index: None }).await;
         assert_eq!(store.get_roster("reorder").await.unwrap(), "Bob, Alice");
     }
 
@@ -396,7 +409,7 @@ mod tests {
         let store = MemoryStore::new(Some(test_dir.clone()));
         let s = Scope::Public { channel_id: "of".into(), user_id: "u".into() };
         for i in 0..11 {
-            store.add_event(Event { platform: "t".into(), scope: s.clone(), author_name: format!("U{}", i), author_id: format!("{}", i), content: "m".into() }).await;
+            store.add_event(Event { platform: "t".into(), scope: s.clone(), author_name: format!("U{}", i), author_id: format!("{}", i), content: "m".into(), timestamp: None, message_index: None }).await;
         }
         let r = store.get_roster("of").await.unwrap();
         assert!(!r.contains("U0"));
@@ -415,7 +428,7 @@ mod tests {
         let test_dir = std::env::temp_dir().join(format!("hive_mem_test_pnr_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
         let store = MemoryStore::new(Some(test_dir.clone()));
         let s = Scope::Private { user_id: "dm".into() };
-        store.add_event(Event { platform: "t".into(), scope: s, author_name: "A".into(), author_id: "a".into(), content: "m".into() }).await;
+        store.add_event(Event { platform: "t".into(), scope: s, author_name: "A".into(), author_id: "a".into(), content: "m".into(), timestamp: None, message_index: None }).await;
         assert_eq!(store.get_roster("dm").await, None);
     }
 
@@ -431,7 +444,7 @@ mod tests {
         let test_dir = std::env::temp_dir().join(format!("hive_mem_test_asul_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
         let store = MemoryStore::new(Some(test_dir.clone()));
         let s = Scope::Public { channel_id: "t".into(), user_id: "u".into() };
-        store.add_event(Event { platform: "t".into(), scope: s.clone(), author_name: "U".into(), author_id: "u".into(), content: "Small".into() }).await;
+        store.add_event(Event { platform: "t".into(), scope: s.clone(), author_name: "U".into(), author_id: "u".into(), content: "Small".into(), timestamp: None, message_index: None }).await;
         assert!(store.check_and_trigger_autosave(&s).await.is_none());
     }
 }

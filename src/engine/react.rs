@@ -341,6 +341,8 @@ pub async fn execute_react_loop(
                     author_id: "apis".into(),
                     author_name: "Apis".to_string(),
                     content: mock_json,
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
                 };
                 memory.add_event(dispatch_event).await;
             }
@@ -615,6 +617,8 @@ pub async fn execute_react_loop(
             author_name: "Apis (Internal Timeline)".to_string(),
             author_id: "internal".into(),
             content: format!("[INTERNAL THOUGHT PROCESS & TOOL RESULTS]\n{}", context_from_agent.trim()),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         };
         memory.add_event(internal_event).await;
     }

@@ -26,6 +26,8 @@ pub async fn decompose_goal(
         author_name: "GoalPlanner".into(),
         author_id: "system".into(),
         content: "Decompose goal".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
     };
 
     let result = match provider.generate(&system_prompt, &[], &dummy_event, "", None, None).await {
@@ -92,6 +94,8 @@ pub async fn evaluate_progress(
         author_name: "GoalEvaluator".into(),
         author_id: "system".into(),
         content: "Evaluate progress".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
     };
 
     let result = match provider.generate(&system_prompt, &[], &dummy_event, "", None, None).await {

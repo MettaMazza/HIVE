@@ -58,6 +58,8 @@ pub async fn synthesize(
         author_name: "Aggregator".into(),
         author_id: "internal".into(),
         content: "Synthesize agent outputs.".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
     };
 
     match provider.generate(&system_prompt, &[], &dummy_event, &combined, None, None).await {

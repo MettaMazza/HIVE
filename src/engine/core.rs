@@ -640,6 +640,8 @@ impl Engine {
                         author_name: "Apis".to_string(),
                         author_id: "test".into(),
                         content: response.text.clone(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
                     };
                     memory_bg.add_event(apis_event).await;
 
@@ -709,6 +711,8 @@ impl Engine {
                                     public_narrative,
                                     previous_sessions
                                 ),
+                                timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                                message_index: None,
                             };
                             let _ = sender_clone.send(autonomy_event).await;
                         });
@@ -788,6 +792,8 @@ impl Engine {
                         author_name: "Apis".to_string(),
                         author_id: "test".into(),
                         content: response.text.clone(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
                     };
                     memory_bg.add_event(apis_event).await;
 
@@ -843,6 +849,8 @@ impl Engine {
                                         public_narrative,
                                         previous_sessions
                                     ),
+                                    timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                                    message_index: None,
                                 };
                                 let _ = sender_clone.send(autonomy_event).await;
                             });

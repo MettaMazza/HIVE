@@ -63,6 +63,8 @@ impl EventHandler for Handler {
                     author_name: command.user.name.clone(),
                     author_id: command.user.id.get().to_string(),
                     content: "/clean".to_string(), // The hardcoded command the Engine looks for
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
                 };
 
                 let _ = self.event_sender.send(ev).await;
@@ -370,6 +372,8 @@ impl EventHandler for Handler {
             author_name: msg.author.name.clone(),
             author_id: msg.author.id.get().to_string(),
             content: enriched_content,
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         };
 
         let _ = self.event_sender.send(ev).await;

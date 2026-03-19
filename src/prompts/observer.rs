@@ -224,6 +224,8 @@ mod tests {
             author_name: "User".into(),
             author_id: "testuid".into(),
             content: "Hello".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         };
 
         // Pass a dummy history event to cover the history iteration loop
@@ -233,6 +235,8 @@ mod tests {
             author_name: "OldUser".into(),
             author_id: "old".into(),
             content: "OldMsg".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         };
 
         let caps = AgentCapabilities::default();
@@ -253,6 +257,8 @@ mod tests {
             author_name: "User".into(),
             author_id: "testuid".into(),
             content: "Hello".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         };
 
         let caps = AgentCapabilities::default();

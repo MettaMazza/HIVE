@@ -367,6 +367,8 @@ mod tests {
             author_name: "Alice".into(),
             author_id: "alice1".into(),
             content: "Ping".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         }).await;
         
         mem.add_event(crate::models::message::Event {
@@ -375,6 +377,8 @@ mod tests {
             author_name: "Bob".into(),
             author_id: "bob1".into(),
             content: "Pong".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         }).await;
 
         let hud = HudData::build(&pub_scope, mem).await;

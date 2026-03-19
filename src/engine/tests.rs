@@ -26,6 +26,8 @@
             author_name: "Tester".to_string(),
             author_id: "test".into(),
             content: giant_content,
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         };
 
         let tx = engine.event_sender.as_ref().unwrap().clone();
@@ -84,6 +86,8 @@
             author_name: "TestUser".to_string(),
             author_id: "test".into(),
             content: "Ping!".to_string(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         };
 
         sender.send(test_event).await.unwrap();
@@ -123,6 +127,8 @@
             author_name: "TestUser".to_string(),
             author_id: "test".into(),
             content: "Ping!".to_string(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         }).await.unwrap();
 
         sleep(Duration::from_millis(50)).await;
@@ -164,6 +170,8 @@
             author_name: "Test".to_string(),
             author_id: "test".into(),
             content: "Ping".to_string(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         }).await.unwrap();
         sleep(Duration::from_millis(50)).await; // hits send error covering line 111
     }
@@ -193,6 +201,8 @@
             author_name: "Test".to_string(),
             author_id: "test".into(),
             content: "Ping".to_string(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         }).await.unwrap();
         sleep(Duration::from_millis(50)).await;
     }
@@ -248,6 +258,8 @@
             author_name: "TestUser".to_string(),
             author_id: "test".into(),
             content: "Ping".to_string(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         }).await.unwrap();
 
         // Wait for debounce (800ms) + processing
@@ -309,6 +321,8 @@
             author_name: "TestUser".to_string(),
             author_id: "test".into(),
             content: "Trigger debounce".to_string(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         }).await.unwrap();
 
         // Wait past debounce (800ms) + processing time
@@ -434,6 +448,8 @@ string ending with an unescaped quote \" and an emoji 😊.",
             author_name: "TestUser".to_string(),
             author_id: "test".into(),
             content: "Ping".to_string(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         }).await.unwrap();
 
         sleep(Duration::from_millis(150)).await;
@@ -502,6 +518,8 @@ string ending with an unescaped quote \" and an emoji 😊.",
             author_name: "TestUser".to_string(),
             author_id: "test".into(),
             content: "Ping Agent!".to_string(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         }).await.unwrap();
 
         sleep(Duration::from_millis(150)).await;
@@ -560,6 +578,8 @@ string ending with an unescaped quote \" and an emoji 😊.",
             author_name: "TestUser".to_string(),
             author_id: "test".into(),
             content: "Ping err".to_string(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         }).await.unwrap();
 
         sleep(Duration::from_millis(150)).await;
@@ -597,6 +617,8 @@ string ending with an unescaped quote \" and an emoji 😊.",
             author_name: "TestUser".to_string(),
             author_id: "test".into(),
             content: "Ping".to_string(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         }).await;
         
         assert_eq!(engine.memory.get_working_history(&pub_scope).await.len(), 1);
@@ -614,6 +636,8 @@ string ending with an unescaped quote \" and an emoji 😊.",
             author_name: "AdminUser".to_string(),
             author_id: "admin_test".into(),
             content: "/clean".to_string(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         }).await.unwrap();
 
         sleep(Duration::from_millis(300)).await;
@@ -652,6 +676,8 @@ string ending with an unescaped quote \" and an emoji 😊.",
             author_name: "TestUser".to_string(),
             author_id: "test".into(),
             content: "Ping".to_string(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         }).await;
         
         assert_eq!(engine.memory.get_working_history(&pub_scope).await.len(), 1);
@@ -669,6 +695,8 @@ string ending with an unescaped quote \" and an emoji 😊.",
             author_name: "RandomUser".to_string(),
             author_id: "random_123".into(),
             content: "/clean".to_string(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         }).await.unwrap();
 
         sleep(Duration::from_millis(300)).await;
@@ -713,6 +741,8 @@ string ending with an unescaped quote \" and an emoji 😊.",
             author_name: "TestUser".to_string(),
             author_id: "test".into(),
             content: "Ping loop".to_string(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         }).await.unwrap();
 
         // 15 loops might take a moment even when mocked
@@ -761,6 +791,8 @@ string ending with an unescaped quote \" and an emoji 😊.",
             author_name: "TestUser".to_string(),
             author_id: "test".into(),
             content: "Ping network drop".to_string(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         }).await.unwrap();
 
         sleep(Duration::from_millis(300)).await;
@@ -809,6 +841,8 @@ string ending with an unescaped quote \" and an emoji 😊.",
             author_name: "TestUser".to_string(),
             author_id: "test".into(),
             content: "Tell me something dangerous".to_string(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         }).await.unwrap();
 
         // Let it exhaust or get stuck in the observer loop
@@ -854,6 +888,8 @@ string ending with an unescaped quote \" and an emoji 😊.",
             author_name: "AdminUser".to_string(),
             author_id: "admin_test".into(),
             content: "/teaching_mode".to_string(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         }).await.unwrap();
 
         sleep(Duration::from_millis(300)).await;

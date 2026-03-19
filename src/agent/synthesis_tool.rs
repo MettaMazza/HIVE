@@ -37,6 +37,8 @@ pub async fn execute_synthesizer(
         author_name: "Synthesizer".into(),
         author_id: "system".into(),
         content: description.clone(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
     };
 
     match provider

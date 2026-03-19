@@ -81,6 +81,8 @@ mod tests {
             author_name: "Tester".into(),
             author_id: "123".into(),
             content: "Hello Apis".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         }
     }
 
@@ -158,6 +160,8 @@ mod tests {
             author_name: "TestUser".to_string(),
             author_id: "test".into(),
             content: "Ping".to_string(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         };
 
         // This should immediately return without writing because of Private scope

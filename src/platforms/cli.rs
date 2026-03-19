@@ -55,6 +55,8 @@ impl Platform for CliPlatform {
                     author_name: "Admin".to_string(),
                     author_id: "local_admin".to_string(),
                     content,
+                    timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                    message_index: None,
                 };
 
                 if sender.send(event).await.is_err() {

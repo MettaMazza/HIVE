@@ -60,6 +60,8 @@ mod tests {
             author_name: "User".into(),
             author_id: uid.to_string(),
             content: "Ping".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         }
     }
 

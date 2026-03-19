@@ -124,6 +124,8 @@ pub async fn handle_message(handler: &super::Handler, ctx: Context, msg: Message
                     author_name,
                     author_id,
                     content: combined_text,
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
                 };
 
                 let _ = event_sender.send(ev).await;
@@ -250,6 +252,8 @@ pub async fn handle_message(handler: &super::Handler, ctx: Context, msg: Message
                 Greet them warmly and ask what they'd like to work on.",
                 msg.author.name
             ),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         };
         memory.add_event(continuity_event).await;
 
@@ -357,6 +361,8 @@ pub async fn handle_message(handler: &super::Handler, ctx: Context, msg: Message
         author_name: msg.author.name.clone(),
         author_id: msg.author.id.get().to_string(),
         content: enriched_content,
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
     };
 
     let _ = handler.event_sender.send(ev).await;

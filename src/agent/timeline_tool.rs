@@ -127,10 +127,14 @@ pub async fn execute_search_timeline(
                                 if author_id == "internal" {
                                     continue;
                                 }
+
+                                let timestamp_str = json["timestamp"].as_str().unwrap_or("00:00:00");
+                                let msg_idx = json["message_index"].as_u64().unwrap_or(0);
+
                                 let prefix = if timeline_paths.len() > 1 {
-                                    format!("[{}] {}", parent_name, author)
+                                    format!("[{} | Msg {}] [{}] {}", timestamp_str, msg_idx, parent_name, author)
                                 } else {
-                                    author.to_string()
+                                    format!("[{} | Msg {}] {}", timestamp_str, msg_idx, author)
                                 };
                                 let truncated_content = if content.len() > 500 {
                                     format!("{}... [truncated, {} total chars]", &content[..500], content.len())

@@ -31,6 +31,8 @@ impl ToolExecutor {
             author_name: "Planner".into(),
             author_id: "test".into(),
             content: "Execute task.".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
         };
 
         // We use the shared provider for execution, but could swap model if template.model_override is set.

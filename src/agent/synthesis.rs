@@ -28,6 +28,8 @@ pub async fn synthesize_50_turn(
         author_name: "Synthesizer".into(),
         author_id: "system".into(),
         content: "Initiate 50-Turn Synthesis".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
     };
 
     let result = provider.generate(&prompt, &[], &dummy_event, "", None, None).await.map_err(|e| e.to_string())?;
@@ -68,6 +70,8 @@ pub async fn synthesize_24_hr(
         author_name: "Synthesizer".into(),
         author_id: "system".into(),
         content: "Initiate 24-Hour Synthesis".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
     };
 
     let result = provider.generate(&prompt, &[], &dummy_event, "", None, None).await.map_err(|e| e.to_string())?;
@@ -109,6 +113,8 @@ pub async fn synthesize_lifetime(
         author_name: "Synthesizer".into(),
         author_id: "system".into(),
         content: "Initiate Lifetime Synthesis".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
     };
 
     let result = provider.generate(&prompt, &[], &dummy_event, "", None, None).await.map_err(|e| e.to_string())?;

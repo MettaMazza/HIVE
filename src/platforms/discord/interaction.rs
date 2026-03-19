@@ -24,6 +24,8 @@ pub async fn handle_interaction(handler: &super::Handler, ctx: Context, interact
                 author_name: command.user.name.clone(),
                 author_id: command.user.id.get().to_string(),
                 content: "/clean".to_string(), // The hardcoded command the Engine looks for
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
             };
 
             let _ = handler.event_sender.send(ev).await;

@@ -12,7 +12,10 @@ pub struct Event {
     pub author_name: String,
     pub author_id: String,
     pub content: String,
-    // (Optional) ID for threads/channels if necessary, can add later
+    #[serde(default)]
+    pub timestamp: Option<String>,
+    #[serde(default)]
+    pub message_index: Option<usize>,
 }
 
 /// Represents a standardized Response going OUT of HIVE to a Platform.

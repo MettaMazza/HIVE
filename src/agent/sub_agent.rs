@@ -151,6 +151,8 @@ pub async fn execute_sub_agent(
         author_name: format!("SubAgent:{}", agent_id),
         author_id: spec.user_id.clone(),
         content: spec.task.clone(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
     };
 
     let mut context = String::new();
