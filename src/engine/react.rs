@@ -501,31 +501,46 @@ pub async fn execute_react_loop(
 
     // 🛡️ ATTACHMENT SAFETY NET: Auto-append any ATTACH tags from tool outputs
     // that the LLM forgot to include in its final reply.
+    //
+    // CRITICAL: Only scan outputs from actual file-producing tools, NOT the
+    // full accumulated context_from_agent string. The context accumulates ALL
+    // tool outputs across ALL turns — including tools like autonomy_activity
+    // that may echo old [ATTACH_FILE] tags from prior sessions. Scanning the
+    // full context causes stale/irrelevant files to be attached to unrelated
+    // replies.
     {
         let tag_patterns = ["[ATTACH_FILE]", "[ATTACH_IMAGE]", "[ATTACH_AUDIO]"];
+        let file_producing_tools = ["file_writer", "download", "generate_image", "tts"];
         let mut missing_tags = Vec::new();
 
-        for pattern in &tag_patterns {
-            // Find all instances of this tag type in tool outputs
-            let mut search_from = 0;
-            while let Some(start) = context_from_agent[search_from..].find(pattern) {
-                let abs_start = search_from + start;
-                // Extract the full tag including the path: [ATTACH_FILE](/path/to/file)
-                if let Some(paren_start) = context_from_agent[abs_start..].find('(') {
-                    if let Some(paren_end) = context_from_agent[abs_start + paren_start..].find(')') {
-                        let full_tag = &context_from_agent[abs_start..abs_start + paren_start + paren_end + 1];
-                        // Only append if this exact tag is NOT in the final response
-                        if !final_response_text.contains(full_tag) {
-                            missing_tags.push(full_tag.to_string());
+        // Only scan outputs from file-producing tools in this session
+        for (task_id, output) in &tool_outputs {
+            let is_file_tool = completed_tools.iter().any(|(tid, ttype)| {
+                tid == task_id && file_producing_tools.contains(&ttype.as_str())
+            });
+            if !is_file_tool {
+                continue;
+            }
+
+            for pattern in &tag_patterns {
+                let mut search_from = 0;
+                while let Some(start) = output[search_from..].find(pattern) {
+                    let abs_start = search_from + start;
+                    if let Some(paren_start) = output[abs_start..].find('(') {
+                        if let Some(paren_end) = output[abs_start + paren_start..].find(')') {
+                            let full_tag = &output[abs_start..abs_start + paren_start + paren_end + 1];
+                            if !final_response_text.contains(full_tag) {
+                                missing_tags.push(full_tag.to_string());
+                            }
                         }
                     }
+                    search_from = abs_start + pattern.len();
                 }
-                search_from = abs_start + pattern.len();
             }
         }
 
         if !missing_tags.is_empty() {
-            tracing::warn!("[SAFETY NET] 🛡️ Auto-appending {} missing attachment tag(s) that the LLM forgot to include.", missing_tags.len());
+            tracing::warn!("[SAFETY NET] 🛡️ Auto-appending {} missing attachment tag(s) from file-producing tools.", missing_tags.len());
             for tag in &missing_tags {
                 final_response_text.push_str(&format!("\n\n{}", tag));
             }
