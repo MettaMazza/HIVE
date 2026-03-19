@@ -332,12 +332,15 @@ pub async fn execute_react_loop(
                 
                 // Inject the proactive dispatch directly into the agent's physical timeline context
                 // so the agent actually remembers sending it!
+                // Encoded as a raw JSON execution block so it matches the LLM's structured execution context!
+                let mock_json = format!("```json\n{{\n  \"thought\": \"[Proactive Outreach Dispatch Executed]\",\n  \"tasks\": [\n    {{\n      \"task_id\": \"outreach_sync\",\n      \"tool_type\": \"outreach\",\n      \"description\": \"action:[send] content:[{}]\"\n    }}\n  ]\n}}\n```", outbound_res.text.replace("\"", "\\\""));
+                
                 let dispatch_event = crate::models::message::Event {
                     platform: outbound_res.platform,
                     scope: outbound_res.target_scope,
                     author_id: "apis".into(),
                     author_name: "Apis".to_string(),
-                    content: outbound_res.text,
+                    content: mock_json,
                 };
                 memory.add_event(dispatch_event).await;
             }
