@@ -20,6 +20,7 @@ pub async fn execute_file_reader(
     if let Some(ref tx) = telemetry_tx {
         let _ = tx.send(format!("🧠 Native Codebase Reader Tool scanning: {}\n", description)).await;
     }
+    tracing::debug!("[AGENT:file_reader] ▶ task_id={} desc_len={}", task_id, description.len());
 
     let target_path = extract_tag(&description, "name:")
         .unwrap_or_else(|| {

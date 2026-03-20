@@ -4,12 +4,146 @@ use crate::models::message::Event;
 use crate::models::scope::Scope;
 
 pub async fn handle_message(handler: &super::Handler, ctx: Context, msg: Message) {
-    // Ignore self
+    // Always ignore self
     let is_self = {
         let id_lock = handler.bot_user_id.lock().await;
         id_lock.map(|id| id == msg.author.id).unwrap_or(false)
     };
-    if is_self || msg.author.bot {
+    if is_self {
+        return;
+    }
+
+    // Bot message handling: debounce chunks with a 5-second window.
+    // When aicoms is enabled, bot text messages are buffered. After 5 seconds of
+    // silence from that bot, all chunks are combined into one event.
+    if msg.author.bot {
+        let aicoms_on = handler.aicoms_enabled.load(std::sync::atomic::Ordering::SeqCst);
+        if !aicoms_on {
+            return; // aicoms is off — ignore all bot messages
+        }
+        // Skip embed-only messages (no text content to respond to)
+        if msg.content.trim().is_empty() {
+            return;
+        }
+
+        let debounce_key = format!("{}:{}", msg.channel_id.get(), msg.author.id.get());
+        let generation: u64;
+
+        // Buffer the chunk and get the current generation
+        {
+            let mut buffer = handler.bot_debounce.lock().await;
+            let entry = buffer.entry(debounce_key.clone()).or_insert_with(|| {
+                super::BotDebounceEntry {
+                    chunks: Vec::new(),
+                    author_name: msg.author.name.clone(),
+                    author_id: msg.author.id.get().to_string(),
+                    channel_id: msg.channel_id.get(),
+                    generation: 0,
+                }
+            });
+            entry.chunks.push(msg.content.clone());
+            entry.generation += 1;
+            generation = entry.generation;
+            tracing::info!("[AICOMS] Buffered chunk {} from bot '{}' (gen {}): {} chars",
+                entry.chunks.len(), msg.author.name, generation, msg.content.len());
+        }
+
+        // Spawn a 5-second debounce timer. If no new chunks arrive (generation stays
+        // the same), flush all buffered chunks as one combined event.
+        let debounce_buf = handler.bot_debounce.clone();
+        let event_sender = handler.event_sender.clone();
+        let active_telemetry = handler.active_telemetry.clone();
+        let http = ctx.http.clone();
+        let channel_id = msg.channel_id;
+        let msg_id = msg.id;
+
+        tokio::spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+            // Check if this timer is still current (no newer chunks arrived)
+            let flush_data = {
+                let mut buffer = debounce_buf.lock().await;
+                if let Some(entry) = buffer.get(&debounce_key) {
+                    if entry.generation == generation {
+                        // This is still the latest timer — flush
+                        let data = (
+                            entry.chunks.join("\n"),
+                            entry.author_name.clone(),
+                            entry.author_id.clone(),
+                            entry.channel_id,
+                            entry.chunks.len(),
+                        );
+                        buffer.remove(&debounce_key);
+                        Some(data)
+                    } else {
+                        None // A newer chunk arrived — this timer is stale
+                    }
+                } else {
+                    None
+                }
+            };
+
+            if let Some((combined_text, author_name, author_id, chan_id, chunk_count)) = flush_data {
+                tracing::info!("[AICOMS] Flushing {} chunks from bot '{}' as one event ({} chars)",
+                    chunk_count, author_name, combined_text.len());
+
+                let scope = Scope::Public {
+                    channel_id: chan_id.to_string(),
+                    user_id: author_id.clone(),
+                };
+
+                // Create cognition tracker for the combined bot message
+                let embed = serenity::builder::CreateEmbed::new()
+                    .description("```\n⏳ Processing bot message...\n```")
+                    .footer(serenity::builder::CreateEmbedFooter::new("🤖 Reading bot chunks..."))
+                    .color(0x5865F2);
+
+                let thinking_msg_id = {
+                    let builder = serenity::builder::CreateMessage::new().embed(embed);
+                    if let Ok(sent_msg) = channel_id.send_message(&http, builder).await {
+                        let msg_id_u64 = sent_msg.id.get();
+                        let (tx, rx) = tokio::sync::watch::channel(Some("⏳ Processing bot message...".to_string()));
+                        {
+                            let mut map = active_telemetry.lock().await;
+                            map.insert(msg_id_u64, tx);
+                        }
+                        crate::platforms::telemetry::spawn_telemetry_loop(
+                            http.clone(), channel_id, msg_id_u64, rx,
+                        );
+                        Some(msg_id_u64.to_string())
+                    } else {
+                        None
+                    }
+                };
+
+                let platform_id = format!("discord:{}:{}:{}", chan_id, thinking_msg_id.unwrap_or_default(), msg_id.get());
+
+                let ev = Event {
+                    platform: platform_id,
+                    scope,
+                    author_name,
+                    author_id,
+                    content: combined_text,
+                };
+
+                let _ = event_sender.send(ev).await;
+            }
+        });
+
+        return; // Bot messages are handled asynchronously via the debounce timer
+    }
+
+    // /aicoms — Toggle bot-to-bot communication on/off
+    if msg.content.trim() == "/aicoms" {
+        if msg.author.id.get() == 1299810741984956449 {
+            let current = handler.aicoms_enabled.load(std::sync::atomic::Ordering::SeqCst);
+            handler.aicoms_enabled.store(!current, std::sync::atomic::Ordering::SeqCst);
+            let state_str = if !current { "**enabled** 🤖✅" } else { "**disabled** 🤖❌" };
+            let _ = msg.reply(&ctx.http, format!("🤖 AI Comms toggled: Bot-to-bot communication is now {}.", state_str)).await;
+            tracing::info!("[AICOMS] Toggled to {} by {}", if !current { "ON" } else { "OFF" }, msg.author.name);
+        } else {
+            let _ = msg.reply(&ctx.http, "🚫 Only administrators can toggle AI communications.").await;
+        }
         return;
     }
 

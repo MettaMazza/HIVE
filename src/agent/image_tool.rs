@@ -8,6 +8,7 @@ pub async fn execute_generate_image(
     telemetry_tx: Option<mpsc::Sender<String>>,
 ) -> ToolResult {
     let prompt = extract_tag(&description, "prompt:").unwrap_or_else(|| description.clone());
+    tracing::debug!("[AGENT:image] ▶ task_id={} prompt_len={}", task_id, prompt.len());
 
     // Announce telemetry
     if let Some(tx) = &telemetry_tx {
@@ -43,8 +44,9 @@ pub async fn execute_generate_image(
     
     // Generate a unique output path
     let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
-    let home_path = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    let cache_dir = std::path::PathBuf::from(home_path).join(".hive/memory/cache/images");
+    let cache_dir_env = std::env::var("HIVE_CACHE_DIR").unwrap_or_else(|_| String::from("memory/cache/images"));
+    let current_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let cache_dir = current_dir.join(cache_dir_env);
     let _ = tokio::fs::create_dir_all(&cache_dir).await;
     let output_path = cache_dir.join(format!("flux-{}.png", timestamp));
     let output_str = output_path.to_string_lossy().to_string();
@@ -120,6 +122,84 @@ pub async fn execute_generate_image(
     }
 }
 
+pub async fn execute_list_cached_images(
+    task_id: String,
+    _description: String,
+    telemetry_tx: Option<mpsc::Sender<String>>,
+) -> ToolResult {
+    tracing::debug!("[AGENT:image] ▶ task_id={} list_cached_images", task_id);
+
+    let cache_dir_env = std::env::var("HIVE_CACHE_DIR").unwrap_or_else(|_| String::from("memory/cache/images"));
+    let current_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let cache_dir = current_dir.join(cache_dir_env);
+    
+    if !cache_dir.exists() {
+        return ToolResult {
+            task_id,
+            tokens_used: 0,
+            status: ToolStatus::Success,
+            output: "Image cache is currently empty.".to_string(),
+        };
+    }
+
+    let mut dir = match tokio::fs::read_dir(&cache_dir).await {
+        Ok(d) => d,
+        Err(e) => {
+            return ToolResult {
+                task_id,
+                tokens_used: 0,
+                status: ToolStatus::Failed(format!("Failed to read image cache: {}", e)),
+                output: format!("Failed to read image cache: {}", e),
+            };
+        }
+    };
+
+    let mut valid_images = Vec::new();
+    let mut deleted_count = 0;
+    let now = std::time::SystemTime::now();
+    let twenty_four_hours = std::time::Duration::from_secs(24 * 60 * 60);
+
+    while let Ok(Some(entry)) = dir.next_entry().await {
+        let path = entry.path();
+        if path.is_file() {
+            if let Ok(metadata) = entry.metadata().await {
+                if let Ok(modified) = metadata.modified() {
+                    if let Ok(age) = now.duration_since(modified) {
+                        if age > twenty_four_hours {
+                            // File is older than 24 hours, delete it
+                            if tokio::fs::remove_file(&path).await.is_ok() {
+                                deleted_count += 1;
+                            }
+                        } else {
+                            // File is valid
+                            let hours_old = age.as_secs_f32() / 3600.0;
+                            valid_images.push(format!("- {} ({:.1} hours old)", path.display(), hours_old));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(tx) = &telemetry_tx {
+        if deleted_count > 0 {
+            let _ = tx.send(format!("🧹 Image Cache: Purged {} expired images (>24h).\n", deleted_count)).await;
+        }
+    }
+
+    let output = if valid_images.is_empty() {
+        "Image cache is currently empty.".to_string()
+    } else {
+        format!("Available cached images (valid for 24h):\n{}", valid_images.join("\n"))
+    };
+
+    ToolResult {
+        task_id,
+        tokens_used: 0,
+        status: ToolStatus::Success,
+        output,
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -144,8 +224,12 @@ mod tests {
             tokio::fs::set_permissions(&mock_python, std::fs::Permissions::from_mode(0o755)).await.unwrap();
         }
 
+        let temp_cache_dir = temp_dir.join("memory/cache/images");
+        tokio::fs::create_dir_all(&temp_cache_dir).await.unwrap();
+
         unsafe {
             std::env::set_var("HIVE_PYTHON_BIN", mock_python.to_string_lossy().to_string());
+            std::env::set_var("HIVE_CACHE_DIR", temp_cache_dir.to_string_lossy().to_string());
         }
 
         // Also make prompt long to hit truncation logic
@@ -186,9 +270,36 @@ mod tests {
         // Cleanup
         unsafe {
             std::env::remove_var("HIVE_PYTHON_BIN");
+            std::env::remove_var("HIVE_CACHE_DIR");
         }
         let _ = tokio::fs::remove_dir_all(temp_dir).await;
     }
 
 
+    #[tokio::test]
+    async fn test_execute_list_cached_images() {
+        let temp_dir = std::env::temp_dir().join(format!("hive_test_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let cache_dir = temp_dir.join("memory/cache/images");
+        tokio::fs::create_dir_all(&cache_dir).await.unwrap();
+        
+        // Write a mock image that is "new"
+        let mock_img = cache_dir.join("flux-test123.png");
+        tokio::fs::write(&mock_img, "dummy png data").await.unwrap();
+
+        unsafe {
+            std::env::set_var("HIVE_CACHE_DIR", cache_dir.to_string_lossy().to_string());
+        }
+
+        let res = execute_list_cached_images("list_id".into(), "".into(), None).await;
+        
+        assert_eq!(res.status, ToolStatus::Success);
+        assert!(res.output.contains("flux-test123.png"));
+        assert!(res.output.contains("hours old)"));
+
+        // Cleanup
+        unsafe {
+            std::env::remove_var("HIVE_CACHE_DIR");
+        }
+        let _ = tokio::fs::remove_dir_all(temp_dir).await;
+    }
 }

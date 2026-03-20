@@ -31,6 +31,8 @@ pub async fn log_latency_to_path(metrics: LatencyMetrics, path: &std::path::Path
 }
 
 pub async fn log_latency(metrics: LatencyMetrics) {
+    tracing::debug!("[ENGINE:Telemetry] 📊 Latency metric: model={} ttft={}ms total={}ms prompt_tokens={} eval_tokens={} history_len={}",
+        metrics.model, metrics.ttft_ms, metrics.total_ms, metrics.prompt_tokens, metrics.eval_tokens, metrics.history_len);
     log_latency_to_path(metrics, std::path::Path::new("logs/telemetry.jsonl")).await
 }
 

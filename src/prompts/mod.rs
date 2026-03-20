@@ -68,6 +68,7 @@ mod tests {
             user_preferences: String::new(),
             system_logs: String::new(),
             recent_reasoning_traces: String::new(),
+            swarm_status: String::new(),
         };
         
         let output = hud::format_hud(&data);
@@ -93,6 +94,7 @@ mod tests {
             user_preferences: String::new(),
             system_logs: String::new(),
             recent_reasoning_traces: String::new(),
+            swarm_status: String::new(),
         };
         
         let output = hud::format_hud(&data);

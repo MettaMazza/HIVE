@@ -23,6 +23,7 @@ pub async fn execute_process_manager(
     if let Some(ref tx) = telemetry_tx {
         let _ = tx.send(format!("⚙️ Native Process Manager executing action: `{}`\n", action)).await;
     }
+    tracing::debug!("[AGENT:process_mgr] ▶ task_id={}", task_id);
 
     let mut output;
 

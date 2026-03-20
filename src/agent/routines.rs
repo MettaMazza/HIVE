@@ -23,6 +23,7 @@ pub async fn execute_manage_routine(
     if let Some(ref tx) = telemetry_tx {
         let _ = tx.send("📋 Manage Routine Drone executing...\n".to_string()).await;
     }
+    tracing::debug!("[AGENT:routines] ▶ task_id={}", task_id);
 
     let action = extract_tag(&description, "action:").unwrap_or("list".to_string());
     let routine_name = extract_tag(&description, "name:").unwrap_or("".to_string());

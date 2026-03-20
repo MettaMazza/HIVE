@@ -12,6 +12,7 @@ pub async fn execute_file_system_operator(
     
     let action = crate::agent::preferences::extract_tag(&desc, "action:").unwrap_or_default();
     let path_str = crate::agent::preferences::extract_tag(&desc, "path:").unwrap_or_default();
+    tracing::debug!("[AGENT:file_system] ▶ task_id={} action='{}' path='{}'", task_id, action, path_str);
     
     if action.is_empty() || path_str.is_empty() {
         return ToolResult {

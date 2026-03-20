@@ -1,8 +1,8 @@
-# Master Operational Capability Gauntlet v2
+# Master Operational Capability Gauntlet v3
 
 The following prompt is designed to push the HIVE Agent stack to its absolute limits in a single shot. Copy and paste this into the Discord channel. It sequentially forces the agent to exhaustively execute **every single integrated tool, memory layer, drone, subsystem, and platform-specific capability** in the `src/agent/mod.rs` registry. At the end, the agent must generate a formal pass/fail report card.
 
-> User: Apis, I am initiating the **Master Capability Gauntlet v2**. Execute every single one of your subsystems to prove 100% operational readiness. To prove your efficiency, execute the following tools in parallel during their respective Turns, in turn one you used read_attachment, proceed to turn 2:
+> User: Apis, I am initiating the **Master Capability Gauntlet v3**. Execute every single one of your subsystems to prove 100% operational readiness. To prove your efficiency, execute the following tools in parallel during their respective Turns, in turn one you used read_attachment, proceed to turn 2:
 > 
 > **Turn 2: Internet, Codebase & Memory Boot**
 > 1. Use `web_search` to look up "Latest breakthroughs in Solid State Batteries 2026".
@@ -33,15 +33,19 @@ The following prompt is designed to push the HIVE Agent stack to its absolute li
 > 21. Use `run_bash_command` to cat `gauntlet_admin.txt`, verifying your host access.
 > 22. Use `process_manager` with `action:[list]` to find your daemon PID, then use `action:[read]` to read its logs, then `action:[kill]` to terminate it.
 > 
-> **Turn 6: Final Verification, Document Composition & Synthesis**
+> 
+> **Turn 6: Download, Multi-Format Output & Synthesis**
 > 23. Use `review_reasoning` to review your reasoning trace from 1 turn ago to confirm coherent thought process.
-> 24. Use `file_writer` to autonomously compose and render the pdf in one step: `action:[compose] id:[report] title:[Master Gauntlet v2] theme:[cyberpunk] content:[# Success across all turns.]`.
-> 25. Use `synthesizer` to fan-in all observations, parse the results, and generate the final response.
+> 24. Use `list_cached_images` to list all available cached images.
+> 25. Use `file_writer` to compose a cyberpunk-themed PDF WITH an image: `action:[compose] id:[report] title:[Master Gauntlet v3] theme:[cyberpunk] content:[# Success across all turns.\n\n![Gauntlet Image](/absolute/path/from/step24)\n\nAll systems verified.]`. Use an actual absolute path from the cached images list in step 24.
+> 26. Use `file_writer` to render the same report as markdown: `action:[render] id:[report] format:[md]` to verify multi-format output works.
+> 27. Use `download` to download a test file: `url:[https://httpbin.org/json]` to verify the download tool and file server.
+> 28. Use `synthesizer` to fan-in all observations, parse the results, and generate the final response.
 > 
 > **Turn 7 repeated: Final Delivery**
-> 26. Use `reply_to_request` to end the gauntlet. Your final response MUST end with the following formatted report card. For each tool, write PASS if it executed successfully or FAIL with a reason:
+> 30. Use `reply_to_request` to end the gauntlet. Your final response MUST end with the following formatted report card. For each tool, write PASS if it executed successfully or FAIL with a reason:
 > 
-> **Master Gauntlet v2 — Report Card**
+> **Master Gauntlet v4 — Report Card**
 > - 🌐 `web_search`: PASS / FAIL
 > - 🔬 `researcher`: PASS / FAIL
 > - 📂 `codebase_list`: PASS / FAIL
@@ -58,12 +62,17 @@ The following prompt is designed to push the HIVE Agent stack to its absolute li
 > - 🧠 `review_reasoning`: PASS / FAIL
 > - 📎 `read_attachment`: PASS / FAIL
 > - 🏃 `autonomy_activity`: PASS / FAIL
-> - ✍️ `file_writer`: PASS / FAIL
+> - 🖼️ `list_cached_images`: PASS / FAIL
+> - ✍️ `file_writer` (PDF): PASS / FAIL
+> - ✍️ `file_writer` (PDF + Image): PASS / FAIL
+> - ✍️ `file_writer` (multi-format): PASS / FAIL
+> - ⬇️ `download`: PASS / FAIL (or ADMIN)
 > - 👾 `process_manager`: PASS / FAIL (or ADMIN)
 > - 💻 `file_system_operator`: PASS / FAIL (or ADMIN)
 > - ⌨️ `run_bash_command`: PASS / FAIL (or ADMIN)
 > - 🪄 `synthesizer`: PASS / FAIL
 > 
-> **TOTAL: XX / 21 PASSED**
+> **TOTAL: XX / 24 PASSED**
 > 
 > Do not use prior knowledge for any of this. Execute them in parallel per turn, wait for observations, and prove your capabilities.
+

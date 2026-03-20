@@ -15,6 +15,7 @@ pub fn spawn_telemetry_loop(
     tokio::spawn(async move {
         let bees = ["🐝", "🍯", "🌼", "🐝"];
         let mut bee_idx = 0;
+        tracing::debug!("[TELEMETRY:LOOP] 🔄 Watch loop started for msg_id={}", msg_id);
         loop {
             let text_opt = rx.borrow().clone();
             match text_opt {
@@ -34,13 +35,20 @@ pub fn spawn_telemetry_loop(
                         .color(color);
                         
                     let edit_builder = serenity::builder::EditMessage::new().embed(embed);
-                    let _ = channel_id.edit_message(&http, MessageId::new(msg_id), edit_builder).await;
+                    match channel_id.edit_message(&http, MessageId::new(msg_id), edit_builder).await {
+                        Ok(_) => tracing::trace!("[TELEMETRY:LOOP] ✏️ Embed updated for msg_id={}", msg_id),
+                        Err(e) => tracing::warn!("[TELEMETRY:LOOP] ❌ Embed edit failed for msg_id={}: {}", msg_id, e),
+                    }
                     
                     if is_complete {
+                        tracing::debug!("[TELEMETRY:LOOP] ✅ Complete — exiting watch loop for msg_id={}", msg_id);
                         break;
                     }
                 }
-                None => break,
+                None => {
+                    tracing::debug!("[TELEMETRY:LOOP] 🔌 Watch value=None — exiting for msg_id={}", msg_id);
+                    break;
+                }
             }
             
             let sleep = tokio::time::sleep(tokio::time::Duration::from_secs(5));

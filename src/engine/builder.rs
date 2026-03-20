@@ -39,16 +39,20 @@ impl EngineBuilder {
     }
 
     pub fn with_platform(mut self, platform: Box<dyn Platform>) -> Self {
+        tracing::debug!("[ENGINE:Builder] Registering platform: '{}'", platform.name());
         self.platforms.insert(platform.name().to_string(), platform);
         self
     }
 
     pub fn with_capabilities(mut self, capabilities: AgentCapabilities) -> Self {
+        tracing::debug!("[ENGINE:Builder] Capabilities set: {} admin users, {} admin tools, {} default tools",
+            capabilities.admin_users.len(), capabilities.admin_tools.len(), capabilities.default_tools.len());
         self.capabilities = capabilities;
         self
     }
 
     pub fn with_provider(mut self, provider: Arc<dyn Provider>) -> Self {
+        tracing::debug!("[ENGINE:Builder] Provider registered");
         self.provider = Some(provider);
         self
     }
@@ -60,6 +64,8 @@ impl EngineBuilder {
     }
 
     pub fn build(self) -> Result<Engine, &'static str> {
+        tracing::info!("[ENGINE:Builder] ▶ Building Engine (project_root='{}', platforms={})",
+            self.project_root, self.platforms.len());
         let provider = self.provider.ok_or("Engine requires a Provider to be set")?;
         let (tx, rx) = mpsc::channel(100);
         
@@ -68,15 +74,23 @@ impl EngineBuilder {
         let drives = Arc::new(drives::DriveSystem::new(&self.project_root));
         let outreach_gate = Arc::new(outreach::OutreachGate::new(&self.project_root, provider.clone()));
         let inbox = Arc::new(inbox::InboxManager::new(&self.project_root));
+        tracing::debug!("[ENGINE:Builder] Subsystems initialized: DriveSystem, OutreachGate, InboxManager");
         
         let agent = match self.agent {
-            Some(s) => s,
-            None => Arc::new(
-                AgentManager::new(provider.clone(), memory.clone())
-                    .with_outreach(drives.clone(), outreach_gate.clone(), inbox.clone())
-            ),
+            Some(s) => {
+                tracing::debug!("[ENGINE:Builder] Using pre-configured AgentManager");
+                s
+            },
+            None => {
+                tracing::debug!("[ENGINE:Builder] Constructing new AgentManager with outreach integration");
+                Arc::new(
+                    AgentManager::new(provider.clone(), memory.clone())
+                        .with_outreach(drives.clone(), outreach_gate.clone(), inbox.clone())
+                )
+            },
         };
 
+        tracing::info!("[ENGINE:Builder] ✅ Engine built successfully");
         Ok(Engine::new(
             Arc::new(self.platforms),
             provider.clone(),

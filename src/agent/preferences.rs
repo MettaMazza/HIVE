@@ -26,13 +26,36 @@ pub async fn execute_manage_user_preferences(
     }
 
     let action = extract_tag(&description, "action:").unwrap_or_default();
+    tracing::debug!("[AGENT:preferences] ▶ task_id={} action='{}' scope='{}'", task_id, action, scope.to_key());
     
     if action.is_empty() {
         return DroneResult {
             task_id,
-            output: "Error: Missing `action:` tag. Valid actions are: update_name, add_hobby, add_topic, update_narrative, update_psychoanalysis".into(),
+            output: "Error: Missing `action:` tag. Valid actions are: read, update_name, add_hobby, add_topic, update_narrative, update_psychoanalysis".into(),
             tokens_used: 0,
             status: DroneStatus::Failed("Missing action".into()),
+        };
+    }
+
+    // READ action: return current stored preferences (no value: needed)
+    if action == "read" || action == "list" || action == "view" {
+        let prefs = memory.preferences.read(&scope).await;
+        let name = prefs.name.as_deref().unwrap_or("(not set)");
+        let hobbies = if prefs.hobbies.is_empty() { "(none)".to_string() } else { prefs.hobbies.join(", ") };
+        let topics = if prefs.topics_of_interest.is_empty() { "(none)".to_string() } else { prefs.topics_of_interest.join(", ") };
+        let narrative = if prefs.narrative_history.is_empty() { "(none)".to_string() } else { prefs.narrative_history.clone() };
+        let psycho = if prefs.psychoanalysis.is_empty() { "(none)".to_string() } else { prefs.psychoanalysis.clone() };
+        
+        let output = format!(
+            "**Stored User Preferences:**\n• Name: {}\n• Hobbies: {}\n• Topics of Interest: {}\n• Narrative History: {}\n• Psychoanalysis: {}",
+            name, hobbies, topics, narrative, psycho
+        );
+        
+        return DroneResult {
+            task_id,
+            output,
+            tokens_used: 0,
+            status: DroneStatus::Success,
         };
     }
 
@@ -82,7 +105,7 @@ pub async fn execute_manage_user_preferences(
         _ => {
             return DroneResult {
                 task_id,
-                output: format!("Error: Unknown action '{}'.", action),
+                output: format!("Error: Unknown action '{}'. Valid: read, update_name, add_hobby, add_topic, update_narrative, update_psychoanalysis", action),
                 tokens_used: 0,
                 status: DroneStatus::Failed("Invalid action".into()),
             };
@@ -99,8 +122,8 @@ pub async fn execute_manage_user_preferences(
     }
 
     DroneResult {
-        task_id,
-        output: success_msg,
+        task_id: task_id.clone(),
+        output: success_msg.clone(),
         tokens_used: 0,
         status: DroneStatus::Success,
     }

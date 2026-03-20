@@ -31,5 +31,6 @@ pub trait Provider: Send + Sync {
         new_event: &Event,
         agent_context: &str,
         telemetry_tx: Option<tokio::sync::mpsc::Sender<String>>,
+        max_tokens: Option<u32>,
     ) -> Result<String, ProviderError>;
 }

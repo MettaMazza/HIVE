@@ -13,24 +13,39 @@ pub const BASE_CSS: &str = r#"
     --font-mono: 'Fira Code', monospace;
 }
 
+html {
+    width: 100% !important;
+    height: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+}
+
 body {
     font-family: var(--font-sans);
     line-height: 1.6;
     color: var(--text-color);
-    background: var(--bg-color);
-    margin: 0 auto;
-    padding: 0;
+    background: var(--bg-color) !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    max-width: 100% !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    box-sizing: border-box !important;
 }
 
 /* Print Setup for A4 */
 @page {
     size: A4;
-    margin: 2cm;
+    margin: 0;
 }
 
 .document-container {
-    max-width: 800px;
-    margin: 0 auto;
+    padding: 2cm;
+    box-sizing: border-box !important;
 }
 
 .header {
@@ -124,7 +139,10 @@ img {
     max-width: 100%;
     height: auto;
     border-radius: 0.5rem;
-    margin: 1.5em 0;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+    margin: 1.5rem auto;
+    display: block;
+    border: 1px solid rgba(255, 255, 255, 0.1);
 }
 "#;
 

@@ -115,6 +115,71 @@ impl ALU {
         result
     }
 
+    /// Execute a pipeline of cells sequentially, chaining stdout from one cell
+    /// as context to the next. Each cell receives the previous output as a
+    /// `PIPELINE_INPUT` environment variable.
+    pub async fn execute_pipeline(&self, cells: &[(String, String)]) -> Result<String, String> {
+        self.init().await.map_err(|e| format!("Init error: {}", e))?;
+
+        if cells.is_empty() {
+            return Err("Pipeline is empty — no cells to execute.".to_string());
+        }
+
+        let mut previous_output = String::new();
+        let mut all_outputs = Vec::new();
+
+        for (i, (format, content)) in cells.iter().enumerate() {
+            // Inject previous output as a comment/header prepended to the code
+            let augmented_content = if previous_output.is_empty() {
+                content.clone()
+            } else {
+                // Set PIPELINE_INPUT as env var via a shim wrapper
+                match format.to_lowercase().as_str() {
+                    "python" | "py" => format!(
+                        "import os\nos.environ['PIPELINE_INPUT'] = {}\n{}",
+                        serde_json::to_string(&previous_output).unwrap_or_default(),
+                        content
+                    ),
+                    "sh" | "bash" => {
+                        // Escape single quotes for safe bash injection
+                        let escaped = previous_output.replace('\'', "'\\''");
+                        format!("export PIPELINE_INPUT='{}'\n{}", escaped, content)
+                    }
+                    "javascript" | "js" | "node" => format!(
+                        "process.env.PIPELINE_INPUT = {};\n{}",
+                        serde_json::to_string(&previous_output).unwrap_or_default(),
+                        content
+                    ),
+                    _ => content.clone(),
+                }
+            };
+
+            match self.execute_cell(format, &augmented_content).await {
+                Ok(stdout) => {
+                    all_outputs.push(format!(
+                        "--- Cell {} ({}) ---\n{}",
+                        i + 1, format, stdout
+                    ));
+                    previous_output = stdout;
+                }
+                Err(e) => {
+                    all_outputs.push(format!(
+                        "--- Cell {} ({}) FAILED ---\n{}",
+                        i + 1, format, e
+                    ));
+                    return Err(format!(
+                        "Pipeline halted at cell {} ({}).\n\n{}",
+                        i + 1,
+                        format,
+                        all_outputs.join("\n\n")
+                    ));
+                }
+            }
+        }
+
+        Ok(all_outputs.join("\n\n"))
+    }
+
     async fn run_script(&self, code: &str, interpreter: &str, ext: &str) -> Result<String, String> {
         let script_id = format!("script_{}.{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0), ext);
         let script_path = self.runtime_dir.join(&script_id);
@@ -213,6 +278,29 @@ mod tests {
         let res = alu.execute_cell("python", "import sys\nsys.exit(1)").await;
         assert!(res.is_err());
         assert!(res.unwrap_err().contains("Execution Failed"));
+        let _ = fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn test_alu_pipeline() {
+        let dir = env::temp_dir().join("hive_turing_test_alu_pipeline");
+        let alu = ALU::new(Some(dir.clone()));
+
+        let cells = vec![
+            ("python".to_string(), "print('42')".to_string()),
+            ("bash".to_string(), "echo \"received: $PIPELINE_INPUT\"".to_string()),
+        ];
+        let result = alu.execute_pipeline(&cells).await;
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output.contains("42"));
+        assert!(output.contains("received: 42"));
+
+        // Empty pipeline
+        let empty = alu.execute_pipeline(&[]).await;
+        assert!(empty.is_err());
+        assert!(empty.unwrap_err().contains("empty"));
+
         let _ = fs::remove_dir_all(&dir).await;
     }
 }

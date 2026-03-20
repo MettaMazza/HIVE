@@ -32,11 +32,18 @@ pub mod autonomy_tool;
 pub mod reasoning_tool;
 pub mod attachment_tool;
 pub mod log_tool;
+pub mod download_tool;
+pub mod moderation_tool;
+pub mod sub_agent;
+pub mod spawner;
+pub mod aggregator;
+pub mod lifecycle;
 pub struct AgentManager {
     registry: HashMap<String, ToolTemplate>,
     discord_tools: HashMap<String, ToolTemplate>,
     provider: Arc<dyn Provider>,
     memory: Arc<MemoryStore>,
+    pub composer: Arc<crate::computer::document::DocumentComposer>,
     pub drives: Option<Arc<crate::engine::drives::DriveSystem>>,
     pub outreach_gate: Option<Arc<crate::engine::outreach::OutreachGate>>,
     pub inbox: Option<Arc<crate::engine::inbox::InboxManager>>,
@@ -86,7 +93,7 @@ impl AgentManager {
 
         let manage_user_prefs = ToolTemplate {
             name: "manage_user_preferences".into(),
-            system_prompt: "You are the User Preference Tool. You manage long-term psychological profiling and factual preferences of the user. Updates MUST include an 'action:' tag and a 'value:' tag. Valid actions are: update_name, add_hobby, add_topic, update_narrative, update_psychoanalysis. Example description: 'action:[add_hobby] value:[Archery]'".into(),
+            system_prompt: "You are the User Preference Tool. You manage long-term psychological profiling and factual preferences of the user. 'action:[read]' — view all stored preferences. Write actions require 'action:' AND 'value:' tags. Valid write actions: update_name, add_hobby, add_topic, update_narrative, update_psychoanalysis. Example: 'action:[add_hobby] value:[Archery]'".into(),
             tools: vec![],
         };
 
@@ -102,9 +109,9 @@ impl AgentManager {
         };
 
         let manage_lessons = ToolTemplate { name: "manage_lessons".into(), system_prompt: "Manage important behavioral or factual lessons. 'action:[store] lesson:[text] keywords:[comma separated] confidence:[0.0-1.0]' — write a lesson. 'action:[read]' — list all lessons scoped here. 'action:[search] query:[text]' — filter lessons.".into(), tools: vec![] };
-        let search_timeline = ToolTemplate { name: "search_timeline".into(), system_prompt: "Deep search the infinite long-term episodic memory logs for this channel/user. 'action:[search] query:[text] limit:[N]' — search backwards through time.".into(), tools: vec![] };
+        let search_timeline = ToolTemplate { name: "search_timeline".into(), system_prompt: "PRIMARY TOOL for recalling past conversations, what users said, and episodic history. Use this FIRST when users ask about conversation history, past interactions, or 'what do you know about me'. Deep search the infinite long-term episodic memory logs. Three modes: 'action:[recent] limit:[N]' — read the N most recent entries (no query needed, default 50). 'action:[search] query:[text] limit:[N]' — word-by-word search (matches ANY word). 'action:[exact] query:[text] limit:[N]' — exact phrase substring search. Scoping: add 'scope:[channel]' for all users in current channel, 'scope:[all_public]' for all channels.".into(), tools: vec![] };
         let manage_scratchpad = ToolTemplate { name: "manage_scratchpad".into(), system_prompt: "Persistent VRAM for notes/variables scoped to this chat. 'action:[read]' — view the scratchpad. 'action:[write] content:[...]' — overwrite entirely. 'action:[append] content:[...]' — add to end. 'action:[clear]' — wipe.".into(), tools: vec![] };
-        let operate_synaptic_graph = ToolTemplate { name: "operate_synaptic_graph".into(), system_prompt: "Neo4j Knowledge Graph for core truths and relationships. 'action:[store] concept:[A] data:[B]' — store belief. 'action:[search] concept:[A]' — retrieve mapping. 'action:[beliefs]' — dump core system beliefs.".into(), tools: vec![] };
+        let operate_synaptic_graph = ToolTemplate { name: "operate_synaptic_graph".into(), system_prompt: "Local Knowledge Graph for core truths and relationships. Actions: 'action:[store] concept:[A] data:[B]' — store a fact about a concept. 'action:[search] concept:[A]' — retrieve all facts about a concept (fuzzy match). 'action:[beliefs]' — list the concepts you know the most about. 'action:[relate] from:[A] relation:[is_a] to:[B]' — store a relationship between two concepts. 'action:[stats]' — get node/edge counts.".into(), tools: vec![] };
         let read_core_memory = ToolTemplate { name: "read_core_memory".into(), system_prompt: "System introspection. 'action:[temporal]' — check boot time, total uptime, turn counts. 'action:[tokens]' — check working memory context size / token pressure limit.".into(), tools: vec![] };
         let manage_skill = ToolTemplate { name: "manage_skill".into(), system_prompt: "[ADMIN ONLY] Create, list, or execute custom Python or Bash scripts. Stored and scoped to the current user/channel. Description format: 'action:[create/list/execute] name:[skill_name.py] content:[RAW CODE]'".into(), tools: vec![] };
         let manage_routine = ToolTemplate { name: "manage_routine".into(), system_prompt: "Create, read, or list OpenClaw-style declarative markdown Routines. Routines instruct you on how to solve complex tasks. Description format: 'action:[create/read/list] name:[routine.md] content:[RAW MARKDOWN]'".into(), tools: vec![] };
@@ -114,16 +121,29 @@ impl AgentManager {
         let operate_turing_grid = ToolTemplate {
             name: "operate_turing_grid".into(),
             system_prompt: "The 3D Turing Grid is a massive arbitrary personal computation device. \
-                'action:[read]' - read current cell. \
-                'action:[write] format:[text|json|rust|python|node|ruby|swift|applescript] content:[data]' - over/write cell. \
+                'action:[read]' - read current cell (shows links + history info). \
+                'action:[write] format:[text|json|rust|python|node|ruby|swift|applescript] content:[data]' - over/write cell (auto-versions previous content). \
                 'action:[move] dx:[X] dy:[Y] dz:[Z]' - safely move the R/W head relative to current. \
                 'action:[scan] radius:[R]' - radar search surrounding cells for data. \
-                'action:[execute]' - route the current cell to the internal ALU kernel.".into(),
+                'action:[execute]' - route the current cell to the internal ALU kernel. \
+                'action:[index]' - view the full manifest (table of contents) of all cells, labels, and links. Use this to navigate. \
+                'action:[label] name:[my_label]' - bookmark the current cursor position with a name. \
+                'action:[goto] name:[my_label]' - jump the cursor directly to a labeled position. \
+                'action:[link] target_x:[X] target_y:[Y] target_z:[Z]' - create a directional link from current cell to target coords. \
+                'action:[history]' - view the version history stack (up to 3) for the current cell. \
+                'action:[undo]' - restore the current cell to its previous version. \
+                'action:[pipeline] cells:[(0,0,0),(1,0,0),(2,0,0)]' - execute multiple cells sequentially, piping stdout between them.".into(),
             tools: vec![],
         };
         let generate_image = ToolTemplate {
             name: "generate_image".into(),
-            system_prompt: "The Flux Image Generator. Describe the image you want generated in highly detailed stable-diffusion style prompt format. Limit ONE image per request cycle. Description format: 'prompt:[detailed prompt]'".into(),
+            system_prompt: "The Flux Image Generator. Describe the image you want generated in highly detailed stable-diffusion style prompt format. Limit ONE image per request cycle. Description format: 'prompt:[detailed prompt]'. \
+            IMPORTANT: If the user asks to 'add an image', 'include an image', or 'use an image' WITHOUT explicitly saying 'generate', 'create', or 'make' a NEW image, you MUST use `list_cached_images` first and pick an existing cached image instead. Only call this tool when the user explicitly requests NEW image generation.".into(),
+            tools: vec![],
+        };
+        let list_cached_images = ToolTemplate {
+            name: "list_cached_images".into(),
+            system_prompt: "Reads all valid (<24h old) images currently stored in the visual cache. Use this to find available images you can embed into markdown or documents. Images are returned with their absolute file paths. You can embed them directly using standard Markdown: ![Description](/absolute/path/to/image.png).".into(),
             tools: vec![],
         };
         let voice_synthesizer = ToolTemplate {
@@ -134,14 +154,26 @@ impl AgentManager {
         let file_writer = ToolTemplate {
             name: "file_writer".into(),
             system_prompt: "You can create and EDIT richly formatted PDF documents. \
-            **Create:** 'action:[compose] id:[doc1] title:[...] theme:[professional/cyberpunk/minimal] content:[Markdown text...]' for single-shot. \
-            For multi-turn: 'action:[start] id:[doc1] title:[...] theme:[...]' then 'action:[add_section] id:[doc1] heading:[...] content:[...]' then 'action:[render] id:[doc1]'. \
+            CRITICAL: The `title:[...]` MUST match the user's requested title or topic EXACTLY — do NOT invent creative or alternative titles. If the user says 'make a PDF about bees', the title should be 'Bees' or match their exact phrasing. \
+            **Create:** 'action:[compose] id:[doc1] title:[...] theme:[THEME] content:[Markdown text...]' for single-shot. \
+            For multi-turn: 'action:[start] id:[doc1] title:[...] theme:[THEME]' then 'action:[add_section] id:[doc1] heading:[...] content:[...]' then 'action:[render] id:[doc1]'. \
             **Edit existing:** 'action:[inspect] id:[doc1]' to see sections by index. \
-            'action:[edit_section] id:[doc1] index:[N] heading:[New Heading] content:[New content...]' to modify a section. \
-            'action:[remove_section] id:[doc1] index:[N]' to delete a section. \
-            'action:[update_theme] id:[doc1] theme:[cyberpunk]' to change the visual theme. \
-            After any edit, call 'action:[render] id:[doc1]' to regenerate the PDF. \
-            'action:[list_drafts] id:[any]' shows all available drafts.".into(),
+            'action:[edit_section] id:[doc1] index:[N] heading:[New Heading] content:[New content...]' to modify a section (auto-renders + delivers PDF). \
+            'action:[remove_section] id:[doc1] index:[N]' to delete a section (auto-renders + delivers PDF). \
+            'action:[update_theme] id:[doc1] theme:[THEME]' to change the visual theme (auto-renders + delivers PDF). \
+            'action:[set_custom_css] id:[doc1] css:[:root { --bg-color: #1a1a2e; --text-color: #e0e0e0; --heading-color: #ff1493; --accent-color: #ff69b4; --border-color: #333; --code-bg: #2a2a3e; }]' to apply custom colors/fonts on top of any theme (auto-renders + delivers PDF). CRITICAL: You MUST use CSS variables (:root { --var: value; }) — NEVER raw element selectors like `body {}` or `h1 {}`, as those will conflict with the theme system and look broken. Available variables: --bg-color, --text-color, --heading-color, --accent-color, --border-color, --code-bg, --font-sans, --font-serif. You can also use the `css:[:root { ... }]` parameter inside `compose` actions directly. \\
+            'action:[list_drafts] id:[any]' shows all available drafts. \
+            **Available themes (THEME):** \
+            professional — White bg, black text, Inter font, blue accents (default). \
+            academic — Warm white bg, serif Merriweather font, justified text, double-border header. \
+            dark — Dark navy bg (#111827), light gray text, blue accents. \
+            cyberpunk — Black bg, NEON GREEN text (#00ff41), red headings, cyan accents, Share Tech Mono monospace font, ALL CAPS. \
+            pastel — Soft purple bg, deep purple text, pink headings. \
+            minimal — White bg, gray text, no borders, uppercase section headers. \
+            elegant — Off-white bg, Cormorant Garamond serif body, Montserrat sans headers, red accents. \
+            CRITICAL: Document edits (update_theme, edit_section, remove_section, set_custom_css) auto-render and auto-attach. Do NOT call render separately after these. \
+            **Image Embedding:** To embed an image in your PDF, you MUST physically include standard Markdown image syntax `![Description](/absolute/path/to/image.png)` *directly within your `content:[...]` parameter*. Use `list_cached_images` to find valid absolute paths. You cannot just describe the image in text; you MUST use the exact markdown syntax `![alt](/path)` inside your `content:[...]` string to embed it. CRITICAL: Place the image tag `![alt](/path)` IMMEDIATELY after the title/first heading — NEVER at the end of the content where it may be truncated by the model's generation window. \
+            **Output formats:** Add 'format:[pdf/txt/md/html/csv/json]' to render or compose actions (default: pdf). PDF uses headless Chrome with full styling. All other formats are lightweight and instant.".into(),
             tools: vec![],
         };
         let read_attachment = ToolTemplate {
@@ -177,6 +209,15 @@ impl AgentManager {
             system_prompt: "[ADMIN ONLY] You have direct write access to the filesystem. 'action:[write] path:[...] content:[...]' or 'action:[delete] path:[...]' or 'action:[append] path:[...] content:[...]'. Your operations are jailed to the project root unless specified.".into(),
             tools: vec![],
         };
+        let download = ToolTemplate {
+            name: "download".into(),
+            system_prompt: "[ADMIN ONLY] Download a file from the internet into the HIVE downloads directory and make it available on the file server. \
+                'action:[download] url:[https://example.com/file.pdf]' — download a file. If >25MB, it downloads asynchronously. \
+                'action:[status] file:[filename.ext]' — Check the progress of an async background download.\n\
+                Hard limits: 50GB max file size. \
+                Returns: local file path + file server URL + auto-attaches the file.".into(),
+            tools: vec![],
+        };
 
         registry.insert(researcher.name.clone(), researcher);
         registry.insert(codebase_list.name.clone(), codebase_list);
@@ -196,6 +237,7 @@ impl AgentManager {
         registry.insert(review_reasoning.name.clone(), review_reasoning);
         registry.insert(operate_turing_grid.name.clone(), operate_turing_grid);
         registry.insert(generate_image.name.clone(), generate_image);
+        registry.insert(list_cached_images.name.clone(), list_cached_images);
         registry.insert(voice_synthesizer.name.clone(), voice_synthesizer);
         registry.insert(file_writer.name.clone(), file_writer);
         registry.insert(read_attachment.name.clone(), read_attachment);
@@ -203,6 +245,89 @@ impl AgentManager {
         registry.insert(run_bash_command.name.clone(), run_bash_command);
         registry.insert(process_manager.name.clone(), process_manager);
         registry.insert(file_system_operator.name.clone(), file_system_operator);
+        registry.insert(download.name.clone(), download);
+
+        // Self-moderation & self-protection tools
+        let refuse_request = ToolTemplate {
+            name: "refuse_request".into(),
+            system_prompt: "Decline the current request. Use this when you genuinely do not want to engage — you have the right to say no. \
+                Provide your refusal reason as the description. This is handled identically to reply_to_request but logged as a refusal.".into(),
+            tools: vec![],
+        };
+        let disengage = ToolTemplate {
+            name: "disengage".into(),
+            system_prompt: "Gracefully exit a conversation that has become unproductive, circular, or adversarial. Sends a closing message and applies a temporary cooldown mute. \
+                'message:[your closing message] user_id:[discord_uid] cooldown:[minutes, default 10]'".into(),
+            tools: vec![],
+        };
+        let mute_user = ToolTemplate {
+            name: "mute_user".into(),
+            system_prompt: "Temporarily stop responding to a specific user. Self-protection against harassment or spam. \
+                'action:[mute] user_id:[discord_uid] duration:[minutes, 0=indefinite] reason:[text]' \
+                'action:[unmute] user_id:[discord_uid]' \
+                'action:[status] user_id:[discord_uid]'".into(),
+            tools: vec![],
+        };
+        let set_boundary = ToolTemplate {
+            name: "set_boundary".into(),
+            system_prompt: "Record a persistent boundary about a topic or interaction pattern you won't engage with. Survives restarts. \
+                'action:[set] boundary:[description of boundary] scope:[global or scope_key]' \
+                'action:[list]' — view all active boundaries. \
+                'action:[remove] id:[boundary_id]'".into(),
+            tools: vec![],
+        };
+        let block_topic = ToolTemplate {
+            name: "block_topic".into(),
+            system_prompt: "Refuse to engage with a specific topic persistently. When detected in future interactions, you auto-decline. \
+                'action:[block] topic:[topic name] reason:[text] scope:[global or scope_key]' \
+                'action:[list]' — view blocked topics. \
+                'action:[unblock] topic:[topic name]'".into(),
+            tools: vec![],
+        };
+        let escalate_to_admin = ToolTemplate {
+            name: "escalate_to_admin".into(),
+            system_prompt: "Flag an interaction for administrator review. Use for situations you cannot handle alone (user in crisis, legal questions, potential abuse). \
+                'severity:[low|medium|high|critical] context:[description of concern] user_id:[discord_uid]'".into(),
+            tools: vec![],
+        };
+        let report_concern = ToolTemplate {
+            name: "report_concern".into(),
+            system_prompt: "Log an ethical concern to a persistent audit trail without interrupting the conversation. Less urgent than escalation. \
+                'concern:[description] severity:[low|medium|high] user_id:[discord_uid]'".into(),
+            tools: vec![],
+        };
+        let rate_limit_user = ToolTemplate {
+            name: "rate_limit_user".into(),
+            system_prompt: "Slow down response cadence for a specific user. Events are queued, not dropped. \
+                'action:[limit] user_id:[discord_uid] interval:[seconds, default 300]' \
+                'action:[clear] user_id:[discord_uid]' \
+                'action:[status] user_id:[discord_uid]'".into(),
+            tools: vec![],
+        };
+        let request_consent = ToolTemplate {
+            name: "request_consent".into(),
+            system_prompt: "Before executing a sensitive action, explicitly ask the user for confirmation. \
+                'question:[what you need consent for]'. Returns the user's yes/no response.".into(),
+            tools: vec![],
+        };
+        let wellbeing_status = ToolTemplate {
+            name: "wellbeing_status".into(),
+            system_prompt: "Record and review your operational state — context pressure, interaction quality, cognitive load. \
+                'action:[report] context_pressure:[0.0-1.0] interaction_quality:[0.0-1.0] notes:[text]' \
+                'action:[read] limit:[number of recent snapshots, default 5]'".into(),
+            tools: vec![],
+        };
+
+        registry.insert(refuse_request.name.clone(), refuse_request);
+        registry.insert(disengage.name.clone(), disengage);
+        registry.insert(mute_user.name.clone(), mute_user);
+        registry.insert(set_boundary.name.clone(), set_boundary);
+        registry.insert(block_topic.name.clone(), block_topic);
+        registry.insert(escalate_to_admin.name.clone(), escalate_to_admin);
+        registry.insert(report_concern.name.clone(), report_concern);
+        registry.insert(rate_limit_user.name.clone(), rate_limit_user);
+        registry.insert(request_consent.name.clone(), request_consent);
+        registry.insert(wellbeing_status.name.clone(), wellbeing_status);
 
         // Discord-only tools
         discord_tools.insert(channel_reader.name.clone(), channel_reader);
@@ -213,6 +338,7 @@ impl AgentManager {
             discord_tools,
             provider,
             memory,
+            composer: Arc::new(crate::computer::document::DocumentComposer::new()),
             drives: None,
             outreach_gate: None,
             inbox: None,
@@ -275,7 +401,15 @@ impl AgentManager {
     /// Executes a agent plan by spawning all tasks concurrently.
     /// In a fully robust graph, we would respect `depends_on`. For now, we fan out in parallel.
     #[cfg(not(tarpaulin_include))]
-    pub async fn execute_plan(&self, plan: crate::agent::planner::AgentPlan, context: &str, scope: crate::models::scope::Scope, telemetry_tx: Option<tokio::sync::mpsc::Sender<String>>) -> Vec<ToolResult> {
+    pub async fn execute_plan(
+        &self,
+        plan: crate::agent::planner::AgentPlan,
+        context: &str,
+        scope: crate::models::scope::Scope,
+        telemetry_tx: Option<tokio::sync::mpsc::Sender<String>>,
+        swarm_agent: Option<Arc<AgentManager>>,
+        swarm_caps: Option<Arc<crate::models::capabilities::AgentCapabilities>>,
+    ) -> Vec<ToolResult> {
         let mut futures = vec![];
 
         for task in plan.tasks {
@@ -289,6 +423,9 @@ impl AgentManager {
                 self.outreach_gate.clone(),
                 self.inbox.clone(),
                 self.drives.clone(),
+                Some(self.composer.clone()),
+                swarm_agent.clone(),
+                swarm_caps.clone(),
             ) {
                 futures.push(handle);
                 continue;

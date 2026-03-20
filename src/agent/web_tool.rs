@@ -7,6 +7,7 @@ pub async fn execute_web_search(
     telemetry_tx: Option<mpsc::Sender<String>>,
 ) -> ToolResult {
     let query = description.trim().to_string();
+    tracing::debug!("[AGENT:web_search] ▶ task_id={} query='{}'", task_id, query);
 
     macro_rules! telemetry {
         ($tx:expr, $msg:expr) => {

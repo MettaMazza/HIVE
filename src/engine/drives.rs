@@ -83,10 +83,14 @@ impl DriveSystem {
         let hours = (now - s.last_updated) / 3600.0;
 
         if hours > 0.0 {
+            let old_social = s.social_connection;
+            let old_uncertainty = s.uncertainty;
             s.social_connection = clamp(s.social_connection - SOCIAL_DECAY_PER_HOUR * hours);
             s.uncertainty = clamp(s.uncertainty + UNCERTAINTY_GAIN_PER_HOUR * hours);
             s.last_updated = now;
             Self::save_inner(&s, &self.persist_path);
+            tracing::debug!("[ENGINE:Drives] Updated drives ({:.2}h elapsed): social {:.1} -> {:.1}, uncertainty {:.1} -> {:.1}",
+                hours, old_social, s.social_connection, old_uncertainty, s.uncertainty);
         }
     }
 
@@ -94,9 +98,21 @@ impl DriveSystem {
     pub async fn modify_drive(&self, drive: &str, amount: f64) {
         let mut s = self.state.lock().await;
         match drive {
-            "social_connection" => s.social_connection = clamp(s.social_connection + amount),
-            "uncertainty" => s.uncertainty = clamp(s.uncertainty + amount),
-            "system_health" => s.system_health = clamp(s.system_health + amount),
+            "social_connection" => {
+                let old = s.social_connection;
+                s.social_connection = clamp(s.social_connection + amount);
+                tracing::debug!("[ENGINE:Drives] Modified social_connection: {:.1} -> {:.1} (delta={:+.1})", old, s.social_connection, amount);
+            }
+            "uncertainty" => {
+                let old = s.uncertainty;
+                s.uncertainty = clamp(s.uncertainty + amount);
+                tracing::debug!("[ENGINE:Drives] Modified uncertainty: {:.1} -> {:.1} (delta={:+.1})", old, s.uncertainty, amount);
+            }
+            "system_health" => {
+                let old = s.system_health;
+                s.system_health = clamp(s.system_health + amount);
+                tracing::debug!("[ENGINE:Drives] Modified system_health: {:.1} -> {:.1} (delta={:+.1})", old, s.system_health, amount);
+            }
             other => {
                 tracing::warn!("[DriveSystem] Unknown drive: {}", other);
                 return;

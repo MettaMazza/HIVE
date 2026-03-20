@@ -15,6 +15,7 @@ pub async fn execute_manage_scratchpad(
     if let Some(ref tx) = telemetry_tx {
         let _ = tx.send("📝 Scratchpad Drone executing...\n".to_string()).await;
     }
+    tracing::debug!("[AGENT:scratchpad] ▶ task_id={}", task_id);
 
     let action = extract_tag(&description, "action:").unwrap_or_default().to_lowercase();
     let content = extract_tag(&description, "content:").unwrap_or_default();

@@ -2,6 +2,8 @@
 /// Strips markdown fences, BOM, trailing commas, and extracts JSON from conversational preamble.
 #[cfg(not(tarpaulin_include))]
 pub fn repair_planner_json(raw: &str) -> String {
+    let input_len = raw.len();
+    tracing::debug!("[ENGINE:Repair] ▶ Repairing planner JSON (input_len={})", input_len);
     let mut s = raw.trim().to_string();
 
     // Strip BOM
@@ -12,6 +14,7 @@ pub fn repair_planner_json(raw: &str) -> String {
     let generic_start_marker = "```";
 
     if let Some(start_idx) = s.find(json_start_marker) {
+        tracing::trace!("[ENGINE:Repair] Found ```json fence at offset {}", start_idx);
         // Found a ```json block, extract everything after the marker
         s = s[start_idx + json_start_marker.len()..].to_string();
         // Find the first closing fence (not rfind)
@@ -19,6 +22,7 @@ pub fn repair_planner_json(raw: &str) -> String {
             s = s[..end_idx].to_string();
         }
     } else if let Some(start_idx) = s.find(generic_start_marker) {
+        tracing::trace!("[ENGINE:Repair] Found generic ``` fence at offset {}", start_idx);
          // Found a generic ``` block
         s = s[start_idx + generic_start_marker.len()..].to_string();
         if let Some(end_idx) = s.rfind("```") {
@@ -75,8 +79,10 @@ pub fn repair_planner_json(raw: &str) -> String {
                     cleaned = repair_unescaped_newlines(&cleaned);
 
                     if serde_json::from_str::<crate::agent::planner::AgentPlan>(&cleaned).is_ok() {
+                        tracing::debug!("[ENGINE:Repair] ✅ Valid AgentPlan extracted (len={})", cleaned.len());
                         return cleaned;
                     } else if serde_json::from_str::<serde_json::Value>(&cleaned).is_ok() {
+                        tracing::trace!("[ENGINE:Repair] Found valid JSON candidate (not AgentPlan), buffering");
                         candidates.push(cleaned);
                     }
                 }
@@ -86,10 +92,12 @@ pub fn repair_planner_json(raw: &str) -> String {
     }
 
     if let Some(first_valid) = candidates.first() {
+        tracing::debug!("[ENGINE:Repair] ⚠️ Returning first valid JSON candidate (not AgentPlan)");
         return first_valid.clone();
     }
 
     // Fallback: If no valid JSON was extracted, return empty so the caller can trigger the formatting error prompt.
+    tracing::warn!("[ENGINE:Repair] ❌ No valid JSON found after all repair attempts (input_len={})", input_len);
     String::new()
 }
 

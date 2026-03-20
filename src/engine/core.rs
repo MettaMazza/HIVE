@@ -687,3 +687,75 @@ impl Engine {
 
 }
 
+/// Transforms raw telemetry (which may contain reasoning + JSON) into a human‑readable format.
+pub fn humanize_telemetry(input: &str) -> String {
+    // Find the first '{' to locate potential JSON
+    if let Some(start) = input.find('{') {
+        let prefix = &input[..start];
+        
+        // Try to find balanced JSON by tracking brace depth
+        let mut depth = 0;
+        let mut end = None;
+        for (i, c) in input[start..].chars().enumerate() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(start + i + 1);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        
+        if let Some(end_idx) = end {
+            let json_str = &input[start..end_idx];
+            let suffix = input[end_idx..].trim_start();
+            
+            // Try to parse as JSON
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(json_str) {
+                // Check for tasks array
+                if let Some(tasks) = json.get("tasks").and_then(|t| t.as_array()) {
+                    let task_descriptions: Vec<String> = tasks.iter()
+                        .filter_map(|t| {
+                            let tool = t.get("tool_type")?.as_str()?;
+                            let desc = t.get("description").and_then(|d| d.as_str()).unwrap_or("");
+                            Some(format!("🔧 {}: {}", tool, desc))
+                        })
+                        .collect();
+                    
+                    if !task_descriptions.is_empty() {
+                        // Has valid tasks - humanize them
+                        let tasks_str = task_descriptions.join("\n");
+                        if prefix.is_empty() {
+                            return format!("{}\n{}", tasks_str, suffix);
+                        } else {
+                            return format!("{}\n{}\n{}", prefix.trim_end(), tasks_str, suffix);
+                        }
+                    }
+                }
+                
+                // Valid JSON but no tasks - hide the JSON
+                if suffix.is_empty() {
+                    return prefix.to_string();
+                } else {
+                    return format!("{}\n{}", prefix.trim_end(), suffix);
+                }
+            } else {
+                // Incomplete/broken JSON
+                if !prefix.is_empty() {
+                    return format!("{}\n⏳ Planning...", prefix.trim_end());
+                } else {
+                    return "⏳ Planning...".to_string();
+                }
+            }
+        }
+    }
+    
+    // No JSON found - return as-is
+    input.to_string()
+}
+
+

@@ -14,6 +14,7 @@ pub async fn execute_review_reasoning(
     if let Some(ref tx) = telemetry_tx {
         let _ = tx.send(format!("🧠 Native Reasoning Review Tool executing...\n")).await;
     }
+    tracing::debug!("[AGENT:reasoning] ▶ task_id={}", task_id);
 
     let mut turns_ago = 5;
     if let Some(turns_str) = desc.split("turns_ago:[").nth(1)

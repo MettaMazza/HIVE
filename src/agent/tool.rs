@@ -16,6 +16,8 @@ impl ToolExecutor {
     }
 
     pub async fn execute(&self, task_id: &str, task_description: &str, context: &str, telemetry_tx: Option<tokio::sync::mpsc::Sender<String>>) -> ToolResult {
+        tracing::debug!("[AGENT:ToolExecutor] ▶ Executing template='{}' task_id='{}' desc_len={}",
+            self.template.name, task_id, task_description.len());
         let system_prompt = format!(
             "{}\n\n[CONTEXT PROVIDED BY QUEEN]\n{}\n\n[YOUR TASK]\n{}",
             self.template.system_prompt,
@@ -32,10 +34,12 @@ impl ToolExecutor {
         };
 
         // We use the shared provider for execution, but could swap model if template.model_override is set.
-        let result = self.provider.generate(&system_prompt, &[], &dummy_event, "", telemetry_tx).await;
+        let result = self.provider.generate(&system_prompt, &[], &dummy_event, "", telemetry_tx, None).await;
 
         match result {
             Ok(output) => {
+                tracing::debug!("[AGENT:ToolExecutor] ◀ task_id='{}' template='{}' status=Success output_len={}",
+                    task_id, self.template.name, output.len());
                 // In the future we will count tokens, for now mock it to 0
                 ToolResult {
                     task_id: task_id.to_string(),
@@ -45,6 +49,8 @@ impl ToolExecutor {
                 }
             }
             Err(e) => {
+                tracing::error!("[AGENT:ToolExecutor] ❌ task_id='{}' template='{}' error={:?}",
+                    task_id, self.template.name, e);
                 ToolResult {
                     task_id: task_id.to_string(),
                     output: String::new(),
@@ -66,7 +72,7 @@ mod tests {
         let mut mock_provider = MockProvider::new();
         mock_provider
             .expect_generate()
-            .returning(|sys, _, _, _ctx, _| {
+            .returning(|sys, _, _, _ctx, _, _| {
                 assert!(sys.contains("You are a test tool"));
                 assert!(sys.contains("Context"));
                 assert!(sys.contains("Task"));
@@ -92,7 +98,7 @@ mod tests {
         let mut mock_provider = MockProvider::new();
         mock_provider
             .expect_generate()
-            .returning(|_, _, _, _, _| Err(ProviderError::ConnectionError("Boom".into())));
+            .returning(|_, _, _, _, _, _| Err(ProviderError::ConnectionError("Boom".into())));
 
         let template = ToolTemplate {
             name: "test".into(),

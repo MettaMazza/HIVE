@@ -5,67 +5,55 @@ use serenity::builder::CreateAttachment;
 #[cfg(not(tarpaulin_include))]
 pub async fn extract_attachments(parsed_text: &mut String) -> Vec<CreateAttachment> {
     let mut attachments = Vec::new();
+    let tags = vec!["[ATTACH_IMAGE](", "[ATTACH_FILE](", "[ATTACH_AUDIO]("];
 
-    // Parse [ATTACH_IMAGE](...) custom markdown tags
-    while let Some(start_idx) = parsed_text.find("[ATTACH_IMAGE](") {
-        if let Some(end_idx) = parsed_text[start_idx..].find(")") {
-            let path_start = start_idx + 15;
-            let path_end = start_idx + end_idx;
-            let file_path = &parsed_text[path_start..path_end];
-            
-            match serenity::builder::CreateAttachment::path(file_path).await {
-                Ok(attachment) => attachments.push(attachment),
-                Err(e) => tracing::error!("[Discord Platform] Failed to attach local image at {}: {}", file_path, e),
+    for tag in tags {
+        while let Some(start_idx) = parsed_text.find(tag) {
+            // Find the closing parenthesis relative to the start of the path
+            let path_start_idx = start_idx + tag.len();
+            if let Some(rel_end_idx) = parsed_text[path_start_idx..].find(')') {
+                let end_idx = path_start_idx + rel_end_idx;
+                let file_path = &parsed_text[path_start_idx..end_idx];
+                
+                match serenity::builder::CreateAttachment::path(file_path).await {
+                    Ok(attachment) => attachments.push(attachment),
+                    Err(e) => tracing::error!("[Discord Platform] Failed to attach local file at {}: {}", file_path, e),
+                }
+                
+                // Strip the exact tag [TAG](path) from the text
+                let before = &parsed_text[..start_idx];
+                let after = &parsed_text[end_idx + 1..];
+                *parsed_text = format!("{}{}", before, after);
+            } else {
+                // Malformed tag, break to avoid infinite loop
+                break;
             }
-            
-            // Strip the tag from the output text so the user doesn't see raw markdown
-            let before = &parsed_text[..start_idx];
-            let after = &parsed_text[start_idx + end_idx + 1..];
-            *parsed_text = format!("{}{}", before, after);
-        } else {
-            break;
-        }
-    }
-
-    // Parse [ATTACH_FILE](...) custom markdown tags (PDFs, docs, etc.)
-    while let Some(start_idx) = parsed_text.find("[ATTACH_FILE](") {
-        if let Some(end_idx) = parsed_text[start_idx..].find(")") {
-            let path_start = start_idx + 14; // len("[ATTACH_FILE](") = 14
-            let path_end = start_idx + end_idx;
-            let file_path = &parsed_text[path_start..path_end];
-            
-            match serenity::builder::CreateAttachment::path(file_path).await {
-                Ok(attachment) => attachments.push(attachment),
-                Err(e) => tracing::error!("[Discord Platform] Failed to attach local file at {}: {}", file_path, e),
-            }
-            
-            let before = &parsed_text[..start_idx];
-            let after = &parsed_text[start_idx + end_idx + 1..];
-            *parsed_text = format!("{}{}", before, after);
-        } else {
-            break;
-        }
-    }
-
-    // Parse [ATTACH_AUDIO](...) custom markdown tags (TTS wav files)
-    while let Some(start_idx) = parsed_text.find("[ATTACH_AUDIO](") {
-        if let Some(end_idx) = parsed_text[start_idx..].find(")") {
-            let path_start = start_idx + 15; // len("[ATTACH_AUDIO](") = 15
-            let path_end = start_idx + end_idx;
-            let file_path = &parsed_text[path_start..path_end];
-            
-            match serenity::builder::CreateAttachment::path(file_path).await {
-                Ok(attachment) => attachments.push(attachment),
-                Err(e) => tracing::error!("[Discord Platform] Failed to attach audio at {}: {}", file_path, e),
-            }
-            
-            let before = &parsed_text[..start_idx];
-            let after = &parsed_text[start_idx + end_idx + 1..];
-            *parsed_text = format!("{}{}", before, after);
-        } else {
-            break;
         }
     }
 
     attachments
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[tokio::test]
+    async fn test_extract_attachments() {
+        // Create a dummy file to attach
+        let mut tmp_file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(tmp_file, "dummy content").unwrap();
+        let path = tmp_file.path().to_str().unwrap().to_string();
+
+        let mut text = format!(
+            "Hello world! [ATTACH_IMAGE]({}) This is a test. [ATTACH_FILE]({}) Ending text.",
+            path, path
+        );
+
+        let attachments = extract_attachments(&mut text).await;
+
+        assert_eq!(attachments.len(), 2);
+        assert_eq!(text, "Hello world!  This is a test.  Ending text.");
+    }
 }

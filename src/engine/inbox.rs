@@ -130,11 +130,13 @@ impl InboxManager {
     }
 
     pub fn get_unread(&self, user_id: &str) -> Vec<InboxMessage> {
-        self.load(user_id)
+        let msgs: Vec<InboxMessage> = self.load(user_id)
             .messages
             .into_iter()
             .filter(|m| !m.read)
-            .collect()
+            .collect();
+        tracing::debug!("[ENGINE:Inbox] get_unread for user_id={}: {} unread messages", user_id, msgs.len());
+        msgs
     }
 
     pub fn get_all(&self, user_id: &str) -> Vec<InboxMessage> {
@@ -151,7 +153,12 @@ impl InboxManager {
                 break;
             }
         }
-        if found { self.save(user_id, data); }
+        if found {
+            tracing::debug!("[ENGINE:Inbox] Marked message {} as read for user_id={}", msg_id, user_id);
+            self.save(user_id, data);
+        } else {
+            tracing::debug!("[ENGINE:Inbox] mark_read: message {} not found for user_id={}", msg_id, user_id);
+        }
         found
     }
 
@@ -162,6 +169,7 @@ impl InboxManager {
             if !m.read { m.read = true; count += 1; }
         }
         self.save(user_id, data);
+        tracing::debug!("[ENGINE:Inbox] Marked {} messages as read for user_id={}", count, user_id);
         count
     }
 
@@ -172,10 +180,11 @@ impl InboxManager {
             InboxPriority::Normal => "📬",
             InboxPriority::Mute => "🔇",
         };
-        let display = level.to_string();
+        let priority_label = level.to_string();
+        tracing::debug!("[ENGINE:Inbox] Setting priority for user_id={} to '{}'", user_id, priority_label);
         data.priority = level;
         self.save(user_id, data);
-        format!("{} Inbox priority set to **{}**.", emoji, display)
+        format!("{} Inbox priority set to **{}**.", emoji, priority_label)
     }
 
     pub fn get_priority(&self, user_id: &str) -> InboxPriority {

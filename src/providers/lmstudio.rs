@@ -69,6 +69,7 @@ impl Provider for LMStudioProvider {
         new_event: &Event,
         agent_context: &str,
         telemetry_tx: Option<mpsc::Sender<String>>,
+        max_tokens: Option<u32>,
     ) -> Result<String, ProviderError> {
         let mut messages = Vec::new();
 
@@ -284,7 +285,7 @@ mod tests {
             author_id: "test".into(),
             content: "What's up?".into(),
         };
-        let res = provider.generate("sys", &history, &new_event, "", None).await.unwrap();
+        let res = provider.generate("sys", &history, &new_event, "", None, None).await.unwrap();
 
         assert_eq!(res, "Sure, here's your context.");
     }
@@ -308,7 +309,7 @@ mod tests {
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Bork?".into(),
-        }, "", None).await;
+        }, "", None, None).await;
 
         assert!(matches!(res, Err(ProviderError::ParseError(_))));
     }
@@ -324,7 +325,7 @@ mod tests {
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Bork?".into(),
-        }, "", None).await;
+        }, "", None, None).await;
 
         assert!(matches!(res, Err(ProviderError::ConnectionError(_))));
     }
@@ -347,7 +348,7 @@ mod tests {
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Bork?".into(),
-        }, "", None).await;
+        }, "", None, None).await;
 
         assert!(matches!(res, Err(ProviderError::ParseError(_))));
     }
@@ -370,7 +371,7 @@ mod tests {
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Bork?".into(),
-        }, "", None).await;
+        }, "", None, None).await;
 
         assert_eq!(res.unwrap(), "");
     }
@@ -398,7 +399,7 @@ data: {\"choices\": [{\"delta\": {\"content\": \"Final answer\"}, \"finish_reaso
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Bork?".into(),
-        }, "", Some(tx)).await;
+        }, "", Some(tx), None).await;
 
         let first_recv = rx.recv().await.unwrap();
         assert_eq!(first_recv, "I am thinking...");
@@ -425,7 +426,7 @@ data: {\"choices\": [{\"delta\": {\"content\": \"Final answer\"}, \"finish_reaso
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Bork?".into(),
-        }, "", None).await;
+        }, "", None, None).await;
 
         assert_eq!(res.unwrap(), "");
     }
@@ -452,7 +453,7 @@ data: {\"choices\": [{\"delta\": {\"content\": \" done!\"}, \"finish_reason\": \
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Stream?".into(),
-        }, "", None).await;
+        }, "", None, None).await;
 
         assert_eq!(res.unwrap(), "part1 part2 done!");
     }
@@ -475,7 +476,7 @@ data: {\"choices\": [{\"delta\": {\"content\": \" done!\"}, \"finish_reason\": \
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Disconnect?".into(),
-        }, "", None).await;
+        }, "", None, None).await;
 
         assert!(res.is_err());
     }

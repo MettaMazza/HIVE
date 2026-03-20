@@ -11,6 +11,7 @@ pub mod timelines;
 pub mod temporal;
 pub mod scratch;
 pub mod lessons;
+pub mod moderation;
 
 pub use working::*;
 pub use autosave::*;
@@ -22,6 +23,7 @@ pub use scratch::*;
 pub mod preferences;
 pub use preferences::*;
 pub use lessons::*;
+pub use moderation::*;
 
 use std::collections::{HashMap, VecDeque};
 use tokio::sync::{Mutex, RwLock};
@@ -29,7 +31,7 @@ use chrono::Utc;
 use crate::computer::alu::ALU;
 use crate::computer::turing_grid::TuringGrid;
 /// The Unified 5-Tier Memory Store.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct MemoryStore {
     pub working: WorkingMemory,
     pub timeline: TimelineManager,
@@ -43,6 +45,7 @@ pub struct MemoryStore {
     pub lessons: LessonsManager,
     pub turing_grid: Arc<Mutex<TuringGrid>>,
     pub alu: Arc<ALU>,
+    pub moderation: ModerationStore,
     /// Tracks recent active participants in Public channels. Maps channel_id -> Vec<author_name>
     rosters: Arc<RwLock<HashMap<String, Vec<String>>>>,
 }
@@ -73,6 +76,7 @@ impl MemoryStore {
         let timelines = Arc::new(TimelineStore::new(&memory_dir.join("core")));
         let turing_grid = Arc::new(Mutex::new(TuringGrid::new(memory_dir.join("computer_grid.json"))));
         let alu = Arc::new(ALU::new(Some(memory_dir.join("computer_runtime"))));
+        let moderation = ModerationStore::new();
 
         Self {
             working,
@@ -86,6 +90,7 @@ impl MemoryStore {
             timelines,
             turing_grid,
             alu,
+            moderation,
             activity_stream: Arc::new(RwLock::new(VecDeque::new())),
             rosters: Arc::new(RwLock::new(HashMap::new())),
         }

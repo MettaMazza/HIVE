@@ -25,6 +25,7 @@ pub async fn execute_operate_turing_grid(
             ))
             .await;
     }
+    tracing::debug!("[AGENT:turing_grid] ▶ task_id={} action='{}'", task_id, action);
 
     let output;
 
@@ -116,9 +117,22 @@ pub async fn execute_operate_turing_grid(
             let (x, y, z) = g.get_cursor();
 
             if let Some(cell) = g.read_current() {
+                let links_info = if cell.links.is_empty() {
+                    String::new()
+                } else {
+                    let link_strs: Vec<String> = cell.links.iter()
+                        .map(|(lx, ly, lz)| format!("({},{},{})", lx, ly, lz))
+                        .collect();
+                    format!("\nLinks → {}", link_strs.join(", "))
+                };
+                let history_info = if cell.history.is_empty() {
+                    String::new()
+                } else {
+                    format!("\nHistory: {} previous version(s) available", cell.history.len())
+                };
                 output = format!(
-                    "Cell ({}, {}, {}) [Format: {}, Status: {}]:\n{}",
-                    x, y, z, cell.format, cell.status, cell.content
+                    "Cell ({}, {}, {}) [Format: {}, Status: {}]:\n{}{}{}",
+                    x, y, z, cell.format, cell.status, cell.content, links_info, history_info
                 );
             } else {
                 output = format!("Cell ({}, {}, {}) is empty.", x, y, z);
@@ -161,6 +175,250 @@ pub async fn execute_operate_turing_grid(
                 }
             }
         }
+
+        // ──────────────────────────────────────────────
+        //  NEW ACTIONS
+        // ──────────────────────────────────────────────
+
+        "index" => {
+            let g = memory.turing_grid.lock().await;
+            output = g.get_index();
+        }
+
+        "label" => {
+            let name = match extract_tag(&description, "name:") {
+                Some(n) => n.split_whitespace().next().unwrap_or("").to_string(),
+                None => {
+                    return ToolResult {
+                        task_id,
+                        output: "Error: No label name provided. Use 'name:[label_name]'.".into(),
+                        tokens_used: 0,
+                        status: ToolStatus::Failed("Missing field".into()),
+                    };
+                }
+            };
+            if name.is_empty() {
+                return ToolResult {
+                    task_id,
+                    output: "Error: Label name cannot be empty.".into(),
+                    tokens_used: 0,
+                    status: ToolStatus::Failed("Empty name".into()),
+                };
+            }
+
+            let mut g = memory.turing_grid.lock().await;
+            let (x, y, z) = g.get_cursor();
+            if let Err(e) = g.set_label(&name).await {
+                output = format!("Failed to set label: {}", e);
+            } else {
+                output = format!("Label '{}' set at coordinates ({}, {}, {}).", name, x, y, z);
+            }
+        }
+
+        "goto" => {
+            let name = match extract_tag(&description, "name:") {
+                Some(n) => n.split_whitespace().next().unwrap_or("").to_string(),
+                None => {
+                    return ToolResult {
+                        task_id,
+                        output: "Error: No label name provided. Use 'name:[label_name]'.".into(),
+                        tokens_used: 0,
+                        status: ToolStatus::Failed("Missing field".into()),
+                    };
+                }
+            };
+
+            let mut g = memory.turing_grid.lock().await;
+            match g.goto_label(&name).await {
+                Some((x, y, z)) => {
+                    output = format!("Jumped to label '{}' at ({}, {}, {}).", name, x, y, z);
+                }
+                None => {
+                    // List available labels to help
+                    let available: Vec<String> = g.labels.keys().cloned().collect();
+                    if available.is_empty() {
+                        output = format!("Label '{}' not found. No labels have been set yet.", name);
+                    } else {
+                        output = format!(
+                            "Label '{}' not found. Available labels: {}",
+                            name,
+                            available.join(", ")
+                        );
+                    }
+                }
+            }
+        }
+
+        "link" => {
+            let tx_val = extract_tag(&description, "target_x:")
+                .unwrap_or("0".to_string())
+                .split_whitespace().next().unwrap_or("0")
+                .parse::<i32>().unwrap_or(0);
+            let ty_val = extract_tag(&description, "target_y:")
+                .unwrap_or("0".to_string())
+                .split_whitespace().next().unwrap_or("0")
+                .parse::<i32>().unwrap_or(0);
+            let tz_val = extract_tag(&description, "target_z:")
+                .unwrap_or("0".to_string())
+                .split_whitespace().next().unwrap_or("0")
+                .parse::<i32>().unwrap_or(0);
+
+            let mut g = memory.turing_grid.lock().await;
+            let (x, y, z) = g.get_cursor();
+
+            match g.add_link((tx_val, ty_val, tz_val)).await {
+                Ok(true) => {
+                    output = format!(
+                        "Linked cell ({},{},{}) → ({},{},{}).",
+                        x, y, z, tx_val, ty_val, tz_val
+                    );
+                }
+                Ok(false) => {
+                    output = format!(
+                        "Error: Cell ({},{},{}) is empty. Write data before linking.",
+                        x, y, z
+                    );
+                }
+                Err(e) => {
+                    output = format!("Link failed: {}", e);
+                }
+            }
+        }
+
+        "history" => {
+            let g = memory.turing_grid.lock().await;
+            let (x, y, z) = g.get_cursor();
+
+            match g.get_history() {
+                Some(hist) if !hist.is_empty() => {
+                    let mut out = format!(
+                        "--- Version History for Cell ({},{},{}) ({} entries) ---\n",
+                        x, y, z, hist.len()
+                    );
+                    for (i, snap) in hist.iter().enumerate() {
+                        let preview: String = snap.content.chars().take(100).collect();
+                        out.push_str(&format!(
+                            "  v-{}: [{}] {} (at {})\n",
+                            i + 1, snap.format, preview, snap.timestamp
+                        ));
+                    }
+                    output = out;
+                }
+                Some(_) => {
+                    output = format!("Cell ({},{},{}) has no version history.", x, y, z);
+                }
+                None => {
+                    output = format!("Cell ({},{},{}) is empty — no history.", x, y, z);
+                }
+            }
+        }
+
+        "undo" => {
+            let mut g = memory.turing_grid.lock().await;
+            let (x, y, z) = g.get_cursor();
+
+            match g.undo().await {
+                Ok(true) => {
+                    let cell = g.read_current().unwrap();
+                    output = format!(
+                        "Undo successful. Cell ({},{},{}) restored to previous version.\nContent: {}",
+                        x, y, z, cell.content
+                    );
+                }
+                Ok(false) => {
+                    output = format!(
+                        "Cannot undo: Cell ({},{},{}) has no version history.",
+                        x, y, z
+                    );
+                }
+                Err(e) => {
+                    output = format!("Undo failed: {}", e);
+                }
+            }
+        }
+
+        "pipeline" => {
+            let cells_raw = match extract_tag(&description, "cells:") {
+                Some(c) => c,
+                None => {
+                    return ToolResult {
+                        task_id,
+                        output: "Error: No cells specified. Use 'cells:[(x,y,z),(x,y,z),...]'.".into(),
+                        tokens_used: 0,
+                        status: ToolStatus::Failed("Missing field".into()),
+                    };
+                }
+            };
+
+            // Parse coordinate tuples from the cells tag
+            let mut pipeline_cells: Vec<(String, String)> = Vec::new();
+            {
+                let g = memory.turing_grid.lock().await;
+
+                // Parse coordinate tuples: find (N,N,N) patterns without regex
+                let mut coords: Vec<(i32, i32, i32)> = Vec::new();
+                let mut remaining = cells_raw.as_str();
+                while let Some(open) = remaining.find('(') {
+                    if let Some(close) = remaining[open..].find(')') {
+                        let inner = &remaining[open + 1..open + close];
+                        let parts: Vec<&str> = inner.split(',').collect();
+                        if parts.len() == 3 {
+                            if let (Ok(x), Ok(y), Ok(z)) = (
+                                parts[0].trim().parse::<i32>(),
+                                parts[1].trim().parse::<i32>(),
+                                parts[2].trim().parse::<i32>(),
+                            ) {
+                                coords.push((x, y, z));
+                            }
+                        }
+                        remaining = &remaining[open + close + 1..];
+                    } else {
+                        break;
+                    }
+                }
+
+                if coords.is_empty() {
+                    return ToolResult {
+                        task_id,
+                        output: "Error: Could not parse cell coordinates. Use format: cells:[(0,0,0),(1,0,0)]".into(),
+                        tokens_used: 0,
+                        status: ToolStatus::Failed("Parse error".into()),
+                    };
+                }
+
+                for (x, y, z) in &coords {
+                    match g.read_at(*x, *y, *z) {
+                        Some(cell) => {
+                            pipeline_cells.push((cell.format.clone(), cell.content.clone()));
+                        }
+                        None => {
+                            return ToolResult {
+                                task_id,
+                                output: format!("Error: Cell ({},{},{}) is empty. Pipeline aborted.", x, y, z),
+                                tokens_used: 0,
+                                status: ToolStatus::Failed("Empty cell in pipeline".into()),
+                            };
+                        }
+                    }
+                }
+            }
+
+            // Update statuses to Running
+            {
+                // We don't update individual cell statuses for the pipeline since
+                // it would require moving the cursor. Just run them.
+            }
+
+            match memory.alu.execute_pipeline(&pipeline_cells).await {
+                Ok(result) => {
+                    output = format!("Pipeline executed successfully ({} cells).\n\n{}", pipeline_cells.len(), result);
+                }
+                Err(e) => {
+                    output = format!("Pipeline failed.\n\n{}", e);
+                }
+            }
+        }
+
         _ => {
             return ToolResult {
                 task_id,
@@ -264,5 +522,152 @@ mod tests {
         )
         .await;
         assert!(r7.output.contains("Current cell is empty"));
+    }
+
+    #[tokio::test]
+    async fn test_tool_index_action() {
+        let memory = Arc::new(MemoryStore::default());
+        let (tx, _rx) = tokio::sync::mpsc::channel(10);
+
+        // Write some cells
+        let _ = execute_operate_turing_grid(
+            "id".into(),
+            "action:write format:text content:origin data".into(),
+            memory.clone(),
+            Some(tx.clone()),
+        ).await;
+        let _ = execute_operate_turing_grid(
+            "id".into(),
+            "action:move dx:1 dy:0 dz:0".into(),
+            memory.clone(),
+            Some(tx.clone()),
+        ).await;
+        let _ = execute_operate_turing_grid(
+            "id".into(),
+            "action:write format:python content:print('hello')".into(),
+            memory.clone(),
+            Some(tx.clone()),
+        ).await;
+
+        let result = execute_operate_turing_grid(
+            "id".into(),
+            "action:index".into(),
+            memory.clone(),
+            Some(tx.clone()),
+        ).await;
+
+        assert!(result.output.contains("2 cells"));
+        assert!(result.output.contains("0,0,0"));
+        assert!(result.output.contains("1,0,0"));
+        assert!(result.output.contains("origin data"));
+    }
+
+    #[tokio::test]
+    async fn test_tool_label_and_goto() {
+        let memory = Arc::new(MemoryStore::default());
+        let (tx, _rx) = tokio::sync::mpsc::channel(10);
+
+        // Move and label
+        let _ = execute_operate_turing_grid(
+            "id".into(),
+            "action:move dx:5 dy:5 dz:5".into(),
+            memory.clone(),
+            Some(tx.clone()),
+        ).await;
+        let label_result = execute_operate_turing_grid(
+            "id".into(),
+            "action:label name:home_base".into(),
+            memory.clone(),
+            Some(tx.clone()),
+        ).await;
+        assert!(label_result.output.contains("home_base"));
+        assert!(label_result.output.contains("(5, 5, 5)"));
+
+        // Move away
+        let _ = execute_operate_turing_grid(
+            "id".into(),
+            "action:move dx:-5 dy:-5 dz:-5".into(),
+            memory.clone(),
+            Some(tx.clone()),
+        ).await;
+
+        // Goto label
+        let goto_result = execute_operate_turing_grid(
+            "id".into(),
+            "action:goto name:home_base".into(),
+            memory.clone(),
+            Some(tx.clone()),
+        ).await;
+        assert!(goto_result.output.contains("Jumped to label"));
+        assert!(goto_result.output.contains("(5, 5, 5)"));
+
+        // Goto non-existent
+        let missing = execute_operate_turing_grid(
+            "id".into(),
+            "action:goto name:doesnt_exist".into(),
+            memory.clone(),
+            Some(tx.clone()),
+        ).await;
+        assert!(missing.output.contains("not found"));
+
+        // Label without name
+        let no_name = execute_operate_turing_grid(
+            "id".into(),
+            "action:label".into(),
+            memory.clone(),
+            Some(tx.clone()),
+        ).await;
+        assert!(no_name.output.contains("Error"));
+    }
+
+    #[tokio::test]
+    async fn test_tool_history_and_undo() {
+        let memory = Arc::new(MemoryStore::default());
+        let (tx, _rx) = tokio::sync::mpsc::channel(10);
+
+        // Write v1
+        let _ = execute_operate_turing_grid(
+            "id".into(),
+            "action:write format:text content:version one".into(),
+            memory.clone(),
+            Some(tx.clone()),
+        ).await;
+
+        // Write v2
+        let _ = execute_operate_turing_grid(
+            "id".into(),
+            "action:write format:text content:version two".into(),
+            memory.clone(),
+            Some(tx.clone()),
+        ).await;
+
+        // Check history
+        let hist = execute_operate_turing_grid(
+            "id".into(),
+            "action:history".into(),
+            memory.clone(),
+            Some(tx.clone()),
+        ).await;
+        assert!(hist.output.contains("1 entries"));
+        assert!(hist.output.contains("version one"));
+
+        // Undo
+        let undo = execute_operate_turing_grid(
+            "id".into(),
+            "action:undo".into(),
+            memory.clone(),
+            Some(tx.clone()),
+        ).await;
+        assert!(undo.output.contains("Undo successful"));
+        assert!(undo.output.contains("version one"));
+
+        // Undo again — no more history
+        let undo2 = execute_operate_turing_grid(
+            "id".into(),
+            "action:undo".into(),
+            memory.clone(),
+            Some(tx.clone()),
+        ).await;
+        assert!(undo2.output.contains("no version history"));
     }
 }

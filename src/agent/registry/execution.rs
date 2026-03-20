@@ -16,21 +16,31 @@ pub fn dispatch_native_tool(
     outreach_gate: Option<Arc<crate::engine::outreach::OutreachGate>>,
     inbox: Option<Arc<crate::engine::inbox::InboxManager>>,
     drives: Option<Arc<crate::engine::drives::DriveSystem>>,
+    composer: Option<Arc<crate::computer::document::DocumentComposer>>,
+    agent_manager: Option<Arc<crate::agent::AgentManager>>,
+    capabilities: Option<Arc<crate::models::capabilities::AgentCapabilities>>,
 ) -> Option<tokio::task::JoinHandle<ToolResult>> {
     let task_id = task.task_id.clone();
     let desc = task.description.clone();
     let tx_clone = telemetry_tx.clone();
     let tool_type = task.tool_type.as_str();
+    tracing::debug!("[AGENT:Dispatch] ▶ Routing tool_type='{}' task_id='{}' desc_len={}", tool_type, task_id, desc.len());
 
     if tool_type == "channel_reader" {
         let handle = tokio::spawn(async move {
             if let Some(ref tx) = tx_clone {
                 let _ = tx.send(format!("🧠 Native Channel Reader Tool executing...\n")).await;
             }
-            let target_id = desc.split_whitespace()
-                .find(|s| s.chars().all(|c| c.is_ascii_digit()) && s.len() > 10)
-                .unwrap_or("")
-                .to_string();
+            // Try extracting from tag format first (e.g. "channel_id:[123]")
+            let target_id = crate::agent::preferences::extract_tag(&desc, "channel_id:")
+                .or_else(|| crate::agent::preferences::extract_tag(&desc, "channel:"))
+                .unwrap_or_else(|| {
+                    // Fallback: find any standalone numeric token > 10 digits
+                    desc.split_whitespace()
+                        .find(|s| s.chars().all(|c| c.is_ascii_digit()) && s.len() > 10)
+                        .unwrap_or("")
+                        .to_string()
+                });
 
             if target_id.is_empty() {
                 return ToolResult {
@@ -172,6 +182,10 @@ pub fn dispatch_native_tool(
         }
     } 
     
+    if tool_type == "list_cached_images" {
+        return Some(tokio::spawn(crate::agent::image_tool::execute_list_cached_images(task_id, desc, tx_clone)));
+    }
+    
     if tool_type == "voice_synthesizer" {
         let handle = tokio::spawn(async move {
             crate::agent::tts_tool::execute_voice_synthesizer(task_id, desc, tx_clone).await
@@ -188,8 +202,9 @@ pub fn dispatch_native_tool(
     } 
     
     if tool_type == "file_writer" {
+        let composer_clone = composer.map(|c| c.as_ref().clone());
         let handle = tokio::spawn(async move {
-            crate::agent::file_writer::execute_file_writer(task_id, desc, None, tx_clone).await
+            crate::agent::file_writer::execute_file_writer(task_id, desc, composer_clone, tx_clone).await
         });
         return Some(handle);
     } 
@@ -277,6 +292,13 @@ pub fn dispatch_native_tool(
     if tool_type == "autonomy_activity" {
         let handle = tokio::spawn(async move {
             crate::agent::autonomy_tool::execute_autonomy_activity(task_id, desc, tx_clone).await
+        });
+        return Some(handle);
+    }
+
+    if tool_type == "download" {
+        let handle = tokio::spawn(async move {
+            crate::agent::download_tool::execute_download(task_id, desc, tx_clone).await
         });
         return Some(handle);
     }
@@ -375,6 +397,144 @@ pub fn dispatch_native_tool(
         return Some(handle);
     }
 
+    // ─── SWARM DELEGATION TOOLS ────────────────────────────────
+    if tool_type == "delegate" || tool_type == "research_swarm" {
+        let scope_clone = scope.clone();
+        let am = agent_manager.clone();
+        let caps = capabilities.clone();
+        let prov = provider.clone();
+        let mem = memory.clone();
+
+        if am.is_none() || caps.is_none() {
+            let handle = tokio::spawn(async move {
+                ToolResult {
+                    task_id,
+                    output: "Swarm delegation unavailable: AgentManager not initialized.".into(),
+                    tokens_used: 0,
+                    status: ToolStatus::Failed("No AgentManager".into()),
+                }
+            });
+            return Some(handle);
+        }
+
+        let am = am.unwrap();
+        let caps = caps.unwrap();
+        let tool_type_owned = tool_type.to_string();
+
+        let handle = tokio::spawn(async move {
+            if let Some(ref tx) = tx_clone {
+                let _ = tx.send(format!("🐝 Swarm {} executing...\n", tool_type_owned)).await;
+            }
+
+            // Parse tasks (pipe-separated) and strategy from description
+            let tasks_str = crate::agent::preferences::extract_tag(&desc, "tasks:")
+                .or_else(|| crate::agent::preferences::extract_tag(&desc, "topics:"))
+                .unwrap_or_else(|| desc.clone());
+            let strategy_str = crate::agent::preferences::extract_tag(&desc, "strategy:")
+                .unwrap_or_else(|| "parallel".into());
+            let goal = crate::agent::preferences::extract_tag(&desc, "goal:")
+                .unwrap_or_else(|| desc.clone());
+
+            let task_list: Vec<String> = if tasks_str.contains('|') {
+                tasks_str.split('|').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+            } else if tasks_str != desc {
+                vec![tasks_str]
+            } else {
+                vec![goal]
+            };
+
+            if task_list.is_empty() {
+                return ToolResult {
+                    task_id,
+                    output: "Error: No tasks provided for delegation.".into(),
+                    tokens_used: 0,
+                    status: ToolStatus::Failed("No tasks".into()),
+                };
+            }
+
+            let strategy = crate::agent::sub_agent::SpawnStrategy::from_str(&strategy_str);
+            let user_id = match &scope_clone {
+                Scope::Public { user_id, .. } => user_id.clone(),
+                Scope::Private { user_id } => user_id.clone(),
+            };
+
+            let specs: Vec<crate::agent::sub_agent::SubAgentSpec> = task_list.iter().map(|t| {
+                crate::agent::sub_agent::SubAgentSpec {
+                    task: t.clone(),
+                    max_turns: 8,
+                    timeout_secs: 300,
+                    scope: scope_clone.clone(),
+                    user_id: user_id.clone(),
+                }
+            }).collect();
+
+            let tx_for_spawn = tx_clone.clone().unwrap_or_else(|| {
+                let (tx, _) = tokio::sync::mpsc::channel(1);
+                tx
+            });
+
+            let spawn_result = crate::agent::spawner::spawn_agents(
+                specs, strategy, prov, mem, tx_for_spawn, am, caps,
+            ).await;
+
+            // Format results for the Queen
+            let mut output = format!(
+                "Swarm complete: {}/{} agents succeeded in {:.1}s\n\n",
+                spawn_result.successful, spawn_result.total_agents,
+                spawn_result.total_duration_ms as f64 / 1000.0
+            );
+
+            if let Some(ref synthesis) = spawn_result.synthesis {
+                output.push_str(&format!("## Synthesized Result\n{}\n\n", synthesis));
+            } else {
+                for r in &spawn_result.results {
+                    let status_icon = match r.status {
+                        crate::agent::sub_agent::SubAgentStatus::Completed => "✅",
+                        crate::agent::sub_agent::SubAgentStatus::Failed(_) => "❌",
+                        crate::agent::sub_agent::SubAgentStatus::TimedOut => "⏱️",
+                        crate::agent::sub_agent::SubAgentStatus::Cancelled => "⏹️",
+                    };
+                    output.push_str(&format!(
+                        "{} **[{}]** ({} turns, {:.1}s):\n{}\n\n",
+                        status_icon, r.agent_id, r.turns_used,
+                        r.duration_ms as f64 / 1000.0, r.output
+                    ));
+                }
+            }
+
+            let status = if spawn_result.successful > 0 {
+                ToolStatus::Success
+            } else {
+                ToolStatus::Failed("All agents failed".into())
+            };
+
+            ToolResult {
+                task_id,
+                output,
+                tokens_used: 0,
+                status,
+            }
+        });
+        return Some(handle);
+    }
+
+    // Self-moderation & self-protection tools (all 10 route through moderation_tool::execute_moderation)
+    let moderation_tools = [
+        "refuse_request", "disengage", "mute_user", "set_boundary", "block_topic",
+        "escalate_to_admin", "report_concern", "rate_limit_user", "request_consent", "wellbeing_status"
+    ];
+    if moderation_tools.contains(&tool_type) {
+        let tool_type_clone = tool_type.to_string();
+        let scope_clone = scope.clone();
+        let handle = tokio::spawn(async move {
+            crate::agent::moderation_tool::execute_moderation(
+                &tool_type_clone, task_id, desc, &scope_clone, memory, tx_clone,
+            ).await
+        });
+        return Some(handle);
+    }
+
+    tracing::warn!("[AGENT:Dispatch] Unknown tool_type='{}' task_id='{}' — no handler found", tool_type, task_id);
     None
 }
 
@@ -390,7 +550,7 @@ mod tests {
         
         use crate::providers::MockProvider;
         let mut mock_provider = MockProvider::new();
-        mock_provider.expect_generate().returning(|_, _, _, _, _| Ok("Mock".to_string()));
+        mock_provider.expect_generate().returning(|_, _, _, _, _, _| Ok("Mock".to_string()));
         let provider: Arc<dyn Provider> = Arc::new(mock_provider);
         
         let tools = vec![
@@ -401,7 +561,12 @@ mod tests {
             "review_reasoning", "read_attachment", "manage_user_preferences",
             "manage_skill", "manage_routine", "manage_lessons", "search_timeline",
             "manage_scratchpad", "operate_synaptic_graph", "read_core_memory",
-            "synthesizer"
+            "synthesizer", "download", "list_cached_images",
+            // Swarm delegation tools
+            "delegate", "research_swarm",
+            // Self-moderation tools
+            "refuse_request", "disengage", "mute_user", "set_boundary", "block_topic",
+            "escalate_to_admin", "report_concern", "rate_limit_user", "request_consent", "wellbeing_status",
         ];
         
         for t in tools {
@@ -420,6 +585,9 @@ mod tests {
                 None,
                 mem.clone(),
                 provider.clone(),
+                None,
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -446,6 +614,9 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
+            None,
         );
         assert!(dup_handle.is_some());
         
@@ -464,6 +635,9 @@ mod tests {
             None,
             mem.clone(),
             provider.clone(),
+            None,
+            None,
+            None,
             None,
             None,
             None,

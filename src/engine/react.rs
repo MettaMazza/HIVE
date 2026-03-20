@@ -17,13 +17,15 @@ pub async fn execute_react_loop(
     history: &[Event],
     telemetry_tx: mpsc::Sender<String>,
     platforms: &HashMap<String, Box<dyn crate::platforms::Platform>>,
-    agent: &AgentManager,
+    agent: &Arc<AgentManager>,
     provider: Arc<dyn Provider>,
     memory: Arc<MemoryStore>,
     drives: Arc<DriveSystem>,
     capabilities: Arc<AgentCapabilities>,
     teacher: Arc<Teacher>,
 ) -> (String, usize, Vec<(String, String)>) {
+    tracing::debug!("[REACT] ▶ Starting ReAct loop for author='{}' platform='{}' history_len={}",
+        event.author_name, event.platform, history.len());
     let tool_list = agent.get_available_tools_text_for_platform(&event.platform);
     
     // Update and inject homeostatic drive state as ambient context
@@ -45,11 +47,14 @@ pub async fn execute_react_loop(
     let mut observer_attempts = 0;
     let mut all_rejections: Vec<(String, String, String)> = vec![];
     let mut completed_tools: Vec<(String, String)> = vec![]; // (task_id, tool_type)
+    let mut tool_outputs: HashMap<String, String> = HashMap::new(); // task_id -> raw output for source forwarding
     let mut consecutive_json_failures: u8 = 0;
 
     // The inner ReAct loop
     loop {
         current_turn += 1;
+        tracing::debug!("[REACT] === Turn {} === (observer_attempts={}, completed_tools={})",
+            current_turn, observer_attempts, completed_tools.len());
 
         if current_turn > 1 && current_turn % checkpoint_interval == 1 {
             let platform_name = event.platform.split(':').next().unwrap_or("");
@@ -73,7 +78,7 @@ pub async fn execute_react_loop(
 
         context_from_agent.push_str(&format!("\n\nReAct Loop Turn {}\n", current_turn));
         
-        let candidate_text = match provider.generate(&base_system_prompt, history, event, &context_from_agent, if current_turn == 1 { Some(telemetry_tx.clone()) } else { None }).await {
+        let candidate_text = match provider.generate(&base_system_prompt, history, event, &context_from_agent, Some(telemetry_tx.clone()), None).await {
             Ok(text) => text,
             Err(e) => {
                 tracing::error!("[AGENT LOOP] Provider Error: {:?}", e);
@@ -87,6 +92,7 @@ pub async fn execute_react_loop(
         }
 
         let cleaned_json = crate::engine::repair::repair_planner_json(&candidate_text);
+        tracing::trace!("[REACT] Turn {} candidate_text len={}, cleaned_json len={}", current_turn, candidate_text.len(), cleaned_json.len());
         
         let plan = match serde_json::from_str::<crate::agent::planner::AgentPlan>(&cleaned_json) {
             Ok(p) => {
@@ -147,13 +153,31 @@ pub async fn execute_react_loop(
         let no_tools = plan.tasks.is_empty();
         
         for t in plan.tasks {
-            if t.tool_type == "reply_to_request" {
+            if t.tool_type == "reply_to_request" || t.tool_type == "refuse_request" || t.tool_type == "disengage" {
                 reply_task = Some(t);
             } else if t.tool_type == "emoji_react" {
                 react_tasks.push(t);
             } else {
                 standard_tasks.push(t);
             }
+        }
+
+        tracing::debug!("[REACT] Turn {} plan classified: standard={}, reply={}, react={}, no_tools={}",
+            current_turn, standard_tasks.len(), reply_task.is_some(), react_tasks.len(), no_tools);
+
+        // ─── TELEMETRY: Send thought + tool list after plan parsing ───────
+        {
+            let thought_str = plan.thought.as_deref().unwrap_or("(no thought)");
+            let tool_list: Vec<String> = standard_tasks.iter()
+                .map(|t| format!("🔧 {}", t.tool_type))
+                .chain(react_tasks.iter().map(|t| format!("⚡ {}", t.tool_type)))
+                .chain(reply_task.iter().map(|t| format!("💬 {}", t.tool_type)))
+                .collect();
+            let telemetry_msg = format!(
+                "💭 **Thinking:**\n{}\n\n**Plan (Turn {}):**\n{}",
+                thought_str, current_turn, tool_list.join("\n")
+            );
+            let _ = telemetry_tx.send(telemetry_msg).await;
         }
         
         if no_tools {
@@ -187,6 +211,8 @@ pub async fn execute_react_loop(
             }
         }
         
+        let mut standard_tool_count: usize = 0;
+
         if !standard_tasks.is_empty() {
             let task_meta: Vec<(String, String)> = standard_tasks.iter()
                 .map(|t| (t.task_id.clone(), t.tool_type.clone()))
@@ -203,6 +229,7 @@ pub async fn execute_react_loop(
             let is_admin = capabilities.admin_users.contains(&event.author_id);
             for task in standard_plan.tasks {
                 if capabilities.admin_tools.contains(&task.tool_type) && !is_admin {
+                    tracing::warn!("[REACT] 🛡️ SECURITY: Non-admin tried admin tool '{}' (user='{}')", task.tool_type, event.author_id);
                     failed_admin_attempts.push(crate::models::tool::ToolResult {
                         task_id: task.task_id.clone(),
                         output: format!("SECURITY VIOLATION: Tool {} requires [ADMIN ONLY] privileges. Your request is denied.", task.tool_type),
@@ -220,45 +247,139 @@ pub async fn execute_react_loop(
             };
 
             let tx_clone = telemetry_tx.clone();
-            let mut tool_results = agent.execute_plan(safe_plan, &event.content, event.scope.clone(), Some(tx_clone)).await;
+            let mut tool_results = agent.execute_plan(safe_plan, &event.content, event.scope.clone(), Some(tx_clone), Some(agent.clone()), Some(capabilities.clone())).await;
             
             // Inject the failed security tools back into the results so the agent sees them fail
             tool_results.extend(failed_admin_attempts);
             
             let result_count = tool_results.len();
+            standard_tool_count = result_count;
             for res in &tool_results {
-                context_from_agent.push_str(&format!("Turn {} - Task {}: {:?}\nOutput: {}\n\n", current_turn, res.task_id, res.status, res.output));
+                // Store FULL raw output in the HashMap for reliable source forwarding.
+                // This is the authoritative copy used for verbatim delivery to the user.
+                if matches!(res.status, crate::models::tool::ToolStatus::Success) {
+                    tool_outputs.insert(res.task_id.clone(), res.output.clone());
+                }
+
+                // For LLM context, cap large outputs to prevent prompt bloat.
+                // The LLM only needs enough to reason about the result, not the
+                // full content (which may be 55KB+ for read_attachment).
+                const LLM_CONTEXT_CAP: usize = 8000;
+                let display_output = if res.output.len() > LLM_CONTEXT_CAP {
+                    format!(
+                        "{}...\n\n[Full output is {} bytes — stored for verbatim forwarding via source field or auto-injection. Do NOT attempt to reproduce this content yourself.]",
+                        &res.output[..LLM_CONTEXT_CAP], res.output.len()
+                    )
+                } else {
+                    res.output.clone()
+                };
+
+                // ─── CONTEXT SANITIZER: Strip internal workflow instructions ────
+                // Tool outputs (especially file_writer) embed agent-only workflow
+                // directives like [VISUAL_QA], "IMPORTANT: Look at the preview...",
+                // and "Once satisfied, include this EXACT tag...". If these persist
+                // in context, the model copies them into its reply_to_request,
+                // the Observer catches them as `unparsed_tools`, blocks the reply,
+                // and the model rewrites — but the original instructions are STILL
+                // in context, causing an infinite block loop.
+                //
+                // Solution: strip workflow meta-instructions from the display output.
+                // Keep the actionable content (paths, ATTACH_FILE tags) but remove
+                // the directives that are only useful for the model's next planning step.
+                let display_output = {
+                    let mut sanitized = display_output;
+                    // Strip VISUAL_QA links and surrounding instructions
+                    if let Some(vqa_start) = sanitized.find("[VISUAL_QA]") {
+                        // Find the end of the VISUAL_QA instruction block
+                        // (ends at the [ATTACH_FILE] line or end of string)
+                        if let Some(attach_pos) = sanitized[vqa_start..].find("[ATTACH_FILE]") {
+                            // Keep the ATTACH_FILE tag, strip everything between VISUAL_QA start and ATTACH_FILE
+                            let before = sanitized[..vqa_start].trim_end().to_string();
+                            let after = sanitized[vqa_start + attach_pos..].to_string();
+                            sanitized = format!("{}\n{}", before, after);
+                        } else {
+                            // No ATTACH_FILE found, just strip from VISUAL_QA to end
+                            sanitized = sanitized[..vqa_start].trim_end().to_string();
+                        }
+                    }
+                    // Strip standalone "IMPORTANT: Look at the preview..." directives
+                    // and "Once satisfied, include this EXACT tag" instructions
+                    let lines: Vec<&str> = sanitized.lines().collect();
+                    let filtered: Vec<&str> = lines.into_iter().filter(|line| {
+                        let trimmed = line.trim();
+                        !trimmed.starts_with("IMPORTANT: Look at the preview")
+                            && !trimmed.starts_with("Once satisfied, include this EXACT tag")
+                            && !trimmed.starts_with("If anything looks wrong, use edit_section")
+                    }).collect();
+                    filtered.join("\n")
+                };
+
+                context_from_agent.push_str(&format!("Turn {} - Task {}: {:?}\nOutput: {}\n\n", current_turn, res.task_id, res.status, display_output));
             }
             completed_tools.extend(task_meta);
+
+            // ─── TELEMETRY: Send tool completion status ─────────────────
+            {
+                let tool_status: Vec<String> = tool_results.iter()
+                    .map(|r| format!("✅ {} — {:?}", r.task_id, r.status))
+                    .collect();
+                let msg = format!("**Turn {} — {} tools executed:**\n{}",
+                    current_turn, result_count, tool_status.join("\n"));
+                let _ = telemetry_tx.send(msg).await;
+            }
+
             tracing::info!("[AGENT LOOP] 🔄 Turn {} executed {} tools. Looping...", current_turn, result_count);
         }
         
         if let Some(reply) = reply_task {
+            // DEFER RULE: If standard tools also executed on this same turn,
+            // the reply was written BEFORE tool results were available. Discard
+            // it and continue the loop so the LLM can write a reply that
+            // actually references the tool output.
+            if standard_tool_count > 0 {
+                tracing::info!("[REACT] ⏳ Deferring reply — {} standard tools also ran this turn. Will re-prompt with tool results.", standard_tool_count);
+                context_from_agent.push_str(&format!(
+                    "Turn {} - [SYSTEM: Your reply_to_request was deferred because tools also executed this turn. \
+                    You now have the tool results above. Write a NEW reply_to_request that incorporates these results.]\n\n",
+                    current_turn
+                ));
+                continue;
+            }
+
             observer_attempts += 1;
             let mut candidate_answer = reply.description;
 
-            // OUTPUT FORWARDING: If the reply references a source task_id,
-            // find that task's raw output in the execution timeline and append it.
+            // OUTPUT FORWARDING — Phase 1: Explicit source reference from LLM
             if let Some(ref source_id) = reply.source {
-                // Search context_from_agent for the referenced task's output block
-                let search_prefix = format!("Task {}: Success", source_id);
-                let output_prefix = "Output: ";
-                let mut found_output = None;
-                
-                for line_block in context_from_agent.split("\n\n") {
-                    if line_block.contains(&search_prefix) {
-                        // Extract the "Output: ..." portion
-                        if let Some(output_start) = line_block.find(output_prefix) {
-                            found_output = Some(line_block[output_start + output_prefix.len()..].to_string());
-                        }
-                    }
-                }
-                
-                if let Some(raw_output) = found_output {
+                if let Some(raw_output) = tool_outputs.get(source_id) {
                     candidate_answer = format!("{}\n\n{}", candidate_answer.trim(), raw_output.trim());
-                    tracing::info!("[OUTPUT FORWARD] Appended raw output from task '{}' to reply.", source_id);
+                    tracing::info!("[OUTPUT FORWARD] Appended raw output from task '{}' ({} bytes) to reply.", source_id, raw_output.len());
                 } else {
-                    tracing::warn!("[OUTPUT FORWARD] Source task '{}' not found in timeline. Delivering description only.", source_id);
+                    tracing::warn!("[OUTPUT FORWARD] Source task '{}' not found in tool_outputs map. Delivering description only.", source_id);
+                }
+            }
+
+            // OUTPUT FORWARDING — Phase 2: Automatic injection safety net.
+            // ONLY for verbatim-forwarding tools (read_attachment, download).
+            // NEVER auto-inject web_search, researcher, codebase_read etc. — those
+            // contain raw internal results that should never be shown to users.
+            if reply.source.is_none() && candidate_answer.len() < 2000 {
+                let verbatim_tools = ["read_attachment", "download"];
+                if let Some((_largest_id, largest_output)) = tool_outputs.iter()
+                    .filter(|(id, _)| {
+                        // Only consider outputs from verbatim-safe tools
+                        completed_tools.iter().any(|(tid, ttype)| {
+                            tid == *id && verbatim_tools.contains(&ttype.as_str())
+                        })
+                    })
+                    .max_by_key(|(_, v)| v.len())
+                    .filter(|(_, v)| v.len() > 2000)
+                {
+                    tracing::info!(
+                        "[OUTPUT FORWARD] 🛡️ Auto-injecting verbatim tool output ({} bytes) — LLM reply was only {} chars.",
+                        largest_output.len(), candidate_answer.len()
+                    );
+                    candidate_answer = format!("{}\n\n{}", candidate_answer.trim(), largest_output.trim());
                 }
             }
 
@@ -300,7 +421,26 @@ pub async fn execute_react_loop(
                 ));
                 tracing::warn!("[OBSERVER BLOCKED]\nCategory: {}\nWhat Worked: {}\nWhat Went Wrong: {}\nHow to Fix: {}", audit_result.failure_category, audit_result.what_worked, audit_result.what_went_wrong, audit_result.how_to_fix);
                 
-                let guidance = format!("[INTERNAL AUDIT: INVISIBLE TO USER] CORRECTION REQUIRED FOR YOUR REPLY\nFAILURE CATEGORY: {}\nWHAT WORKED: {}\nWHAT WENT WRONG: {}\nHOW TO FIX: {}\n\n", audit_result.failure_category, audit_result.what_worked, audit_result.what_went_wrong, audit_result.how_to_fix);
+                // Include a truncated copy of the rejected candidate so the LLM
+                // knows exactly what it wrote that was wrong. Without this, it just
+                // gets told "fix it" but can't see the specific problem.
+                let rejected_preview = if candidate_answer.len() > 500 {
+                    format!("{}...[truncated]", &candidate_answer[..500])
+                } else {
+                    candidate_answer.clone()
+                };
+                let guidance = format!(
+                    "[INTERNAL AUDIT: INVISIBLE TO USER] CORRECTION REQUIRED FOR YOUR REPLY\n\
+                    FAILURE CATEGORY: {}\n\
+                    WHAT WORKED: {}\n\
+                    WHAT WENT WRONG: {}\n\
+                    HOW TO FIX: {}\n\
+                    YOUR REJECTED OUTPUT WAS:\n---\n{}\n---\n\
+                    You MUST rewrite your reply_to_request to fix the above issue. Do NOT include raw tool outputs, search results, or internal data in your reply.\n\n",
+                    audit_result.failure_category, audit_result.what_worked,
+                    audit_result.what_went_wrong, audit_result.how_to_fix,
+                    rejected_preview
+                );
                 context_from_agent.push_str(&guidance);
                 
                 let msg = format!("\n🛑 **[OBSERVER BLOCKED GENERATION]**\n**Category:** {}\n**Violation:** {}\n**Fixing...**", audit_result.failure_category, audit_result.what_went_wrong);

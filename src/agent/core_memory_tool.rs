@@ -16,6 +16,7 @@ pub async fn execute_read_core_memory(
     if let Some(ref tx) = telemetry_tx {
         let _ = tx.send("⏱️ Core Memory Drone executing...\n".to_string()).await;
     }
+    tracing::debug!("[AGENT:core_memory] ▶ task_id={}", task_id);
 
     let action = extract_tag(&description, "action:").unwrap_or_default().to_lowercase();
 

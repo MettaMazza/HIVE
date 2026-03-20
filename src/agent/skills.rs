@@ -24,6 +24,7 @@ pub async fn execute_manage_skill(
     if let Some(ref tx) = telemetry_tx {
         let _ = tx.send("⚙️ Manage Skill Drone executing...\n".to_string()).await;
     }
+    tracing::debug!("[AGENT:skills] ▶ task_id={} is_admin={}", task_id, is_admin);
 
     if !is_admin {
         return ToolResult { 
@@ -145,6 +146,7 @@ pub async fn execute_manage_skill(
         _ => format!("Unknown action '{}'. Use create, list, or execute.", action)
     };
 
+    tracing::debug!("[AGENT:skills] ◀ task_id={} action='{}' output_len={}", task_id, action, output.len());
     ToolResult { task_id, output, tokens_used: 0, status: ToolStatus::Success }
 }
 

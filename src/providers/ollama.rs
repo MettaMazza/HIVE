@@ -4,8 +4,67 @@ use serde::{Deserialize, Serialize};
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 
+
 use crate::models::message::Event;
 use super::{Provider, ProviderError};
+
+// ─── VISION CACHE ────────────────────────────────────────────────
+// Caches user-uploaded image bytes to disk so that images remain
+// visible in the rolling context window on subsequent turns.
+// Without this, history messages get `images: None` and the model
+// loses the ability to "see" images from earlier in the conversation.
+
+mod vision_cache {
+    use std::path::PathBuf;
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    fn cache_dir() -> PathBuf {
+        let current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        current_dir.join("memory/cache/vision")
+    }
+
+    fn url_hash(url: &str) -> String {
+        let mut hasher = DefaultHasher::new();
+        url.hash(&mut hasher);
+        format!("{:016x}", hasher.finish())
+    }
+
+    /// Save base64-encoded image bytes to the vision cache, keyed by URL.
+    pub async fn save(url: &str, b64_data: &str) {
+        let dir = cache_dir();
+        if tokio::fs::create_dir_all(&dir).await.is_err() {
+            return;
+        }
+        let path = dir.join(format!("{}.b64", url_hash(url)));
+        let _ = tokio::fs::write(&path, b64_data.as_bytes()).await;
+    }
+
+    /// Load base64-encoded image bytes from the vision cache, if available.
+    pub async fn load(url: &str) -> Option<String> {
+        let path = cache_dir().join(format!("{}.b64", url_hash(url)));
+        tokio::fs::read_to_string(&path).await.ok()
+    }
+
+    /// Extract image URLs from a message content string containing [USER_ATTACHMENT] tags.
+    pub fn extract_image_urls(content: &str) -> Vec<String> {
+        let mut urls = Vec::new();
+        for block in content.split("[USER_ATTACHMENT:").skip(1) {
+            if let Some(end_idx) = block.find(']') {
+                let tag_content = &block[..end_idx];
+                if tag_content.contains("type: image/") {
+                    if let Some(url_start) = tag_content.find("url: ") {
+                        let url = tag_content[url_start + 5..].trim().to_string();
+                        if !url.is_empty() {
+                            urls.push(url);
+                        }
+                    }
+                }
+            }
+        }
+        urls
+    }
+}
 
 #[derive(Serialize, Deserialize, Clone)]
 struct OllamaMessage {
@@ -16,10 +75,18 @@ struct OllamaMessage {
 }
 
 #[derive(Serialize)]
+struct OllamaOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    num_predict: Option<u32>,
+}
+
+#[derive(Serialize)]
 struct OllamaRequest {
     model: String,
     messages: Vec<OllamaMessage>,
     stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    options: Option<OllamaOptions>,
 }
 
 /// A provider implementation for a local Ollama instance.
@@ -33,7 +100,10 @@ impl OllamaProvider {
     /// Connects to a local Ollama instance defaulting to `qwen3.5:35b` as requested.
     pub fn new() -> Self {
         Self {
-            client: Client::new(),
+            client: Client::builder()
+                .timeout(std::time::Duration::from_secs(300))
+                .build()
+                .unwrap_or_else(|_| Client::new()),
             endpoint: "http://localhost:11434/api/chat".to_string(),
             model: "qwen3.5:35b".to_string(),
         }
@@ -53,6 +123,7 @@ impl Provider for OllamaProvider {
         new_event: &Event,
         agent_context: &str,
         telemetry_tx: Option<mpsc::Sender<String>>,
+        max_tokens: Option<u32>,
     ) -> Result<String, ProviderError> {
         let mut messages = Vec::new();
 
@@ -94,10 +165,24 @@ impl Provider for OllamaProvider {
                 content
             };
 
+            // ─── VISION CACHE: Attach cached image bytes for history messages ───
+            // Without this, history messages lose their image pixels and the model
+            // can only see the text tag `[USER_ATTACHMENT: ...]` — not the actual image.
+            let cached_images = {
+                let image_urls = vision_cache::extract_image_urls(&capped_content);
+                let mut cached = Vec::new();
+                for url in &image_urls {
+                    if let Some(b64) = vision_cache::load(url).await {
+                        cached.push(b64);
+                    }
+                }
+                if cached.is_empty() { None } else { Some(cached) }
+            };
+
             messages.push(OllamaMessage {
                 role: role.to_string(),
                 content: capped_content,
-                images: None,
+                images: cached_images,
             });
         }
 
@@ -115,23 +200,21 @@ impl Provider for OllamaProvider {
             final_user_message.push_str(agent_context);
         }
 
-        // Native Vision Support: Extract image URLs from [USER_ATTACHMENT] tags and fetch them
+        // Native Vision Support: Extract image URLs from [USER_ATTACHMENT] tags and fetch them.
+        // Images are also cached locally so they remain visible in history on subsequent turns.
         let mut b64_images = Vec::new();
-        let attachment_blocks: Vec<&str> = final_user_message.split("[USER_ATTACHMENT:").skip(1).collect();
-        for block in attachment_blocks {
-            if let Some(end_idx) = block.find(']') {
-                let tag_content = &block[..end_idx];
-                let is_image = tag_content.contains("type: image/");
-                if is_image {
-                    if let Some(url_start) = tag_content.find("url: ") {
-                        let url = tag_content[url_start + 5..].trim();
-                        if let Ok(resp) = self.client.get(url).send().await {
-                            if let Ok(bytes) = resp.bytes().await {
-                                use base64::{Engine as _, engine::general_purpose::STANDARD};
-                                b64_images.push(STANDARD.encode(&bytes));
-                            }
-                        }
-                    }
+        let image_urls = vision_cache::extract_image_urls(&final_user_message);
+        for url in &image_urls {
+            // Try cache first to avoid redundant CDN fetches
+            if let Some(cached_b64) = vision_cache::load(url).await {
+                b64_images.push(cached_b64);
+            } else if let Ok(resp) = self.client.get(url.as_str()).send().await {
+                if let Ok(bytes) = resp.bytes().await {
+                    use base64::{Engine as _, engine::general_purpose::STANDARD};
+                    let b64 = STANDARD.encode(&bytes);
+                    // Cache for future turns
+                    vision_cache::save(url, &b64).await;
+                    b64_images.push(b64);
                 }
             }
         }
@@ -152,6 +235,7 @@ impl Provider for OllamaProvider {
             model: self.model.clone(),
             messages,
             stream: true,
+            options: max_tokens.map(|n| OllamaOptions { num_predict: Some(n) }),
         };
 
         let mut res = self.client.post(&self.endpoint)
@@ -191,6 +275,9 @@ impl Provider for OllamaProvider {
                     if let Some(msg) = parsed.get("message") {
                         if let Some(content) = msg.get("content").and_then(|v| v.as_str()) {
                             full_response.push_str(content);
+                            // NOTE: .content is the JSON plan — do NOT send to telemetry.
+                            // Only .thinking tokens are streamed to telemetry.
+                            // Tool results are batch-sent by each tool's own telemetry_tx.
                         }
 
                         // Some models stream reasoning separately in a 'thinking' key
@@ -274,7 +361,7 @@ mod tests {
             author_id: "test".into(),
             content: "What's up?".into(),
         };
-        let res = provider.generate("sys", &history, &new_event, "", None).await.unwrap();
+        let res = provider.generate("sys", &history, &new_event, "", None, None).await.unwrap();
 
         assert_eq!(res, "Sure, here's your context.");
     }
@@ -298,7 +385,7 @@ mod tests {
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Bork?".into(),
-        }, "", None).await;
+        }, "", None, None).await;
 
         assert!(matches!(res, Err(ProviderError::ParseError(_))));
     }
@@ -314,7 +401,7 @@ mod tests {
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Bork?".into(),
-        }, "", None).await;
+        }, "", None, None).await;
 
         assert!(matches!(res, Err(ProviderError::ConnectionError(_))));
     }
@@ -337,7 +424,7 @@ mod tests {
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Bork?".into(),
-        }, "", None).await;
+        }, "", None, None).await;
 
         assert!(matches!(res, Err(ProviderError::ParseError(_))));
     }
@@ -361,7 +448,7 @@ mod tests {
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Bork?".into(),
-        }, "", None).await;
+        }, "", None, None).await;
 
         assert_eq!(res.unwrap(), "");
     }
@@ -388,7 +475,7 @@ mod tests {
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Bork?".into(),
-        }, "", Some(tx)).await;
+        }, "", Some(tx), None).await;
 
         let first_recv = rx.recv().await.unwrap();
         assert_eq!(first_recv, "I am thinking...");
@@ -415,7 +502,7 @@ mod tests {
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Bork?".into(),
-        }, "", None).await;
+        }, "", None, None).await;
 
         assert_eq!(res.unwrap(), "");
     }
@@ -440,7 +527,7 @@ mod tests {
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Stream?".into(),
-        }, "", None).await;
+        }, "", None, None).await;
 
         assert_eq!(res.unwrap(), "part1 part2 done!");
     }
@@ -463,7 +550,7 @@ mod tests {
             author_name: "Bob".into(),
             author_id: "test".into(),
             content: "Disconnect?".into(),
-        }, "", None).await;
+        }, "", None, None).await;
 
         assert!(res.is_err());
     }

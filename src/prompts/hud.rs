@@ -17,6 +17,7 @@ pub struct HudData {
     pub user_preferences: String,
     pub system_logs: String,
     pub recent_reasoning_traces: String,
+    pub swarm_status: String,
 }
 
 impl HudData {
@@ -195,8 +196,8 @@ impl HudData {
 
         let grid_guard = memory_store.turing_grid.lock().await;
         let tape_focus = format!(
-            "[Cognitive Integrity] Tape Focus: [{},{},{}] | Virtual Cell Count: {}",
-            grid_guard.cursor.0, grid_guard.cursor.1, grid_guard.cursor.2, grid_guard.cells.len()
+            "[Cognitive Integrity] Tape Focus: [{},{},{}] | Cells: {} | Labels: {}",
+            grid_guard.cursor.0, grid_guard.cursor.1, grid_guard.cursor.2, grid_guard.cells.len(), grid_guard.labels.len()
         );
 
         // Inject 20-line system log tail
@@ -260,6 +261,7 @@ impl HudData {
             user_preferences: prefs_text,
             system_logs,
             recent_reasoning_traces,
+            swarm_status: crate::agent::lifecycle::AgentLifecycle::get().format_hud_line(),
         }
     }
 }
@@ -312,6 +314,10 @@ pub fn format_hud(data: &HudData) -> String {
 
     sections.push("### Embodiment & Cognitive Architecture".to_string());
     sections.push(data.tape_focus.clone());
+    sections.push("".to_string());
+
+    sections.push("### Swarm Status".to_string());
+    sections.push(data.swarm_status.clone());
     sections.push("".to_string());
 
     sections.push("### Recent Reasoning Traces (Last 3)".to_string());
@@ -396,6 +402,7 @@ mod tests {
             user_preferences: String::new(),
             system_logs: String::new(),
             recent_reasoning_traces: String::new(),
+            swarm_status: String::new(),
         };
         
         let output = format_hud(&data);

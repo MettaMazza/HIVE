@@ -23,7 +23,7 @@ async fn test_agent_execute_plan_success() {
     let mut mock_provider = MockProvider::new();
     mock_provider
         .expect_generate()
-        .returning(|_, _, _, _, _| Ok("Tool output".to_string()));
+        .returning(|_, _, _, _, _, _| Ok("Tool output".to_string()));
 
     let memory = Arc::new(MemoryStore::default());
     let agent = AgentManager::new(Arc::new(mock_provider), memory);
@@ -41,7 +41,7 @@ async fn test_agent_execute_plan_success() {
         ],
     };
 
-    let results = agent.execute_plan(plan, "User said hello", crate::models::scope::Scope::Private { user_id: "test".into() }, None).await;
+    let results = agent.execute_plan(plan, "User said hello", crate::models::scope::Scope::Private { user_id: "test".into() }, None, None, None).await;
     
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].task_id, "1");
@@ -72,7 +72,7 @@ async fn test_agent_execute_plan_tool_not_found() {
         ],
     };
 
-    let results = agent.execute_plan(plan, "Context", crate::models::scope::Scope::Private { user_id: "test".into() }, None).await;
+    let results = agent.execute_plan(plan, "Context", crate::models::scope::Scope::Private { user_id: "test".into() }, None, None, None).await;
     
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].task_id, "2");
@@ -100,7 +100,7 @@ async fn test_agent_channel_reader() {
         ],
     };
 
-    let results = agent.execute_plan(plan, "Context", crate::models::scope::Scope::Private { user_id: "test".into() }, None).await;
+    let results = agent.execute_plan(plan, "Context", crate::models::scope::Scope::Private { user_id: "test".into() }, None, None, None).await;
     assert_eq!(results.len(), 1);
     // Without DISCORD_TOKEN env var, should fail gracefully
     let output = &results[0].output;
@@ -129,7 +129,7 @@ async fn test_agent_codebase_list() {
         ],
     };
 
-    let results = agent.execute_plan(plan, "Context", crate::models::scope::Scope::Private { user_id: "test".into() }, None).await;
+    let results = agent.execute_plan(plan, "Context", crate::models::scope::Scope::Private { user_id: "test".into() }, None, None, None).await;
     assert_eq!(results.len(), 1);
     assert!(results[0].output.contains("src/agent/mod.rs"));
 }
@@ -153,7 +153,7 @@ async fn test_agent_codebase_read() {
         ],
     };
 
-    let results = agent.execute_plan(plan, "Context", crate::models::scope::Scope::Private { user_id: "test".into() }, None).await;
+    let results = agent.execute_plan(plan, "Context", crate::models::scope::Scope::Private { user_id: "test".into() }, None, None, None).await;
     assert_eq!(results.len(), 1);
     assert!(results[0].output.contains("File: Cargo.toml"));
 }
@@ -177,7 +177,7 @@ async fn test_agent_codebase_read_security() {
         ],
     };
 
-    let results = agent.execute_plan(plan, "Context", crate::models::scope::Scope::Private { user_id: "test".into() }, None).await;
+    let results = agent.execute_plan(plan, "Context", crate::models::scope::Scope::Private { user_id: "test".into() }, None, None, None).await;
     assert_eq!(results.len(), 1);
     assert!(results[0].output.contains("Access Denied"));
 }
@@ -201,7 +201,7 @@ async fn test_agent_web_search() {
         ],
     };
 
-    let results = agent.execute_plan(plan, "Context", crate::models::scope::Scope::Private { user_id: "test".into() }, None).await;
+    let results = agent.execute_plan(plan, "Context", crate::models::scope::Scope::Private { user_id: "test".into() }, None, None, None).await;
     assert_eq!(results.len(), 1);
     assert!(
         results[0].output.contains("SEARCH RESULTS for") || 

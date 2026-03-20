@@ -9,6 +9,7 @@ pub async fn execute_autonomy_activity(
     if let Some(ref tx) = telemetry_tx {
         let _ = tx.send("🐝 Autonomy Activity Tool executing...\n".to_string()).await;
     }
+    tracing::debug!("[AGENT:autonomy] ▶ task_id={}", task_id);
 
     let path = std::path::Path::new("memory/autonomy/activity.jsonl");
     let content = match tokio::fs::read_to_string(path).await {

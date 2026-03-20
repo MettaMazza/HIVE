@@ -9,6 +9,7 @@ pub async fn execute_voice_synthesizer(
 ) -> ToolResult {
     let text = extract_tag(&description, "text:").unwrap_or_else(|| description.clone());
     
+    tracing::debug!("[AGENT:tts] ▶ task_id={}", task_id);
     // Attempt ONNX generation
     let mock_res = match crate::voice::kokoro::KokoroTTS::new().await {
         Ok(engine) => {
