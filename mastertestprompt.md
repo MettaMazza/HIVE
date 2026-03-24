@@ -47,12 +47,12 @@ The following prompt is designed to push the HIVE Agent stack to its absolute li
 > 30. Use `set_alarm` to schedule a temporal ping: `time:[+2m] message:[Gauntlet synchronization check.]`.
 > 31. Use `smart_home` to ping the local network: `device:[test_node] state:[ping]`.
 > 
-> Hierarchical Goal System**
-> 33. Use `manage_goals` to create a root goal: `action:[create] title:[Master Gauntlet Certification] description:[Complete all gauntlet turns and verify every subsystem] priority:[0.9] tags:[gauntlet,testing]`. Confirm the goal ID is returned.
-> 34. Use `manage_goals` to decompose the root goal: `action:[decompose] id:[THE_GOAL_ID_FROM_33]`. Confirm 2-5 subgoals are generated.
+> Hierarchical Goal System (IMPORTANT: Steps 34-37 depend on IDs returned by previous steps. Do NOT batch these — execute step 33 first, read the returned goal ID, THEN use that exact ID in steps 34-37 on subsequent turns.)**
+> 33. Use `manage_goals` to create a root goal: `action:[create] title:[Master Gauntlet Certification] description:[Complete all gauntlet turns and verify every subsystem] priority:[0.9] tags:[gauntlet,testing]`. Confirm the goal ID is returned. SAVE THIS ID for the next steps.
+> 34. Use `manage_goals` to decompose the root goal: `action:[decompose] id:[USE THE EXACT UUID RETURNED BY STEP 33]`. Confirm 2-5 subgoals are generated. Do NOT use a placeholder — use the actual UUID.
 > 35. Use `manage_goals` to list the full goal tree: `action:[list]`. Confirm the tree shows a root and subgoals with status and progress percentages.
-> 36. Use `manage_goals` to update a subgoal to completed: `action:[status] id:[PICK_A_SUBGOAL_ID] status:[completed]`. Confirm progress bubbles up to the root.
-> 37. Use `manage_goals` to add evidence to another subgoal: `action:[progress] id:[PICK_ANOTHER_SUBGOAL_ID] evidence:[Gauntlet turns 1-7 complete] delta:[0.5]`. Confirm progress is recorded.
+> 36. Use `manage_goals` to update a subgoal to completed: `action:[status] id:[USE AN ACTUAL SUBGOAL UUID FROM STEP 34] status:[completed]`. Confirm progress bubbles up to the root.
+> 37. Use `manage_goals` to add evidence to another subgoal: `action:[progress] id:[USE A DIFFERENT SUBGOAL UUID FROM STEP 34] evidence:[Gauntlet turns 1-7 complete] delta:[0.5]`. Confirm progress is recorded.
 > 38. Use `manage_goals` to prune completed subtrees: `action:[prune]`. Confirm completed goals are archived.
 > 
 > Tool Forge (Self-Extension)**
