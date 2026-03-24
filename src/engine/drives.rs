@@ -148,7 +148,7 @@ impl DriveSystem {
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_drive_defaults() {
         let ds = DriveSystem::new("/tmp/hive_test_drives");
         // Fresh load — if no file exists, starts at default
@@ -158,7 +158,7 @@ mod tests {
         assert!(s.system_health >= 0.0 && s.system_health <= 100.0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_modify_drive_clamp() {
         let ds = DriveSystem::new("/tmp/hive_test_drives2");
         // Set to known state
@@ -177,14 +177,14 @@ mod tests {
         assert_eq!(s2.social_connection, 100.0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_modify_unknown_drive() {
         let ds = DriveSystem::new("/tmp/hive_test_drives3");
         // Should not panic
         ds.modify_drive("nonexistent_drive", 10.0).await;
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_format_for_prompt() {
         let ds = DriveSystem::new("/tmp/hive_test_drives4");
         let s = ds.format_for_prompt().await;

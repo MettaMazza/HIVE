@@ -1,9 +1,12 @@
 use crate::models::tool::{ToolResult, ToolStatus};
 use tokio::sync::mpsc;
+use crate::engine::drives::DriveSystem;
+use std::sync::Arc;
 
 pub async fn execute_autonomy_activity(
     task_id: String,
     desc: String,
+    drives: Option<Arc<DriveSystem>>,
     telemetry_tx: Option<mpsc::Sender<String>>,
 ) -> ToolResult {
     if let Some(ref tx) = telemetry_tx {
@@ -75,11 +78,56 @@ pub async fn execute_autonomy_activity(
         let recent = &entries[start..];
         let output = recent.join("\n");
 
+        if recent.len() >= 3 && count > 0 && !desc.contains("action:[summary]") {
+            let last_3: Vec<&str> = recent[recent.len()-3..].iter().map(|s| *s).collect();
+            let mut summaries = vec![];
+            for l in &last_3 {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(l) {
+                    if let Some(s) = json.get("summary").and_then(|v| v.as_str()) {
+                        summaries.push(s.to_string());
+                    }
+                }
+            }
+            if summaries.len() == 3 && summaries[0] == summaries[1] && summaries[1] == summaries[2] {
+                if let Some(d) = drives {
+                    d.modify_drive("uncertainty", 20.0).await;
+                    if let Some(ref tx) = telemetry_tx {
+                        let _ = tx.send("🚨 LOOP DETECTED. Uncertainty spiked by +20.0 to break hallucination cycle.\n".to_string()).await;
+                    }
+                }
+            }
+        }
+
         ToolResult {
             task_id,
             output: if output.is_empty() { "No autonomous activity recorded yet.".to_string() } else { output },
             tokens_used: 0,
             status: ToolStatus::Success,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_no_file() {
+        // Run the tool
+        let r = execute_autonomy_activity("1".into(), "".into(), None, None).await;
+        assert_eq!(r.status, ToolStatus::Success);
+        
+        // If the file actually exists on the machine running tests, it will return lines instead of the empty message
+        if !std::path::Path::new("memory/autonomy/activity.jsonl").exists() {
+            assert!(r.output.contains("No autonomous activity"));
+        } else {
+            assert!(!r.output.is_empty());
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_summary_no_entries() {
+        let r = execute_autonomy_activity("1".into(), "action:[summary]".into(), None, None).await;
+        assert_eq!(r.status, ToolStatus::Success);
     }
 }

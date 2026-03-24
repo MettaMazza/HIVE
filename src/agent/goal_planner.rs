@@ -162,3 +162,96 @@ fn parse_evaluation(text: &str) -> (bool, f64, String) {
         Err(_) => (false, 0.0, "Parse error".into()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::goals::{GoalNode, GoalSource, GoalStatus};
+
+    #[test]
+    fn test_parse_subgoals_valid() {
+        let json = r#"[{"title":"Sub A","description":"Do A","priority":0.8},{"title":"Sub B","description":"Do B","priority":0.3}]"#;
+        let result = parse_subgoals(json);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].0, "Sub A");
+        assert_eq!(result[1].2, 0.3);
+    }
+
+    #[test]
+    fn test_parse_subgoals_with_preamble() {
+        let text = "Here are the subgoals:\n[{\"title\":\"X\",\"description\":\"Y\",\"priority\":0.5}]";
+        let result = parse_subgoals(text);
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_subgoals_empty() {
+        assert!(parse_subgoals("no json here").is_empty());
+        assert!(parse_subgoals("").is_empty());
+    }
+
+    #[test]
+    fn test_parse_subgoals_malformed() {
+        assert!(parse_subgoals("[{broken json}]").is_empty());
+    }
+
+    #[test]
+    fn test_parse_evaluation_valid() {
+        let json = r#"{"complete": true, "delta": 0.5, "evidence": "Task done"}"#;
+        let (complete, delta, evidence) = parse_evaluation(json);
+        assert!(complete);
+        assert_eq!(delta, 0.5);
+        assert_eq!(evidence, "Task done");
+    }
+
+    #[test]
+    fn test_parse_evaluation_with_preamble() {
+        let text = "Analysis:\n{\"complete\": false, \"delta\": 0.2, \"evidence\": \"partial\"}";
+        let (complete, delta, _) = parse_evaluation(text);
+        assert!(!complete);
+        assert_eq!(delta, 0.2);
+    }
+
+    #[test]
+    fn test_parse_evaluation_empty() {
+        let (c, d, e) = parse_evaluation("no json");
+        assert!(!c);
+        assert_eq!(d, 0.0);
+        assert_eq!(e, "Parse error");
+    }
+
+    #[test]
+    fn test_parse_evaluation_clamp() {
+        let json = r#"{"complete": false, "delta": 5.0, "evidence": "way too high"}"#;
+        let (_, delta, _) = parse_evaluation(json);
+        assert_eq!(delta, 1.0); // clamped
+    }
+
+    #[test]
+    fn test_select_goal_empty() {
+        assert!(select_goal(&[]).is_none());
+    }
+
+    #[test]
+    fn test_select_goal_priority_ordering() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64();
+        let goals = vec![
+            GoalNode {
+                id: "low".into(), title: "Low".into(), description: "".into(),
+                priority: 0.2, progress: 0.0, status: GoalStatus::Active,
+                source: GoalSource::User, tags: vec![], evidence: vec![],
+                parent_id: None, children: vec![], dependencies: vec![],
+                deadline: None, depth: 0, created_at: now, updated_at: now,
+            },
+            GoalNode {
+                id: "high".into(), title: "High".into(), description: "".into(),
+                priority: 0.9, progress: 0.0, status: GoalStatus::Active,
+                source: GoalSource::User, tags: vec![], evidence: vec![],
+                parent_id: None, children: vec![], dependencies: vec![],
+                deadline: None, depth: 0, created_at: now, updated_at: now,
+            },
+        ];
+        assert_eq!(select_goal(&goals), Some("high".into()));
+    }
+}

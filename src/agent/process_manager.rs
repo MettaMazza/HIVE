@@ -66,13 +66,21 @@ pub async fn execute_process_manager(
                 return ToolResult { task_id, output: "Error: Missing command:[...]".into(), tokens_used: 0, status: ToolStatus::Failed("Missing params".into()) };
             }
 
+            let restart = extract_tag(&description, "restart:").unwrap_or_default() == "true";
+
             let timestamp = chrono::Utc::now().timestamp();
             let daemon_dir = std::path::Path::new("memory/daemons");
             let _ = tokio::fs::create_dir_all(&daemon_dir).await;
             
             let log_file = format!("memory/daemons/daemon_{}.log", timestamp);
             
-            let bg_cmd = format!("nohup bash -c '{}' > {} 2>&1 & echo \"---PID---$!\"", cmd.replace('\'', "'\\''"), log_file);
+            let final_cmd = if restart {
+                format!("while true; do {}; echo \"[HIVE] DAEMON CRASH DETECTED. AUTO-RESTARTING...\"; sleep 2; done", cmd)
+            } else {
+                cmd.clone()
+            };
+
+            let bg_cmd = format!("nohup bash -c '{}' > {} 2>&1 & echo \"---PID---$!\"", final_cmd.replace('\'', "'\\''"), log_file);
             let child = tokio::process::Command::new("bash")
                 .arg("-c")
                 .arg(&bg_cmd)

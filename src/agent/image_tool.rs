@@ -8,7 +8,10 @@ pub async fn execute_generate_image(
     telemetry_tx: Option<mpsc::Sender<String>>,
 ) -> ToolResult {
     let prompt = extract_tag(&description, "prompt:").unwrap_or_else(|| description.clone());
-    tracing::debug!("[AGENT:image] ▶ task_id={} prompt_len={}", task_id, prompt.len());
+    let width = extract_tag(&description, "width:").unwrap_or_else(|| "1024".to_string());
+    let height = extract_tag(&description, "height:").unwrap_or_else(|| "1024".to_string());
+    let style = extract_tag(&description, "style:");
+    tracing::debug!("[AGENT:image] ▶ task_id={} prompt_len={} size={}x{}", task_id, prompt.len(), width, height);
 
     // Announce telemetry
     if let Some(tx) = &telemetry_tx {
@@ -48,10 +51,13 @@ pub async fn execute_generate_image(
     let current_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let cache_dir = current_dir.join(cache_dir_env);
     let _ = tokio::fs::create_dir_all(&cache_dir).await;
-    let output_path = cache_dir.join(format!("flux-{}.png", timestamp));
+    let output_path = cache_dir.join(format!("flux-{}_w{}_h{}.png", timestamp, width, height));
     let output_str = output_path.to_string_lossy().to_string();
 
-    cmd.arg(script_path).arg(&prompt).arg(&output_str);
+    cmd.arg(script_path).arg(&prompt).arg(&output_str).arg("--width").arg(&width).arg("--height").arg(&height);
+    if let Some(s) = style {
+        cmd.arg("--style").arg(&s);
+    }
 
     let output_res = cmd.output().await;
 

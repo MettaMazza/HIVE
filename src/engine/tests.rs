@@ -5,7 +5,7 @@
     use crate::platforms::Platform;
     use crate::models::message::Response;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_engine_trigger_autosave() {
         let mut mock_provider = MockProvider::new();
         mock_provider
@@ -55,7 +55,7 @@
         async fn send(&self, _: Response) -> Result<(), crate::platforms::PlatformError> { Ok(()) }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_engine_routing_with_mock_provider() {
         // Setup the mock provider
         let mut mock_provider = MockProvider::new();
@@ -98,7 +98,7 @@
         // And mockall enforces our expectations automatically.
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_engine_handles_provider_error() {
         use crate::providers::MockProvider;
         use crate::engine::tests::DummyPlatform;
@@ -134,7 +134,7 @@
         sleep(Duration::from_millis(50)).await;
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_engine_platform_start_and_send_failure() {
         use crate::providers::MockProvider;
         use tokio::time::{sleep, Duration};
@@ -176,7 +176,7 @@
         sleep(Duration::from_millis(50)).await; // hits send error covering line 111
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_engine_unknown_platform() {
         use crate::providers::MockProvider;
         use crate::engine::tests::DummyPlatform;
@@ -217,7 +217,7 @@
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_engine_telemetry_streaming() {
         use crate::providers::MockProvider;
         use tokio::time::{sleep, Duration};
@@ -266,7 +266,7 @@
         sleep(Duration::from_millis(2000)).await;
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_engine_telemetry_debounce_fires() {
         // Test that the debounce timeout actually flushes thinking text
         use crate::providers::MockProvider;
@@ -405,7 +405,7 @@ string ending with an unescaped quote \" and an emoji 😊.",
         assert!(result.contains("\\n"), "Newlines were not escaped");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_engine_observer_retry_loop() {
         use crate::providers::MockProvider;
         use crate::engine::tests::DummyPlatform;
@@ -457,7 +457,7 @@ string ending with an unescaped quote \" and an emoji 😊.",
         assert_eq!(call_count.load(Ordering::SeqCst), 2);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_engine_agent_execution() {
         use crate::providers::MockProvider;
         use crate::engine::tests::DummyPlatform;
@@ -525,7 +525,7 @@ string ending with an unescaped quote \" and an emoji 😊.",
         sleep(Duration::from_millis(150)).await;
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_engine_agent_invalid_json() {
         // This test ensures the `Err` and fallback parsing branches are hit
         // when the planner outputs garbled JSON or the Provider outright fails during planning.
@@ -585,7 +585,7 @@ string ending with an unescaped quote \" and an emoji 😊.",
         sleep(Duration::from_millis(150)).await;
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_engine_clean_admin() {
         use crate::providers::MockProvider;
         use crate::engine::tests::DummyPlatform;
@@ -645,7 +645,7 @@ string ending with an unescaped quote \" and an emoji 😊.",
         assert_eq!(mem_ref.get_working_history(&pub_scope).await.len(), 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_engine_clean_non_admin() {
         use crate::providers::MockProvider;
         use crate::engine::tests::DummyPlatform;
@@ -705,7 +705,7 @@ string ending with an unescaped quote \" and an emoji 😊.",
         assert_eq!(mem_ref.get_working_history(&pub_scope).await.len(), 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_engine_loop_max_turns_exhausted() {
         use crate::providers::MockProvider;
         use crate::engine::tests::DummyPlatform;
@@ -753,7 +753,7 @@ string ending with an unescaped quote \" and an emoji 😊.",
         assert!(last_msg.content.contains("exhausted max turns (15)"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_engine_provider_error() {
         use crate::providers::{MockProvider, ProviderError};
         use crate::engine::tests::DummyPlatform;
@@ -802,7 +802,7 @@ string ending with an unescaped quote \" and an emoji 😊.",
         assert!(last_msg.content.starts_with("*System Error:*"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_engine_observer_rejection() {
         use crate::providers::MockProvider;
         use crate::engine::tests::DummyPlatform;
@@ -849,7 +849,7 @@ string ending with an unescaped quote \" and an emoji 😊.",
         sleep(Duration::from_millis(1500)).await;
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_engine_teaching_mode() {
         use crate::providers::MockProvider;
         use crate::engine::tests::DummyPlatform;

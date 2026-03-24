@@ -14,11 +14,13 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.MainActivity
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.R
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.settings.SettingsManager
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.stream.StreamingMode
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import java.util.Timer
 import java.util.TimerTask
 
@@ -52,7 +54,9 @@ class HiveBackgroundService : Service() {
     override fun onBind(intent: Intent?): IBinder = binder
 
     // Core services
-    val hiveService = HiveLiveService()
+    private var remoteService: HiveLiveService? = null
+    private var localService: LocalInferenceService? = null
+    
     val audioManager = AudioManager()
     private var wakeWordDetector: WakeWordDetector? = null
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -96,7 +100,9 @@ class HiveBackgroundService : Service() {
     fun startSession() {
         if (_sessionState.value.isActive) return
 
-        if (!HiveConfig.isConfigured) {
+        val isWorker = SettingsManager.isWorkerMode
+        
+        if (!isWorker && !HiveConfig.isConfigured) {
             _sessionState.value = _sessionState.value.copy(
                 errorMessage = "HIVE server not configured. Open Settings and add your server URL and auth token."
             )
@@ -104,117 +110,130 @@ class HiveBackgroundService : Service() {
         }
 
         // Start as foreground service
-        startForeground(NOTIFICATION_ID, buildNotification("Connecting to Apis..."))
+        val statusMsg = if (isWorker) "Apis (Local Worker) is ready" else "Connecting to Apis (Queen)..."
+        startForeground(NOTIFICATION_ID, buildNotification(statusMsg))
         _sessionState.value = _sessionState.value.copy(isActive = true)
 
-        // Wire audio: mic → Apis
-        // Audio is ALWAYS sent so VAD can detect end-of-speech for wake word checks.
-        // The wakeWordMode flag on hiveService makes VAD send "mode": "wake_word".
-        audioManager.onAudioCaptured = lambda@{ data ->
-            // Phone mode: mute mic while Apis speaks to prevent echo
-            if (streamingMode == StreamingMode.PHONE && hiveService.isModelSpeaking.value) return@lambda
-            hiveService.sendAudio(data)
-        }
-
-        // Wire audio: Apis → speaker
-        hiveService.onAudioReceived = { data ->
-            audioManager.playAudio(data)
-        }
-
-        hiveService.onInterrupted = {
-            audioManager.stopPlayback()
-        }
-
-        hiveService.onTurnComplete = {
-            _sessionState.value = _sessionState.value.copy(userTranscript = "")
-            // Start 15s idle timer after Apis finishes speaking
-            startIdleTimer()
-        }
-
-        hiveService.onInputTranscription = { text ->
-            _sessionState.value = _sessionState.value.copy(
-                userTranscript = _sessionState.value.userTranscript + text,
-                aiTranscript = ""
-            )
-        }
-
-        hiveService.onOutputTranscription = { text ->
-            _sessionState.value = _sessionState.value.copy(
-                aiTranscript = text
-            )
-        }
-
-        hiveService.onDisconnected = { reason ->
-            if (_sessionState.value.isActive) {
-                stopSession()
-                _sessionState.value = _sessionState.value.copy(
-                    errorMessage = "Connection lost: ${reason ?: "Unknown error"}"
-                )
+        if (isWorker) {
+            localService = LocalInferenceService(this)
+            wireService(localService!!, null)
+            localService?.connect { connected ->
+               if (connected) onServiceReady()
+            }
+        } else {
+            remoteService = HiveLiveService()
+            wireService(null, remoteService!!)
+            remoteService?.connect { connected ->
+               if (connected) onServiceReady()
             }
         }
 
-        // Wire server-side wake word detection
-        hiveService.onWakeWordDetected = { remainingText ->
-            Log.d(TAG, "Server detected wake word! Remaining: '$remainingText'")
-            onWakeWordDetected()
-        }
-
-        // Connect to Apis
-        serviceScope.launch {
-            stateObservationJob = serviceScope.launch {
-                while (isActive) {
-                    delay(100)
-                    _sessionState.value = _sessionState.value.copy(
-                        connectionState = hiveService.connectionState.value,
-                        isModelSpeaking = hiveService.isModelSpeaking.value,
-                        isInferring = hiveService.isInferring.value,
-                    )
-                }
-            }
-
-            hiveService.connect { connected ->
-                if (!connected) {
-                    val msg = when (val state = hiveService.connectionState.value) {
-                        is ApisConnectionState.Error -> state.message
-                        else -> "Failed to connect to Apis"
+        // Start observing state
+        stateObservationJob = serviceScope.launch {
+            while (isActive) {
+                delay(100)
+                val currentLocal = localService
+                val currentRemote = remoteService
+                
+                if (currentLocal != null) {
+                    _sessionState.update { current ->
+                        current.copy(
+                            connectionState = currentLocal.connectionState.value,
+                            isModelSpeaking = currentLocal.isModelSpeaking.value,
+                            isInferring = currentLocal.isInferring.value
+                        )
                     }
-                    _sessionState.value = _sessionState.value.copy(errorMessage = msg)
-                    hiveService.disconnect()
-                    stateObservationJob?.cancel()
-                    _sessionState.value = _sessionState.value.copy(
-                        isActive = false,
-                        connectionState = ApisConnectionState.Disconnected
-                    )
-                    stopSelf()
-                    return@connect
-                }
-
-                // Connected — start mic, begin in active listening mode
-                try {
-                    audioManager.startCapture()
-                    _sessionState.value = _sessionState.value.copy(isListening = true)
-                    hiveService.wakeWordMode = false
-                    updateNotification("Apis is listening 🎧")
-                } catch (e: Exception) {
-                    _sessionState.value = _sessionState.value.copy(
-                        errorMessage = "Mic capture failed: ${e.message}"
-                    )
-                    hiveService.disconnect()
-                    stateObservationJob?.cancel()
-                    _sessionState.value = _sessionState.value.copy(
-                        isActive = false,
-                        connectionState = ApisConnectionState.Disconnected
-                    )
-                    stopSelf()
+                } else if (currentRemote != null) {
+                    _sessionState.update { current ->
+                        current.copy(
+                            connectionState = currentRemote.connectionState.value,
+                            isModelSpeaking = currentRemote.isModelSpeaking.value,
+                            isInferring = currentRemote.isInferring.value
+                        )
+                    }
                 }
             }
         }
     }
 
+    private fun wireService(local: LocalInferenceService?, remote: HiveLiveService?) {
+        // Shared audio input
+        audioManager.onAudioCaptured = lambda@{ data ->
+            if (isModelSpeaking()) return@lambda
+            local?.sendAudio(data)
+            remote?.sendAudio(data)
+        }
+
+        // Shared callbacks
+        val onAudio = { data: ByteArray -> audioManager.playAudio(data) }
+        val onTurn = {
+            _sessionState.value = _sessionState.value.copy(userTranscript = "")
+            startIdleTimer()
+        }
+        val onInterrupted = { audioManager.stopPlayback() }
+        val onInput = { text: String ->
+            _sessionState.update { current ->
+                current.copy(
+                    userTranscript = current.userTranscript + text,
+                    aiTranscript = ""
+                )
+            }
+        }
+        val onOutput = { text: String ->
+            _sessionState.update { it.copy(aiTranscript = text) }
+        }
+
+        local?.apply {
+            onAudioReceived = onAudio
+            onTurnComplete = onTurn
+            this.onInterrupted = onInterrupted
+            onInputTranscription = onInput
+            onOutputTranscription = onOutput
+        }
+        remote?.apply {
+            onAudioReceived = onAudio
+            onTurnComplete = onTurn
+            this.onInterrupted = onInterrupted
+            onInputTranscription = onInput
+            onOutputTranscription = onOutput
+            onWakeWordDetected = { onWakeWordDetected() }
+            onDisconnected = { reason -> 
+                if (_sessionState.value.isActive) {
+                    stopSession()
+                    _sessionState.value = _sessionState.value.copy(
+                        errorMessage = "Connection lost: $reason"
+                    )
+                }
+            }
+        }
+    }
+
+    private fun onServiceReady() {
+        try {
+            audioManager.startCapture()
+            _sessionState.value = _sessionState.value.copy(isListening = true)
+            remoteService?.wakeWordMode = false
+            updateNotification("Apis is listening 🎧")
+        } catch (e: Exception) {
+            _sessionState.value = _sessionState.value.copy(errorMessage = "Mic failed: ${e.message}")
+            stopSession()
+        }
+    }
+
+    private fun isModelSpeaking(): Boolean {
+        return localService?.isModelSpeaking?.value == true || remoteService?.isModelSpeaking?.value == true
+    }
+
     fun stopSession() {
         cancelIdleTimer()
         audioManager.stopCapture()
-        hiveService.disconnect()
+        
+        remoteService?.disconnect()
+        remoteService = null
+        
+        localService?.release()
+        localService = null
+        
         wakeWordDetector?.release()
         wakeWordDetector = null
         stateObservationJob?.cancel()
@@ -226,7 +245,8 @@ class HiveBackgroundService : Service() {
     fun sendVideoFrameIfThrottled(bitmap: Bitmap) {
         if (!_sessionState.value.isActive) return
         if (_sessionState.value.connectionState != ApisConnectionState.Ready) return
-        hiveService.sendVideoFrame(bitmap)
+        remoteService?.sendVideoFrame(bitmap)
+        localService?.sendVideoFrame(bitmap)
     }
 
     fun clearError() {
@@ -240,6 +260,27 @@ class HiveBackgroundService : Service() {
     }
 
     // ─── Wake Word ──────────────────────────────────────────────
+
+    suspend fun sendTextMessage(content: String): String = withContext(Dispatchers.IO) {
+        if (SettingsManager.isWorkerMode) {
+            val local = localService ?: return@withContext "Local Worker not initialized"
+            // For Worker mode, we return a deferred response
+            local.processText(content)
+            "Processing locally..." 
+        } else {
+            val client = HiveApiClient(SettingsManager.hiveServerUrl).apply {
+                accessToken = SettingsManager.hiveAuthToken
+            }
+            client.sendMessage(content)
+        }
+    }
+
+    fun clearTranscripts() {
+        _sessionState.value = _sessionState.value.copy(
+            userTranscript = "",
+            aiTranscript = ""
+        )
+    }
 
     private fun onWakeWordDetected() {
         cancelIdleTimer()
@@ -255,7 +296,7 @@ class HiveBackgroundService : Service() {
             userTranscript = "",
             aiTranscript = ""
         )
-        hiveService.wakeWordMode = false
+        remoteService?.wakeWordMode = false
         updateNotification("Apis is listening 🎧")
         Log.d(TAG, "Wake word activated — listening")
     }
@@ -270,7 +311,7 @@ class HiveBackgroundService : Service() {
                 override fun run() {
                     Log.d(TAG, "Idle timeout — waiting for wake word")
                     _sessionState.value = _sessionState.value.copy(isListening = false)
-                    hiveService.wakeWordMode = true
+                    remoteService?.wakeWordMode = true
                     updateNotification("Say \"Apis\" to talk")
                 }
             }, IDLE_TIMEOUT_MS)

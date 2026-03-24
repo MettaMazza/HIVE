@@ -65,7 +65,17 @@ pub async fn execute_manage_lessons(
             };
 
             match memory.lessons.add_lesson(&target_scope, &lesson).await {
-                Ok(_) => ToolResult { task_id, output: "Lesson stored successfully.".to_string(), tokens_used: 0, status: ToolStatus::Success },
+                Ok(_) => {
+                    if let Some(first_kw) = lesson.keywords.first() {
+                        memory.synaptic.store(first_kw, &lesson.text).await;
+                        for kw in lesson.keywords.iter().skip(1) {
+                            memory.synaptic.store_relationship(first_kw, "related_to", kw).await;
+                        }
+                    } else {
+                        memory.synaptic.store("General Lesson", &lesson.text).await;
+                    }
+                    ToolResult { task_id, output: "Lesson stored successfully.".to_string(), tokens_used: 0, status: ToolStatus::Success }
+                },
                 Err(e) => ToolResult { task_id, output: format!("Failed to store lesson: {}", e), tokens_used: 0, status: ToolStatus::Failed(e.to_string()) },
             }
         }

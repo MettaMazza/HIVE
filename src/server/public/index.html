@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>HIVE Panopticon Visualizer</title>
+    <!-- Modern Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <!-- Vis.js for Network Graphs -->
+    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <style>
+        :root {
+            --bg: #0a0a0f;
+            --glass: rgba(20, 20, 30, 0.6);
+            --border: rgba(255, 255, 255, 0.08);
+            --accent: #00ffcc;
+            --accent-glow: rgba(0, 255, 204, 0.4);
+            --danger: #ff5555;
+            --text-main: #f0f0f5;
+            --text-muted: #888899;
+        }
+
+        body {
+            margin: 0;
+            padding: 20px;
+            background: var(--bg);
+            background-image: 
+                radial-gradient(circle at 15% 50%, rgba(0, 255, 204, 0.05), transparent 25%),
+                radial-gradient(circle at 85% 30%, rgba(255, 85, 85, 0.05), transparent 25%);
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            height: 100vh;
+            box-sizing: border-box;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 80px 1fr 250px;
+            gap: 20px;
+            overflow: hidden;
+        }
+
+        .glass-panel {
+            background: var(--glass);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .header-panel {
+            grid-column: 1 / -1;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-direction: row;
+        }
+
+        h1, h2 {
+            margin: 0 0 10px 0;
+            font-weight: 600;
+            letter-spacing: -0.5px;
+        }
+
+        h1 {
+            font-size: 24px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .indicator {
+            width: 10px;
+            height: 10px;
+            background: var(--accent);
+            border-radius: 50%;
+            box-shadow: 0 0 10px var(--accent-glow);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 var(--accent-glow); }
+            70% { box-shadow: 0 0 0 10px rgba(0, 255, 204, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(0, 255, 204, 0); }
+        }
+
+        .graph-container {
+            flex-grow: 1;
+            width: 100%;
+            border-radius: 8px;
+            background: rgba(0,0,0,0.2);
+            border: 1px solid rgba(255,255,255,0.03);
+        }
+
+        .neo4j-panel { grid-column: 1 / 2; grid-row: 2 / 3; }
+        .turing-panel { grid-column: 2 / 3; grid-row: 2 / 3; }
+        .memory-panel { grid-column: 1 / -1; grid-row: 3 / 4; }
+
+        .token-bar-container {
+            width: 300px;
+            height: 12px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        .token-bar {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent), #00bfff);
+            width: 0%;
+            transition: width 1s ease-in-out;
+        }
+
+        .stats {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        #memory-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            overflow-y: auto;
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        #memory-list li {
+            padding: 10px;
+            background: rgba(255,255,255,0.03);
+            border-left: 3px solid var(--accent);
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+        }
+
+        #memory-list li.platform-system {
+            border-left-color: var(--danger);
+        }
+
+    </style>
+</head>
+<body>
+
+    <div class="glass-panel header-panel">
+        <div>
+            <h1><div class="indicator"></div> HIVE PANOPTICON</h1>
+            <div class="stats" id="global-stats">System Syncing...</div>
+        </div>
+        <div style="text-align: right;">
+            <div style="margin-bottom: 5px;" class="stats">Working RAM Pressure <span id="token-count">0/0</span></div>
+            <div class="token-bar-container">
+                <div class="token-bar" id="token-bar"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="glass-panel neo4j-panel">
+        <h2>Synaptic Graph (Neo4j)</h2>
+        <div id="neo4j-graph" class="graph-container"></div>
+    </div>
+
+    <div class="glass-panel turing-panel">
+        <h2>Turing Grid (Computer)</h2>
+        <div id="turing-graph" class="graph-container"></div>
+    </div>
+
+    <div class="glass-panel memory-panel">
+        <h2>Working Timeline</h2>
+        <ul id="memory-list"></ul>
+    </div>
+
+    <script>
+        // Graph rendering configurations
+        const neo4jOptions = {
+            nodes: {
+                shape: 'dot',
+                size: 16,
+                font: { color: '#f0f0f5', face: 'Inter' },
+                borderWidth: 2,
+                color: { background: '#111116', border: '#00ffcc', highlight: { border: '#ffffff', background: '#00ffcc' } }
+            },
+            edges: {
+                width: 1.5,
+                color: { color: 'rgba(255,255,255,0.1)', highlight: '#00ffcc' },
+                font: { color: '#888899', size: 10, face: 'JetBrains Mono', align: 'middle' },
+                arrows: 'to',
+                smooth: { type: 'continuous' }
+            },
+            physics: { barnesHut: { gravitationalConstant: -3000, springLength: 100 } },
+            interaction: { hover: true, zoomView: true }
+        };
+
+        const turingOptions = {
+            nodes: {
+                shape: 'box',
+                font: { color: '#f0f0f5', face: 'JetBrains Mono', size: 11 },
+                borderWidth: 1,
+                color: { background: '#111116', border: '#5555ff' },
+                margin: 8
+            },
+            edges: {
+                width: 2,
+                color: { color: '#5555ff' },
+                arrows: 'to'
+            },
+            layout: { hierarchical: false }, // Let it flow naturally as a spatial graph
+            physics: { solver: 'repulsion', repulsion: { nodeDistance: 120 } }
+        };
+
+        let neo4jNetwork, turingNetwork;
+        let neo4jNodes, neo4jEdges, turingNodes, turingEdges;
+
+        function initGraphs() {
+            neo4jNodes = new vis.DataSet([]);
+            neo4jEdges = new vis.DataSet([]);
+            const neoContainer = document.getElementById('neo4j-graph');
+            neo4jNetwork = new vis.Network(neoContainer, { nodes: neo4jNodes, edges: neo4jEdges }, neo4jOptions);
+
+            turingNodes = new vis.DataSet([]);
+            turingEdges = new vis.DataSet([]);
+            const turContainer = document.getElementById('turing-graph');
+            turingNetwork = new vis.Network(turContainer, { nodes: turingNodes, edges: turingEdges }, turingOptions);
+        }
+
+        async function fetchNeo4j() {
+            try {
+                const res = await fetch('/api/neo4j');
+                const data = await res.json();
+                
+                // Update Nodes safely
+                const newNodes = data.nodes.map(n => ({
+                    id: n.concept.toLowerCase(),
+                    label: n.concept,
+                    title: `Entries: ${n.data.length}\nUpdated: ${n.updated_at}`
+                }));
+                neo4jNodes.update(newNodes);
+
+                // Update Edges safely
+                const newEdges = data.edges.map(e => ({
+                    id: `${e.from}-${e.relation}-${e.to}`,
+                    from: e.from.toLowerCase(),
+                    to: e.to.toLowerCase(),
+                    label: e.relation
+                }));
+                neo4jEdges.update(newEdges);
+            } catch (e) { console.error('Neo4j fetch error', e); }
+        }
+
+        async function fetchTuring() {
+            try {
+                const res = await fetch('/api/turing_grid');
+                const data = await res.json();
+                
+                const newNodes = [];
+                const newEdges = [];
+
+                data.cells.forEach(cell => {
+                    const id = `${cell.x},${cell.y},${cell.z}`;
+                    let bg = '#111116';
+                    let border = '#5555ff';
+                    
+                    if (cell.daemon) {
+                        border = '#ff5555';
+                        bg = 'rgba(255,85,85,0.1)';
+                    }
+                    
+                    // Is this the cursor?
+                    if (data.cursor.x === cell.x && data.cursor.y === cell.y && data.cursor.z === cell.z) {
+                        border = '#00ffcc';
+                        bg = 'rgba(0,255,204,0.1)';
+                    }
+
+                    newNodes.push({
+                        id: id,
+                        label: `[${id}]\n${cell.format.toUpperCase()}\n(${cell.length} bytes)`,
+                        color: { background: bg, border: border }
+                    });
+
+                    // Add links
+                    cell.links.forEach(link => {
+                        const targetId = `${link[0]},${link[1]},${link[2]}`;
+                        newEdges.push({
+                            id: `${id}->${targetId}`,
+                            from: id,
+                            to: targetId
+                        });
+                    });
+                });
+
+                turingNodes.update(newNodes);
+                turingEdges.update(newEdges);
+                
+            } catch (e) { console.error('Turing fetch error', e); }
+        }
+
+        async function fetchWorkingMemory() {
+            try {
+                const res = await fetch('/api/working_memory');
+                const data = await res.json();
+                
+                const pct = Math.min((data.current_tokens / data.max_tokens) * 100, 100);
+                document.getElementById('token-bar').style.width = pct + '%';
+                document.getElementById('token-bar').style.background = pct > 85 ? 'var(--danger)' : 'linear-gradient(90deg, var(--accent), #00bfff)';
+                document.getElementById('token-count').innerText = `${data.current_tokens.toLocaleString()} / ${data.max_tokens.toLocaleString()} tok`;
+
+                const list = document.getElementById('memory-list');
+                list.innerHTML = '';
+                // Show last 20 events reversed so newest is bottom/top
+                [...data.events].reverse().slice(0, 20).forEach(ev => {
+                    const li = document.createElement('li');
+                    li.className = ev.platform.includes('system') ? 'platform-system' : 'platform-user';
+                    li.innerHTML = `<strong>${ev.author}</strong> <span class="stats">[${ev.platform}] : ${ev.length} bytes injected</span>`;
+                    list.appendChild(li);
+                });
+
+                document.getElementById('global-stats').innerText = `Sync Active | Nodes: ${neo4jNodes.length} | Cells: ${turingNodes.length}`;
+            } catch (e) { console.error('Working Memory fetch error', e); }
+        }
+
+        // Boot Sequence
+        initGraphs();
+        
+        // Initial Fetch
+        fetchNeo4j(); fetchTuring(); fetchWorkingMemory();
+
+        // Polling loop
+        setInterval(() => {
+            fetchNeo4j();
+            fetchTuring();
+            fetchWorkingMemory();
+        }, 5000); // 5 sec live refresh
+    </script>
+</body>
+</html>

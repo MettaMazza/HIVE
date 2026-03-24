@@ -85,6 +85,54 @@ pub async fn execute_operate_turing_grid(
                 output = format!("--- Radar Scan (Radius {}): ---\n{}", radius, out);
             }
         }
+        "read_range" => {
+            let x_range = extract_tag(&description, "x_bounds:").unwrap_or_default();
+            let y_range = extract_tag(&description, "y_bounds:").unwrap_or_default();
+            let z_range = extract_tag(&description, "z_bounds:").unwrap_or_default();
+
+            // Format example: x_bounds:[0,10]
+            let parse_bounds = |raw: &str| -> Option<(i32, i32)> {
+                let s = raw.trim().trim_start_matches('[').trim_end_matches(']');
+                let mut parts = s.split(',');
+                if let (Some(p1), Some(p2)) = (parts.next(), parts.next()) {
+                    if let (Ok(min), Ok(max)) = (p1.trim().parse::<i32>(), p2.trim().parse::<i32>()) {
+                        return Some((min, max));
+                    }
+                }
+                None
+            };
+
+            let (xmin, xmax) = parse_bounds(&x_range).unwrap_or((0, 0));
+            let (ymin, ymax) = parse_bounds(&y_range).unwrap_or((0, 0));
+            let (zmin, zmax) = parse_bounds(&z_range).unwrap_or((0, 0));
+
+            let g = memory.turing_grid.lock().await;
+            let mut out = String::new();
+            let mut found = 0;
+            
+            // To prevent massive loops, bound delta max to 20
+            let x_bound = (xmax - xmin).abs().min(20);
+            let y_bound = (ymax - ymin).abs().min(20);
+            let z_bound = (zmax - zmin).abs().min(20);
+
+            for x in xmin..=(xmin + x_bound) {
+                for y in ymin..=(ymin + y_bound) {
+                    for z in zmin..=(zmin + z_bound) {
+                        if let Some(cell) = g.read_at(x, y, z) {
+                            found += 1;
+                            let limit_content: String = cell.content.chars().take(300).collect();
+                            out.push_str(&format!("* Cell ({}, {}, {}) [{}]: {}\n", x, y, z, cell.format, limit_content.replace('\n', " ")));
+                        }
+                    }
+                }
+            }
+
+            if found == 0 {
+                output = format!("No cells found in range X[{}-{}] Y[{}-{}] Z[{}-{}].", xmin, xmin+x_bound, ymin, ymin+y_bound, zmin, zmin+z_bound);
+            } else {
+                output = format!("--- Turing Range Read ({} cells) ---\n{}", found, out);
+            }
+        }
         "write" => {
             let format_tag = extract_tag(&description, "format:").unwrap_or("text".to_string());
             let format_str = format_tag.split_whitespace().next().unwrap_or("text").to_string();
@@ -179,6 +227,124 @@ pub async fn execute_operate_turing_grid(
         // ──────────────────────────────────────────────
         //  NEW ACTIONS
         // ──────────────────────────────────────────────
+
+        "deploy_daemon" => {
+            let interval = extract_tag(&description, "interval:")
+                .unwrap_or("60".to_string())
+                .split_whitespace()
+                .next()
+                .unwrap_or("60")
+                .parse::<u64>()
+                .unwrap_or(60)
+                .max(10); // Minimum 10 seconds to protect hardware
+
+            let (format_str, content, coord_idx): (String, String, (i32, i32, i32)) = {
+                let mut g = memory.turing_grid.lock().await;
+                let cell_info = g.read_current().map(|c| (c.format.clone(), c.content.clone()));
+                let coords = g.get_cursor();
+
+                match cell_info {
+                    Some(info) => {
+                        // Apply Lock
+                        match g.set_daemon_active(true).await {
+                            Ok(true) => (info.0, info.1, coords),
+                            Ok(false) => {
+                                return ToolResult {
+                                    task_id,
+                                    output: format!("Error: A Daemon is already actively running on cell ({},{},{}). Write new data to reset it.", coords.0, coords.1, coords.2),
+                                    tokens_used: 0,
+                                    status: ToolStatus::Failed("Lock contention".into()),
+                                };
+                            }
+                            Err(e) => {
+                                return ToolResult {
+                                    task_id,
+                                    output: format!("Error setting lock: {}", e),
+                                    tokens_used: 0,
+                                    status: ToolStatus::Failed("IO Error".into()),
+                                };
+                            }
+                        }
+                    }
+                    None => {
+                        return ToolResult {
+                            task_id,
+                            output: "Error: Current cell is empty. Cannot deploy daemon.".into(),
+                            tokens_used: 0,
+                            status: ToolStatus::Success,
+                        };
+                    }
+                }
+            };
+
+            // Spawn the detached async loop
+            let mem_clone = memory.clone();
+            tokio::spawn(async move {
+                tracing::info!("[DAEMON] Turing Daemon spawned on ({},{},{}) interval: {}s", coord_idx.0, coord_idx.1, coord_idx.2, interval);
+                let (x, y, z) = coord_idx;
+                
+                loop {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(interval)).await;
+                    
+                    // Re-check lock just in case user overwrote cell manually during loop
+                    {
+                        let check_g = mem_clone.turing_grid.lock().await;
+                        if let Some(cell) = check_g.read_at(x, y, z) {
+                            if !cell.daemon_active {
+                                tracing::info!("[DAEMON] Daemon killed automatically on ({},{},{}) due to lock removal.", x, y, z);
+                                break;
+                            }
+                        } else {
+                            break; // cell deleted
+                        }
+                        
+                        // We must update status to Running specifically for this daemon's target cell
+                        // But wait! update_status affects the current cursor, which might be anywhere now.
+                        // We will skip updating the "status" text in background daemons to avoid racing the user's cursor.
+                    }
+
+                    match mem_clone.alu.execute_cell(&format_str, &content).await {
+                        Ok(stdout) => {
+                            if !stdout.is_empty() {
+                                let daemon_output = format!("TURING DAEMON ({},{},{}) interval [{}]\n{}", x, y, z, interval, stdout);
+                                let ev = crate::models::message::Event {
+                                    platform: "system:daemon".to_string(),
+                                    scope: crate::models::scope::Scope::Private { user_id: "system".to_string() },
+                                    author_name: "Internal Daemon".to_string(),
+                                    author_id: "daemon".to_string(),
+                                    content: daemon_output,
+                                    timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                                    message_index: None,
+                                };
+                                let _ = mem_clone.add_event(ev).await;
+                            }
+                        }
+                        Err(e) => {
+                            let daemon_error = format!("TURING DAEMON ({},{},{}) FAILED\n{}", x, y, z, e);
+                            let ev = crate::models::message::Event {
+                                    platform: "system:daemon".to_string(),
+                                    scope: crate::models::scope::Scope::Private { user_id: "system".to_string() },
+                                    author_name: "Internal Daemon".to_string(),
+                                    author_id: "daemon".to_string(),
+                                    content: daemon_error,
+                                    timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                                    message_index: None,
+                                };
+                            let _ = mem_clone.add_event(ev).await;
+                            // Failsafe exit loop if the execution throws an error (e.g., bad syntax) to prevent spam
+                            let mut kill_g = mem_clone.turing_grid.lock().await;
+                            let old_cur = kill_g.get_cursor();
+                            kill_g.cursor = coord_idx;
+                            let _ = kill_g.set_daemon_active(false).await;
+                            kill_g.cursor = old_cur;
+                            break;
+                        }
+                    }
+                }
+            });
+
+            output = format!("Successfully deployed Turing Daemon at ({},{},{}) running every {} seconds in the background.", coord_idx.0, coord_idx.1, coord_idx.2, interval);
+        }
 
         "index" => {
             let g = memory.turing_grid.lock().await;

@@ -112,6 +112,33 @@ impl ToolForge {
         let script_filename = format!("{}.{}", name, ext);
         let script_path = self.tools_dir.join(&script_filename);
 
+        // Sandbox compilation check
+        let tmp_dir = std::env::temp_dir().join("hive_forge_test");
+        let _ = tokio::fs::create_dir_all(&tmp_dir).await;
+        let tmp_file = tmp_dir.join(format!("test_compile_{}.{}", name, ext));
+        let _ = tokio::fs::write(&tmp_file, &code).await;
+
+        let (cmd, args) = if language == "python" {
+            ("python3", vec!["-m", "py_compile", tmp_file.to_str().unwrap()])
+        } else {
+            ("bash", vec!["-n", tmp_file.to_str().unwrap()])
+        };
+
+        match tokio::process::Command::new(cmd).args(&args).output().await {
+            Ok(output) => {
+                if !output.status.success() {
+                    let err_msg = String::from_utf8_lossy(&output.stderr);
+                    let _ = tokio::fs::remove_file(&tmp_file).await;
+                    return Err(format!("Syntax Error in {} code:\n{}", language.to_uppercase(), err_msg));
+                }
+            }
+            Err(e) => {
+                let _ = tokio::fs::remove_file(&tmp_file).await;
+                return Err(format!("Failed to run syntax checker ({}): {}", cmd, e));
+            }
+        }
+        let _ = tokio::fs::remove_file(&tmp_file).await;
+
         // Write script
         let _ = tokio::fs::create_dir_all(&self.tools_dir).await;
         tokio::fs::write(&script_path, &code).await.map_err(|e| format!("Failed to write script: {}", e))?;
@@ -151,6 +178,27 @@ impl ToolForge {
         let mut data = self.data.write().await;
         let tool = data.tools.iter_mut().find(|t| t.name == name)
             .ok_or_else(|| format!("Tool '{}' not found.", name))?;
+
+        // Sandbox check
+        let tmp_dir = std::env::temp_dir().join("hive_forge_test");
+        let _ = tokio::fs::create_dir_all(&tmp_dir).await;
+        let tmp_file = tmp_dir.join(format!("test_compile_{}", tool.script_filename));
+        let _ = tokio::fs::write(&tmp_file, &code).await;
+
+        let (cmd, args) = if tool.language == "python" {
+            ("python3", vec!["-m", "py_compile", tmp_file.to_str().unwrap()])
+        } else {
+            ("bash", vec!["-n", tmp_file.to_str().unwrap()])
+        };
+
+        if let Ok(output) = tokio::process::Command::new(cmd).args(&args).output().await {
+            if !output.status.success() {
+                let err_msg = String::from_utf8_lossy(&output.stderr);
+                let _ = tokio::fs::remove_file(&tmp_file).await;
+                return Err(format!("Syntax Error after edit:\n{}", err_msg));
+            }
+        }
+        let _ = tokio::fs::remove_file(&tmp_file).await;
 
         let script_path = self.tools_dir.join(&tool.script_filename);
         tokio::fs::write(&script_path, &code).await.map_err(|e| format!("Failed to write: {}", e))?;
@@ -389,6 +437,46 @@ pub async fn execute_tool_forge(
                     task_id, output: e.clone(), tokens_used: 0, status: ToolStatus::Failed(e),
                 },
             }
+        }
+
+        "dry_run" => {
+            let name = extract_tag(&description, "name").unwrap_or_else(|| "dry_run_test".into());
+            let language = extract_tag(&description, "language").unwrap_or_else(|| "python".into());
+            let code = match extract_code(&description) {
+                Some(c) => c,
+                None => return ToolResult {
+                    task_id, output: "Missing: code:[THE CODE]".into(),
+                    tokens_used: 0, status: ToolStatus::Failed("Missing code".into()),
+                },
+            };
+
+            let ext = if language == "python" { "py" } else { "sh" };
+            let tmp_dir = std::env::temp_dir().join("hive_forge_test");
+            let _ = tokio::fs::create_dir_all(&tmp_dir).await;
+            let tmp_file = tmp_dir.join(format!("test_compile_dryrun_{}.{}", name, ext));
+            let _ = tokio::fs::write(&tmp_file, &code).await;
+
+            let (cmd, args) = if language == "python" {
+                ("python3", vec!["-m", "py_compile", tmp_file.to_str().unwrap()])
+            } else {
+                ("bash", vec!["-n", tmp_file.to_str().unwrap()])
+            };
+
+            let output = match tokio::process::Command::new(cmd).args(&args).output().await {
+                Ok(out) => {
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    if out.status.success() {
+                        format!("✅ Dry Run Syntax OK for {} ({}).\nOutputs:\n{}\n{}", name, language, stdout, stderr)
+                    } else {
+                        format!("❌ Syntax Error in {}:\n{}", language.to_uppercase(), stderr)
+                    }
+                }
+                Err(e) => format!("Failed to run syntax checker ({}): {}", cmd, e)
+            };
+            
+            let _ = tokio::fs::remove_file(&tmp_file).await;
+            output
         }
 
         "test" => {

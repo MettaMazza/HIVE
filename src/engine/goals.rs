@@ -52,6 +52,7 @@ pub struct GoalNode {
     // Metadata
     pub tags: Vec<String>,
     pub source: GoalSource,
+    pub dependencies: Vec<String>,
 }
 
 impl GoalNode {
@@ -73,6 +74,7 @@ impl GoalNode {
             deadline: None,
             tags: vec![],
             source,
+            dependencies: vec![],
         }
     }
 }
@@ -170,7 +172,30 @@ impl GoalTree {
 
     /// Update a goal's status. Triggers progress recalculation on parent.
     pub async fn update_status(&self, id: &str, status: GoalStatus) -> bool {
+        self.update_status_safe(id, status).await.unwrap_or(false)
+    }
+
+    /// Safely update status returning an error if blocked by graph dependencies.
+    pub async fn update_status_safe(&self, id: &str, status: GoalStatus) -> Result<bool, String> {
         let mut data = self.data.lock().await;
+
+        // Dependency Check
+        if status == GoalStatus::Active || status == GoalStatus::Completed {
+            let mut blocked_by = Vec::new();
+            if let Some(node) = data.nodes.iter().find(|n| n.id == id) {
+                for dep_id in &node.dependencies {
+                    if let Some(dep) = data.nodes.iter().find(|n| n.id == *dep_id) {
+                        if dep.status != GoalStatus::Completed {
+                            blocked_by.push(dep.title.clone());
+                        }
+                    }
+                }
+            }
+            if !blocked_by.is_empty() {
+                return Err(format!("Cannot activate goal. Blocked by incomplete dependencies: {}", blocked_by.join(", ")));
+            }
+        }
+
         let (parent_id, found) = {
             if let Some(node) = data.nodes.iter_mut().find(|n| n.id == id) {
                 if status == GoalStatus::Completed {
@@ -190,7 +215,17 @@ impl GoalTree {
             }
             Self::save(&data, &self.persist_path);
         }
-        found
+        Ok(found)
+    }
+
+    /// Manage goal dependency arrays natively
+    pub async fn set_dependencies(&self, id: &str, deps: Vec<String>) {
+        let mut data = self.data.lock().await;
+        if let Some(node) = data.nodes.iter_mut().find(|n| n.id == id) {
+            node.dependencies = deps;
+            node.updated_at = now_ts();
+        }
+        Self::save(&data, &self.persist_path);
     }
 
     /// Add evidence of progress to a goal.
@@ -443,7 +478,7 @@ impl GoalStore {
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_goal_tree_crud() {
         let _ = std::fs::remove_file("/tmp/hive_test_goals/memory/core/goals/test_crud.json");
         let tree = GoalTree::new("/tmp/hive_test_goals", "test_crud");
@@ -470,7 +505,7 @@ mod tests {
         assert_eq!(roots.len(), 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_goal_tree_subgoals() {
         let tree = GoalTree::new("/tmp/hive_test_goals", "test_subgoals");
         
@@ -490,7 +525,7 @@ mod tests {
         assert!(root.children.contains(sub_id.as_ref().unwrap()));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_goal_progress_bubbling() {
         let tree = GoalTree::new("/tmp/hive_test_goals", "test_progress");
         
@@ -517,7 +552,7 @@ mod tests {
         assert!((root.progress - 1.0).abs() < 0.01);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_goal_prune() {
         let tree = GoalTree::new("/tmp/hive_test_goals", "test_prune");
         
@@ -536,7 +571,7 @@ mod tests {
         assert_eq!(total, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_goal_format() {
         let tree = GoalTree::new("/tmp/hive_test_goals", "test_format");
         
@@ -551,7 +586,7 @@ mod tests {
         assert!(prompt.contains("🎯"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_goal_evidence() {
         let tree = GoalTree::new("/tmp/hive_test_goals", "test_evidence");
         
@@ -566,7 +601,7 @@ mod tests {
         assert_eq!(goal.evidence.len(), 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_goal_actionable() {
         let _ = std::fs::remove_file("/tmp/hive_test_goals/memory/core/goals/test_actionable.json");
         let tree = GoalTree::new("/tmp/hive_test_goals", "test_actionable");

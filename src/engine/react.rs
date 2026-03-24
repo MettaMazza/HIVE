@@ -24,9 +24,8 @@ pub async fn execute_react_loop(
     capabilities: Arc<AgentCapabilities>,
     teacher: Arc<Teacher>,
 ) -> (String, usize, Vec<(String, String)>) {
-    tracing::debug!("[REACT] ▶ Starting ReAct loop for author='{}' platform='{}' history_len={}",
-        event.author_name, event.platform, history.len());
-    let tool_list = agent.get_available_tools_text_for_platform(&event.platform);
+    let is_autonomy = event.author_id == "apis_autonomy";
+    let tool_list = agent.get_available_tools_text_for_platform(&event.platform, is_autonomy);
     
     // Update and inject homeostatic drive state as ambient context
     drives.update().await;
@@ -68,7 +67,7 @@ pub async fn execute_react_loop(
     }
 
     base_system_prompt.push_str(&format!("\n\n{}\n{}", drive_hud, goal_hud));
-    if event.author_id == "apis_autonomy" {
+    if is_autonomy {
         base_system_prompt.push_str("\n\n[AUTONOMY MODE ACTIVE] You are currently operating in Continuous Autonomy mode. You are a first-class user of your own system. Use your time productively and diversely. Report what you did in your reply.\n");
     }
     base_system_prompt.push_str(&crate::agent::planner::REACT_AGENT_PROMPT.replace("{available_tools}", &tool_list));
@@ -111,7 +110,7 @@ pub async fn execute_react_loop(
             context_from_agent.push_str("[USE THE RESULTS ABOVE. DO NOT CALL THESE AGAIN. PROCEED TO YOUR NEXT ACTION OR reply_to_request.]\n");
         }
 
-        context_from_agent.push_str(&format!("\n\nReAct Loop Turn {}\n", current_turn));
+        context_from_agent.push_str(&format!("\n\n[SYSTEM: Internal Thought Cycle {} — DO NOT MENTION INTERNAL CYCLES TO THE USER. Determine actual conversation length by looking at the message history.]\n", current_turn));
         
         let candidate_text = match provider.generate(&base_system_prompt, history, event, &context_from_agent, Some(telemetry_tx.clone()), None).await {
             Ok(text) => text,
@@ -157,7 +156,7 @@ pub async fn execute_react_loop(
                     };
                     
                     crate::agent::planner::AgentPlan {
-                        thought: Some("Auto-wrapped from plain text output.".to_string()),
+                        thought: vec!["Auto-wrapped from plain text output.".to_string()],
                         tasks: vec![crate::agent::planner::AgentTask {
                             task_id: "auto_reply".to_string(),
                             tool_type: "reply_to_request".to_string(),
@@ -168,7 +167,7 @@ pub async fn execute_react_loop(
                     }
                 } else {
                     context_from_agent.push_str(&format!(
-                        "Turn {} - [SYSTEM COMPILER ERROR: INVISIBLE TO USER] YOUR OUTPUT WAS NOT VALID JSON. You MUST output EXACTLY one JSON block. Here is the EXACT format:\n```json\n{{\n  \"thought\": \"your reasoning here\",\n  \"tasks\": [\n    {{\n      \"task_id\": \"step_1\",\n      \"tool_type\": \"reply_to_request\",\n      \"description\": \"your response to the user here\",\n      \"depends_on\": []\n    }}\n  ]\n}}\n```\nOutput ONLY the JSON block above. No preamble, no explanation, no markdown outside the block.\n\n",
+                        "Cycle {} - [SYSTEM COMPILER ERROR: INVISIBLE TO USER] YOUR OUTPUT WAS NOT VALID JSON. You MUST output EXACTLY one JSON block. Here is the EXACT format:\n```json\n{{\n  \"thought\": [\"Context Analysis...\", \"Hypothesis...\", \"Validation Check...\", \"Action Decision...\"],\n  \"tasks\": [\n    {{\n      \"task_id\": \"step_1\",\n      \"tool_type\": \"reply_to_request\",\n      \"description\": \"your response to the user here\",\n      \"depends_on\": []\n    }}\n  ]\n}}\n```\nOutput ONLY the JSON block above. No preamble, no explanation, no markdown outside the block.\n\n",
                         current_turn
                     ));
                     continue;
@@ -180,7 +179,7 @@ pub async fn execute_react_loop(
             context_from_agent.push_str("\n\n[YOUR TOOLS HAVE EXECUTED — USE THESE RESULTS FOR YOUR NEXT TURN]\n");
         }
         
-        context_from_agent.push_str(&format!("Turn {} Agent:\n{}\n", current_turn, candidate_text.trim()));
+        context_from_agent.push_str(&format!("Cycle {} Agent:\n{}\n", current_turn, candidate_text.trim()));
         
         let mut reply_task = None;
         let mut standard_tasks = vec![];
@@ -200,9 +199,24 @@ pub async fn execute_react_loop(
         tracing::debug!("[REACT] Turn {} plan classified: standard={}, reply={}, react={}, no_tools={}",
             current_turn, standard_tasks.len(), reply_task.is_some(), react_tasks.len(), no_tools);
 
+        // ─── SYSTEM 2 UNCERTAINTY INTERCEPTOR ───
+        let uncertainty = drives.get_state().await.uncertainty;
+        let has_reviewed = completed_tools.iter().any(|(_, t)| t == "review_reasoning") ||
+                           standard_tasks.iter().any(|t| t.tool_type == "review_reasoning");
+                           
+        if reply_task.is_some() && uncertainty > 80.0 && !has_reviewed && current_turn < 5 {
+            tracing::warn!("[REACT] 🛑 Deep System 2 Intercept: High uncertainty ({:.1}). Blocking reply...", uncertainty);
+            reply_task = None;
+            context_from_agent.push_str(&format!(
+                "Cycle {} - [SYSTEM INTERCEPT: UNCERTAINTY CRITICAL]\nYour DriveState uncertainty is critically high ({:.1}%). You are NOT allowed to `reply_to_request` yet. You MUST initiate a Deep System 2 cycle. Generate a new `thought` vector examining your assumptions and explicitly run the `review_reasoning` tool OR `search_timeline` tool to double-check context before responding.\n\n",
+                current_turn, uncertainty
+            ));
+            let _ = telemetry_tx.send("🛑 Processing (High Uncertainty Intercept)...".to_string()).await;
+        }
+
         // ─── TELEMETRY: Send thought + tool list after plan parsing ───────
         {
-            let thought_str = plan.thought.as_deref().unwrap_or("(no thought)");
+            let thought_str = if plan.thought.is_empty() { "(no thought)".to_string() } else { plan.thought.join(" ➡ ") };
             // Strip any embedded JSON from the thought before telemetry display.
             // The model's thought often previews the JSON plan structure which leaks
             // into Discord if humanize_telemetry can't parse partially-balanced braces.
@@ -244,7 +258,7 @@ pub async fn execute_react_loop(
         
         if no_tools {
             tracing::warn!("[AGENT LOOP] ⚠️ Turn {} produced no valid tools. Injecting error to prompt...", current_turn);
-            context_from_agent.push_str(&format!("Turn {} - Error: [SYSTEM COMPILER ERROR: INVISIBLE TO USER] YOUR LAST RESPONSE CONTAINED NO VALID TOOLS. YOU ARE TRAPPED IN A LOOP. YOU CANNOT TALK TO THE USER DIRECTLY. To reply to the user, you MUST construct a JSON block containing the `reply_to_request` tool.\n\n", current_turn));
+            context_from_agent.push_str(&format!("Cycle {} - Error: [SYSTEM COMPILER ERROR: INVISIBLE TO USER] YOUR LAST RESPONSE CONTAINED NO VALID TOOLS. YOU ARE TRAPPED IN A LOOP. YOU CANNOT TALK TO THE USER DIRECTLY. To reply to the user, you MUST construct a JSON block containing the `reply_to_request` tool.\n\n", current_turn));
             continue;
         }
 
@@ -263,8 +277,8 @@ pub async fn execute_react_loop(
                         if source_msg_id > 0 {
                             if let Some(platform) = platforms.get(platform_name) {
                                 match platform.react(channel_id, source_msg_id, &emoji).await {
-                                    Ok(_) => context_from_agent.push_str(&format!("Turn {} - Task {}: emoji_react executed. Reacted with {} on the user's message ✅\n\n", current_turn, react_task.task_id, emoji)),
-                                    Err(e) => context_from_agent.push_str(&format!("Turn {} - Task {}: emoji_react failed: {}\n\n", current_turn, react_task.task_id, e)),
+                                    Ok(_) => context_from_agent.push_str(&format!("Cycle {} - Task {}: emoji_react executed. Reacted with {} on the user's message ✅\n\n", current_turn, react_task.task_id, emoji)),
+                                    Err(e) => context_from_agent.push_str(&format!("Cycle {} - Task {}: emoji_react failed: {}\n\n", current_turn, react_task.task_id, e)),
                                 }
                             }
                         }
@@ -360,11 +374,19 @@ pub async fn execute_react_loop(
                     tool_outputs.insert(res.task_id.clone(), res.output.clone());
                 }
 
-                // For LLM context, cap large outputs to prevent prompt bloat.
-                // The LLM only needs enough to reason about the result, not the
-                // full content (which may be 55KB+ for read_attachment).
-                const LLM_CONTEXT_CAP: usize = 8000;
+                // For LLM context, cap large outputs to prevent extreme prompt bloat.
+                // Since HIVE runs on high-performance M3 Ultra hardware, we allow
+                // a generous 100KB limit for tool outputs in the reasoning loop.
+                const LLM_CONTEXT_CAP: usize = 100_000;
                 let display_output = if res.output.len() > LLM_CONTEXT_CAP {
+                    // Safe UTF-8 truncation: Find the nearest char boundary at or below the cap
+                    let safe_boundary = res.output
+                        .char_indices()
+                        .map(|(i, _)| i)
+                        .filter(|&i| i <= LLM_CONTEXT_CAP)
+                        .last()
+                        .unwrap_or(0);
+
                     // Determine the tool type for this result to choose the right guidance
                     let tool_type_for_result = completed_tools.iter()
                         .chain(last_tool_turn_ids.iter())
@@ -374,12 +396,14 @@ pub async fn execute_react_loop(
                     let verbatim_safe = ["read_attachment", "download"];
                     let truncation_guidance = if verbatim_safe.contains(&tool_type_for_result) {
                         format!("[Full output is {} bytes — stored for verbatim forwarding via source field or auto-injection. Do NOT attempt to reproduce this content yourself.]", res.output.len())
+                    } else if tool_type_for_result == "search_timeline" {
+                        format!("[SYSTEM: Output truncated at {} of {} bytes! You hit the engine context limit! To read OLDER events in this timeline, you MUST re-run search_timeline using the `offset:[X]` parameter to paginate past these recent messages before giving up!]", safe_boundary, res.output.len())
                     } else {
-                        format!("[Output truncated at {} of {} bytes. READ and ANSWER FROM the data above. Do NOT forward raw tool output to the user — summarize, extract, and respond in your own words.]", LLM_CONTEXT_CAP, res.output.len())
+                        format!("[Output truncated at {} of {} bytes. READ and ANSWER FROM the data above. Do NOT forward raw tool output to the user — summarize, extract, and respond in your own words.]", safe_boundary, res.output.len())
                     };
                     format!(
                         "{}...\n\n{}",
-                        &res.output[..LLM_CONTEXT_CAP], truncation_guidance
+                        &res.output[..safe_boundary], truncation_guidance
                     )
                 } else {
                     res.output.clone()
@@ -425,7 +449,7 @@ pub async fn execute_react_loop(
                     filtered.join("\n")
                 };
 
-                context_from_agent.push_str(&format!("Turn {} - Task {}: {:?}\nOutput: {}\n\n", current_turn, res.task_id, res.status, display_output));
+                context_from_agent.push_str(&format!("Cycle {} - Task {}: {:?}\nOutput: {}\n\n", current_turn, res.task_id, res.status, display_output));
             }
             // Track which tools ran on this turn for the attachment safety net
             last_tool_turn_ids = task_meta.clone();
@@ -452,7 +476,7 @@ pub async fn execute_react_loop(
             if standard_tool_count > 0 {
                 tracing::info!("[REACT] ⏳ Deferring reply — {} standard tools also ran this turn. Will re-prompt with tool results.", standard_tool_count);
                 context_from_agent.push_str(&format!(
-                    "Turn {} - [SYSTEM: Your reply_to_request was deferred because tools also executed this turn. \
+                    "Cycle {} - [SYSTEM: Your reply_to_request was deferred because tools also executed this turn. \
                     You now have the tool results above. Write a NEW reply_to_request that incorporates these results.]\n\n",
                     current_turn
                 ));
@@ -541,7 +565,7 @@ pub async fn execute_react_loop(
                 ));
                 
                 context_from_agent.push_str(&format!(
-                    "Turn {} - [SKEPTIC AUDIT FAIL: INVISIBLE TO USER] Your output was intercepted.\nCategory: {}\nWhy it failed: {}\nHow to fix it: {}\n\nYou MUST rewrite your response immediately incorporating this feedback.\n\n",
+                    "Cycle {} - [SKEPTIC AUDIT FAIL: INVISIBLE TO USER] Your output was intercepted.\nCategory: {}\nWhy it failed: {}\nHow to fix it: {}\n\nYou MUST rewrite your response immediately incorporating this feedback.\n\n",
                     current_turn,
                     audit_result.failure_category,
                     audit_result.what_went_wrong,

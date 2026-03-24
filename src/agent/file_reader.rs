@@ -34,6 +34,7 @@ pub async fn execute_file_reader(
 
     let start_line: usize = extract_tag(&description, "start_line:").and_then(|s| s.parse().ok()).unwrap_or(1);
     let limit: usize = extract_tag(&description, "limit:").and_then(|s| s.parse().ok()).unwrap_or(500);
+    let query: Option<String> = extract_tag(&description, "query:");
 
     let output = if target_path.contains("..") || target_path.starts_with('/') {
         "Access Denied: Path traverses outside isolated project root.".to_string()
@@ -73,22 +74,61 @@ pub async fn execute_file_reader(
 
         let lines: Vec<&str> = content.lines().collect();
         let total_lines = lines.len();
-        let start_idx = start_line.saturating_sub(1).min(total_lines);
-        let end_idx = (start_idx + limit).min(total_lines);
-        
-        let chunked_content = lines[start_idx..end_idx].join("\n");
-        let pct = if total_lines > 0 { ((end_idx as f64 / total_lines as f64) * 100.0) as u32 } else { 100 };
-        let remaining = total_lines.saturating_sub(end_idx);
 
-        let mut header = format!("File: {}\nLines: {}-{}/{} ({}% complete", resolved_path, start_idx + 1, end_idx, total_lines, pct);
-        
-        if remaining > 0 {
-            header.push_str(&format!(", {} lines remaining)\n[BOOKMARK: Continue with codebase_read(name:[{}] start_line:[{}] limit:[{}])]\n[READING INCOMPLETE — you MUST continue reading before responding]", remaining, target_path, end_idx + 1, limit));
+        let regex_pattern = extract_tag(&description, "regex:");
+        let has_query = query.is_some() || regex_pattern.is_some();
+        let compiled_re: Option<regex::Regex> = regex_pattern.as_ref().and_then(|pat| regex::Regex::new(pat).ok());
+
+        if has_query {
+            let mut matches = Vec::new();
+            for (i, line) in lines.iter().enumerate() {
+                let mut matched = false;
+                if let Some(ref q) = query {
+                    if line.contains(q) { matched = true; }
+                }
+                if let Some(ref re) = compiled_re {
+                    if re.is_match(line) { matched = true; }
+                }
+
+                if matched {
+                    let start = i.saturating_sub(3);
+                    let end = (i + 4).min(total_lines);
+                    let chunk = lines[start..end].join("\n");
+                    matches.push(format!("--- Match at line {} ---\n{}", i + 1, chunk));
+                }
+            }
+            if matches.is_empty() {
+                let empty_q = query.clone().unwrap_or_else(|| regex_pattern.clone().unwrap_or_default());
+                format!("File: {}\nNo matches found for query/regex: '[{}]'", resolved_path, empty_q)
+            } else {
+                let display_matches = if matches.len() > 15 {
+                    let mut m = matches[..15].to_vec();
+                    m.push(format!("... and {} more matches. Be more specific.", matches.len() - 15));
+                    m
+                } else {
+                    matches
+                };
+                let query_str = query.unwrap_or_else(|| regex_pattern.clone().unwrap_or_default());
+                format!("File: {}\nFound matches for query/regex: '[{}]'\n(NOTE: Copy-paste exact blocks for patching)\n\n{}", resolved_path, query_str, display_matches.join("\n\n"))
+            }
         } else {
-            header.push_str(")\n[DOCUMENT COMPLETE]");
-        }
+            let start_idx = start_line.saturating_sub(1).min(total_lines);
+            let end_idx = (start_idx + limit).min(total_lines);
+            
+            let chunked_content = lines[start_idx..end_idx].join("\n");
+            let pct = if total_lines > 0 { ((end_idx as f64 / total_lines as f64) * 100.0) as u32 } else { 100 };
+            let remaining = total_lines.saturating_sub(end_idx);
 
-        format!("{}\n\n{}", header, chunked_content)
+            let mut header = format!("File: {}\nLines: {}-{}/{} ({}% complete", resolved_path, start_idx + 1, end_idx, total_lines, pct);
+            
+            if remaining > 0 {
+                header.push_str(&format!(", {} lines remaining)\n[BOOKMARK: Continue with codebase_read(name:[{}] start_line:[{}] limit:[{}])]\n[READING INCOMPLETE — you MUST continue reading before responding]", remaining, target_path, end_idx + 1, limit));
+            } else {
+                header.push_str(")\n[DOCUMENT COMPLETE]");
+            }
+
+            format!("{}\n\n{}", header, chunked_content)
+        }
     };
 
     ToolResult {

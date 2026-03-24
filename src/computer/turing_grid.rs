@@ -17,6 +17,9 @@ pub struct Cell {
     pub format: String,
     pub status: String,
     pub last_updated: String,
+    /// Whether a background daemon is looping this cell.
+    #[serde(default)]
+    pub daemon_active: bool,
     /// Outgoing links to other cells by coordinate.
     #[serde(default)]
     pub links: Vec<(i32, i32, i32)>,
@@ -124,6 +127,7 @@ impl TuringGrid {
             format: format.to_string(),
             status: "Idle".to_string(),
             last_updated: timestamp,
+            daemon_active: false,
             links: old_links,
             history: old_history,
         };
@@ -139,6 +143,20 @@ impl TuringGrid {
             return self.save().await;
         }
         Ok(())
+    }
+
+    pub async fn set_daemon_active(&mut self, active: bool) -> std::io::Result<bool> {
+        let key = Self::coord_key(self.cursor.0, self.cursor.1, self.cursor.2);
+        if let Some(cell) = self.cells.get_mut(&key) {
+            if active && cell.daemon_active {
+                return Ok(false);
+            }
+            cell.daemon_active = active;
+            cell.last_updated = chrono::Utc::now().to_rfc3339();
+            self.save().await?;
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     pub fn scan(&self, radius: i32) -> Vec<((i32, i32, i32), String)> {
@@ -331,6 +349,7 @@ mod tests {
         assert_eq!(cell.format, "python");
         assert_eq!(cell.content, "print('hello 3D')");
         assert_eq!(cell.status, "Idle");
+        assert_eq!(cell.daemon_active, false);
         assert!(cell.links.is_empty());
         assert!(cell.history.is_empty()); // First write, no history
         

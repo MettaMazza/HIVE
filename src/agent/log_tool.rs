@@ -36,7 +36,17 @@ pub async fn execute_read_logs(
 
     match tokio::fs::read_to_string(&log_path).await {
         Ok(content) => {
-            let lines: Vec<&str> = content.lines().collect();
+            let mut lines: Vec<&str> = content.lines().collect();
+            
+            let regex_pattern = desc.split("regex:[").nth(1).and_then(|s| s.split("]").next());
+            if let Some(pat) = regex_pattern {
+                if let Ok(re) = regex::Regex::new(pat) {
+                    lines = lines.into_iter().filter(|&l| re.is_match(l)).collect();
+                } else {
+                    return ToolResult { task_id, output: format!("Invalid regex pattern: {}", pat), tokens_used: 0, status: ToolStatus::Failed("Bad Regex".into()) };
+                }
+            }
+            
             let len = lines.len();
             let start = len.saturating_sub(lines_to_read);
             let tail = &lines[start..];
@@ -61,5 +71,23 @@ pub async fn execute_read_logs(
                 status: ToolStatus::Failed(e.to_string()),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_no_log_file() {
+        let r = execute_read_logs("1".into(), "".into(), None).await;
+        // Should return either empty or error gracefully
+        assert!(r.output.len() > 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_with_lines_param() {
+        let r = execute_read_logs("1".into(), "lines:[10]".into(), None).await;
+        assert!(r.output.len() > 0);
     }
 }

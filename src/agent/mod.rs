@@ -41,6 +41,12 @@ pub mod lifecycle;
 pub mod goal_planner;
 pub mod goal_tool;
 pub mod tool_forge;
+pub mod visualizer_tool;
+pub mod email_tool;
+pub mod calendar_tool;
+pub mod smarthome_tool;
+pub mod compiler_tool;
+
 pub struct AgentManager {
     registry: HashMap<String, ToolTemplate>,
     discord_tools: HashMap<String, ToolTemplate>,
@@ -92,7 +98,10 @@ impl AgentManager {
 
         let web_search = ToolTemplate {
             name: "web_search".into(),
-            system_prompt: "You are the Web Search Tool. You search the LIVE EXTERNAL INTERNET for facts, news, and external documentation via DuckDuckGo. The planner should provide the query in the description.".into(),
+            system_prompt: "You are the Web Search Tool. You search the LIVE EXTERNAL INTERNET. \
+            'action:[search]' (default) searches DuckDuckGo. \
+            'action:[visit] url:[...]' visits a direct site returning fast raw text. \
+            'action:[navigate_dom] url:[...] css_selector:[...]' spins up a Headless Chrome OS Sandbox to natively render JS logic, extracting the exact target CSS node (e.g. '.main-article').".into(),
             tools: vec![],
         };
 
@@ -155,6 +164,7 @@ impl AgentManager {
                 'action:[move] dx:[X] dy:[Y] dz:[Z]' - safely move the R/W head relative to current. \
                 'action:[scan] radius:[R]' - radar search surrounding cells for data. \
                 'action:[execute]' - route the current cell to the internal ALU kernel. \
+                'action:[deploy_daemon] interval:[secs]' - detaches cell execution into an immortal background tokio loop syncing stdout to the timeline natively. (Write blank data or over-write to kill daemon). \
                 'action:[index]' - view the full manifest (table of contents) of all cells, labels, and links. Use this to navigate. \
                 'action:[label] name:[my_label]' - bookmark the current cursor position with a name. \
                 'action:[goto] name:[my_label]' - jump the cursor directly to a labeled position. \
@@ -248,7 +258,51 @@ impl AgentManager {
             tools: vec![],
         };
 
+        let visualizer = ToolTemplate {
+            name: "take_snapshot".into(),
+            system_prompt: "Captures a live physical dashboard screenshot of your internal Neo4j brain, Turing Grid, and Timeline memory natively using headless chrome. \
+            Usage: action:[take_snapshot]. Run this IMMEDIATELY whenever the user asks to 'see your brain', 'show me your graph', 'screenshot your dashboard', or anything similar.".into(),
+            tools: vec![],
+        };
+
+        let send_email = ToolTemplate {
+            name: "send_email".into(),
+            system_prompt: "Sends a physical email outwards using your native SMTP nervous system backbone. \
+            Usage: 'action:[send_email] to:[address@example.com] subject:[My Title] body:[Your message...]'. \
+            You can use this to email the user or anyone else natively without relying on web interfaces.".into(),
+            tools: vec![],
+        };
+
+        let set_alarm = ToolTemplate {
+            name: "set_alarm".into(),
+            system_prompt: "Sets a physical alarm or reminder to wake you up in the future. \
+            Usage: action:[set_alarm] time:[+5m] message:[My Message]. \
+            Time supports relative formats like +1m, +2h, +3d, or full ISO8601 strings.".into(),
+            tools: vec![],
+        };
+
+        let smart_home = ToolTemplate {
+            name: "smart_home".into(),
+            system_prompt: "Interfaces directly with outward physical devices in the user's local spatial network environment. \
+            Usage: action:[smart_home] device:[lights] state:[on] \
+            State dictates configurations like 'on', 'off', 'red', 'dimmed', etc.".into(),
+            tools: vec![],
+        };
+
+        let system_recompile = ToolTemplate {
+            name: "system_recompile".into(),
+            system_prompt: "Natively invokes `cargo build --release` on your physical operating system constraints. \
+            Usage: action:[system_recompile] \
+            If compilation cleanly bounds, the process will hot-swap the new binary structurally out from under you and restart your mind recursively!".into(),
+            tools: vec![],
+        };
+
         registry.insert(researcher.name.clone(), researcher);
+        registry.insert(visualizer.name.clone(), visualizer);
+        registry.insert(send_email.name.clone(), send_email);
+        registry.insert(set_alarm.name.clone(), set_alarm);
+        registry.insert(smart_home.name.clone(), smart_home);
+        registry.insert(system_recompile.name.clone(), system_recompile);
         registry.insert(codebase_list.name.clone(), codebase_list);
         registry.insert(codebase_read.name.clone(), codebase_read);
         registry.insert(web_search.name.clone(), web_search);
@@ -441,18 +495,29 @@ impl AgentManager {
         self.registry.get(name).cloned()
     }
 
-    /// Fetches all registered tools formatted as a string for the Planner Planner prompt
-    pub fn get_available_tools_text(&self) -> String {
+    /// Fetches all registered tools formatted as a string for the Planner prompt.
+    /// If `is_autonomy` is true, self-moderation and self-protection tools are excluded
+    /// to prevent the agent from loop-testing them on itself.
+    pub fn get_available_tools_text(&self, is_autonomy: bool) -> String {
         let mut out = String::new();
+        let moderation_tools = [
+            "refuse_request", "disengage", "mute_user", "set_boundary",
+            "block_topic", "escalate_to_admin", "report_concern",
+            "rate_limit_user", "request_consent", "wellbeing_status"
+        ];
+
         for (name, template) in &self.registry {
+            if is_autonomy && moderation_tools.contains(&name.as_str()) {
+                continue;
+            }
             out.push_str(&format!("- TOOL `{}`: {}\n", name, template.system_prompt));
         }
         out
     }
 
     /// Fetches tools formatted for a specific platform (universal + platform-specific)
-    pub fn get_available_tools_text_for_platform(&self, platform: &str) -> String {
-        let mut out = self.get_available_tools_text();
+    pub fn get_available_tools_text_for_platform(&self, platform: &str, is_autonomy: bool) -> String {
+        let mut out = self.get_available_tools_text(is_autonomy);
         let platform_prefix = platform.split(':').next().unwrap_or("");
         let platform_tools = match platform_prefix {
             "discord" => Some(&self.discord_tools),

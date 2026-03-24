@@ -3,6 +3,7 @@ use crate::models::scope::Scope;
 use crate::memory::MemoryStore;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use crate::agent::preferences::extract_tag;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 pub async fn execute_review_reasoning(
@@ -11,11 +12,20 @@ pub async fn execute_review_reasoning(
     _memory: Arc<MemoryStore>,
     scope: Scope,
     telemetry_tx: Option<mpsc::Sender<String>>,
+    agent_mgr: Option<Arc<crate::agent::AgentManager>>,
+    provider: Option<Arc<dyn crate::providers::Provider>>,
+    capabilities: Option<Arc<crate::models::capabilities::AgentCapabilities>>,
+    drives: Option<Arc<crate::engine::drives::DriveSystem>>,
 ) -> ToolResult {
     if let Some(ref tx) = telemetry_tx {
         let _ = tx.send(format!("🧠 Native Reasoning Review Tool executing...\n")).await;
     }
     tracing::debug!("[AGENT:reasoning] ▶ task_id={}", task_id);
+    
+    // Settling uncertainty: Deep reasoning significantly reduces DriveState entropy
+    if let Some(d) = drives {
+        d.modify_drive("uncertainty", -30.0).await;
+    }
 
     // Parse parameters
     let mut limit: usize = 5;
@@ -77,6 +87,74 @@ pub async fn execute_review_reasoning(
     // Return the most recent N traces (from the end of the file)
     let start = if all_traces.len() > limit { all_traces.len() - limit } else { 0 };
     let slice = &all_traces[start..];
+
+    // Check if Swarm Validation is requested
+    let validate = extract_tag(&desc, "validate:").unwrap_or_default() == "true";
+    if validate {
+        if let (Some(am), Some(prov), Some(caps)) = (agent_mgr, provider, capabilities) {
+            if let Some(ref tx) = telemetry_tx {
+                let _ = tx.send("🐝 Spawning isolated Competitive Swarm to validate reasoning traces...\n".to_string()).await;
+            }
+            let user_id = match &scope { Scope::Public { user_id, .. } => user_id.clone(), Scope::Private { user_id } => user_id.clone() };
+            
+            // Build Context
+            let context = slice.join("\n\n");
+            let base_task = format!("Review these recent reasoning traces:\n\n{}\n\n", context);
+            
+            let specs = vec![
+                crate::agent::sub_agent::SubAgentSpec {
+                    task: format!("{}Analyze the reasoning history. Are there any logical fallacies or critically missed context? Provide a strict Yes/No and why.", base_task),
+                    max_turns: 4,
+                    timeout_secs: 180,
+                    scope: scope.clone(),
+                    user_id: user_id.clone(),
+                    spatial_offset: Some((800, 800, 800)),
+                    swarm_depth: 0,
+                },
+                crate::agent::sub_agent::SubAgentSpec {
+                    task: format!("{}Play devil's advocate to the recent reasoning. Find edge cases where the logic absolutely fails. Provide a strict Yes/No on validity.", base_task),
+                    max_turns: 4,
+                    timeout_secs: 180,
+                    scope: scope.clone(),
+                    user_id: user_id.clone(),
+                    spatial_offset: Some((800, 900, 800)),
+                    swarm_depth: 0,
+                },
+                crate::agent::sub_agent::SubAgentSpec {
+                    task: format!("{}Synthesize the logic from an external perspective. Is it perfectly sound? Provide a strict Yes/No on validity.", base_task),
+                    max_turns: 4,
+                    timeout_secs: 180,
+                    scope: scope.clone(),
+                    user_id: user_id.clone(),
+                    spatial_offset: Some((800, 1000, 800)),
+                    swarm_depth: 0,
+                }
+            ];
+
+            let tx_for_spawn = telemetry_tx.clone().unwrap_or_else(|| {
+                let (tx, _) = tokio::sync::mpsc::channel(1);
+                tx
+            });
+
+            let swarm_result = crate::agent::spawner::spawn_agents(
+                specs,
+                crate::agent::sub_agent::SpawnStrategy::Competitive,
+                prov,
+                _memory.clone(),
+                tx_for_spawn,
+                am,
+                caps
+            ).await;
+            
+            let mut out = format!("--- SWARM VALIDATION VERDICT ({:.1}s) ---\n\n", swarm_result.total_duration_ms as f64 / 1000.0);
+            for r in swarm_result.results {
+                if r.status == crate::agent::sub_agent::SubAgentStatus::Completed {
+                    out.push_str(&format!("Result from {}:\n{}\n\n", r.agent_id, r.output));
+                }
+            }
+            return ToolResult { task_id, output: out, tokens_used: 0, status: ToolStatus::Success };
+        }
+    }
 
     let mut out = String::new();
     for (i, trace) in slice.iter().enumerate() {

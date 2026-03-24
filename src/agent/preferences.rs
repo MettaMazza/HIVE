@@ -26,7 +26,18 @@ pub async fn execute_manage_user_preferences(
     }
 
     let action = extract_tag(&description, "action:").unwrap_or_default();
-    tracing::debug!("[AGENT:preferences] ▶ task_id={} action='{}' scope='{}'", task_id, action, scope.to_key());
+    let layer = extract_tag(&description, "layer:").unwrap_or_else(|| "global".to_string());
+    
+    let modified_scope = if layer != "global" {
+        match scope {
+            Scope::Public { ref channel_id, ref user_id } => Scope::Public { channel_id: channel_id.clone(), user_id: format!("{}_{}", user_id, layer) },
+            Scope::Private { ref user_id } => Scope::Private { user_id: format!("{}_{}", user_id, layer) },
+        }
+    } else {
+        scope.clone()
+    };
+
+    tracing::debug!("[AGENT:preferences] ▶ task_id={} action='{}' layer='{}' scope='{}'", task_id, action, layer, modified_scope.to_key());
     
     if action.is_empty() {
         return DroneResult {
@@ -39,7 +50,7 @@ pub async fn execute_manage_user_preferences(
 
     // READ action: return current stored preferences (no value: needed)
     if action == "read" || action == "list" || action == "view" {
-        let prefs = memory.preferences.read(&scope).await;
+        let prefs = memory.preferences.read(&modified_scope).await;
         let name = prefs.name.as_deref().unwrap_or("(not set)");
         let hobbies = if prefs.hobbies.is_empty() { "(none)".to_string() } else { prefs.hobbies.join(", ") };
         let topics = if prefs.topics_of_interest.is_empty() { "(none)".to_string() } else { prefs.topics_of_interest.join(", ") };
@@ -70,7 +81,7 @@ pub async fn execute_manage_user_preferences(
         };
     };
 
-    let mut prefs = memory.preferences.read(&scope).await;
+    let mut prefs = memory.preferences.read(&modified_scope).await;
     let success_msg;
 
     match action.as_str() {
@@ -112,7 +123,7 @@ pub async fn execute_manage_user_preferences(
         }
     }
 
-    if let Err(e) = memory.preferences.write(&scope, &prefs).await {
+    if let Err(e) = memory.preferences.write(&modified_scope, &prefs).await {
         return DroneResult {
             task_id,
             output: format!("Failed to save preferences to disk: {}", e),

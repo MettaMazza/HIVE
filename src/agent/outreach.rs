@@ -24,6 +24,7 @@ pub async fn execute_outreach(
     outbound_tx: Option<mpsc::Sender<crate::models::message::Response>>,
     invoker_uid: String,
     is_admin: bool,
+    goal_store: Option<Arc<crate::engine::goals::GoalStore>>,
 ) -> ToolResult {
     if let Some(ref tx) = telemetry_tx {
         let _ = tx.send("📨 Outreach Agent Tool executing...\n".to_string()).await;
@@ -124,6 +125,21 @@ pub async fn execute_outreach(
                 return ToolResult { task_id, output: format!("🚫 Outreach blocked: {}", reason), tokens_used: 0, status: ToolStatus::Failed("outreach_blocked".to_string()) };
             }
 
+            if let Some(gs) = &goal_store {
+                let scope = crate::models::scope::Scope::Public { user_id: invoker_uid.clone(), channel_id: "system".to_string() };
+                let roots = gs.get_tree(&scope).await.get_active_roots().await;
+                let mut comms_active = false;
+                for root in roots {
+                    if root.tags.contains(&"communications".to_string()) || root.tags.contains(&"outreach".to_string()) {
+                        comms_active = true;
+                        break;
+                    }
+                }
+                if !comms_active {
+                    return ToolResult { task_id, output: "🚫 SECURITY VIOLATION: Cannot send outreach. Goal graph MUST contain an Active root node with 'communications' or 'outreach' tag. Create an outreach Goal to proceed.".to_string(), tokens_used: 0, status: ToolStatus::Failed("spam_block".to_string()) };
+                }
+            }
+
             let delivery = gate.get_delivery(&uid);
             let mut results = Vec::new();
 
@@ -219,6 +235,7 @@ mod tests {
             None,
             "123".to_string(),
             true,
+            None,
         ).await;
         assert_eq!(res.status, ToolStatus::Failed("OutreachGate missing".to_string()));
     }
@@ -245,6 +262,7 @@ mod tests {
             None,
             "123".to_string(),
             true,
+            None,
         ).await;
         assert_eq!(res.status, ToolStatus::Failed("bad params".to_string()));
 
@@ -258,6 +276,7 @@ mod tests {
             None,
             "123".to_string(),
             true,
+            None,
         ).await;
         assert_eq!(res2.status, ToolStatus::Failed("bad params".to_string()));
     }
@@ -283,6 +302,7 @@ mod tests {
             None,
             "user456".to_string(),
             true,
+            None,
         ).await;
         
         assert_eq!(res.status, ToolStatus::Success);
@@ -297,6 +317,7 @@ mod tests {
             None,
             "user456".to_string(),
             true,
+            None,
         ).await;
         assert!(verify.output.contains("High"));
     }
@@ -322,6 +343,7 @@ mod tests {
             None,
             "user789".to_string(),
             true,
+            None,
         ).await;
         
         assert_eq!(res.status, ToolStatus::Success);
@@ -349,6 +371,7 @@ mod tests {
             None,
             "user999".to_string(),
             true,
+            None,
         ).await;
 
         let res = execute_outreach(
@@ -361,6 +384,7 @@ mod tests {
             None,
             "user999".to_string(),
             true,
+            None,
         ).await;
         
         // can_outreach() catches delivery=none BEFORE the none_policy path
@@ -390,6 +414,7 @@ mod tests {
             None,
             "user111".to_string(),
             true,
+            None,
         ).await;
         
         assert_eq!(res.status, ToolStatus::Success);
@@ -404,6 +429,7 @@ mod tests {
             None,
             "user111".to_string(),
             true,
+            None,
         ).await;
         assert!(stat.output.contains("1 unread message"));
     }

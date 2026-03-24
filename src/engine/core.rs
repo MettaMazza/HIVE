@@ -559,19 +559,20 @@ impl Engine {
                 let prov_clone = self.provider.clone();
                 let mem_clone = self.memory.clone();
                 let scope_clone = event.scope.clone();
+                let drives_clone = self.drives.clone();
                 let semaphore_synth = self.concurrency_semaphore.clone();
                 tokio::spawn(async move {
                     // Acquire inference slot — prevents colliding with active user/autonomy inference
                     let _permit = semaphore_synth.acquire().await.expect("Semaphore closed");
                     tracing::debug!("[SYNTHESIS] 🎫 Acquired inference slot for background synthesis.");
                     if bg_synth_needed {
-                        let _ = crate::agent::synthesis::synthesize_50_turn(prov_clone.clone(), mem_clone.clone(), scope_clone.clone()).await;
+                        let _ = crate::agent::synthesis::synthesize_50_turn(prov_clone.clone(), mem_clone.clone(), scope_clone.clone(), Some(drives_clone.clone())).await;
                     }
                     if bg_daily_needed {
-                        let _ = crate::agent::synthesis::synthesize_24_hr(prov_clone.clone(), mem_clone.clone(), scope_clone.clone()).await;
+                        let _ = crate::agent::synthesis::synthesize_24_hr(prov_clone.clone(), mem_clone.clone(), scope_clone.clone(), Some(drives_clone.clone())).await;
                     }
                     if bg_lifetime_needed {
-                        let _ = crate::agent::synthesis::synthesize_lifetime(prov_clone.clone(), mem_clone.clone(), scope_clone.clone()).await;
+                        let _ = crate::agent::synthesis::synthesize_lifetime(prov_clone.clone(), mem_clone.clone(), scope_clone.clone(), Some(drives_clone.clone())).await;
                     }
                 });
             }
@@ -688,7 +689,7 @@ impl Engine {
                             let public_narrative = memory_clone.get_public_narrative().await;
                             let previous_sessions = load_recent_autonomy_sessions(10).await;
                             let autonomy_event = Event {
-                                platform: "discord:1480192647657427044:0:0".to_string(),
+                                platform: format!("discord:1480192647657427044:0:autonomy_{}", chrono::Utc::now().timestamp()),
                                 scope: Scope::Public {
                                     channel_id: "1480192647657427044".to_string(),
                                     user_id: "apis_autonomy".to_string(),
@@ -826,7 +827,7 @@ impl Engine {
                                 let previous_sessions = load_recent_autonomy_sessions(10).await;
                                 
                                 let autonomy_event = Event {
-                                    platform: "discord:1480192647657427044:0:0".to_string(),
+                                    platform: format!("discord:1480192647657427044:0:autonomy_{}", chrono::Utc::now().timestamp()),
                                     scope: Scope::Public {
                                         channel_id: "1480192647657427044".to_string(),
                                         user_id: "apis_autonomy".to_string(),

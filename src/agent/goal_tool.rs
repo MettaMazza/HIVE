@@ -52,8 +52,17 @@ pub async fn execute_goal_tool(
             let tags: Vec<String> = extract_tag(&description, "tags")
                 .map(|s| s.split(',').map(|t| t.trim().to_string()).collect())
                 .unwrap_or_default();
+            
+            let deps_raw = extract_tag(&description, "depends_on").unwrap_or_default();
+            let dependencies: Vec<String> = if deps_raw.is_empty() { vec![] } else {
+                deps_raw.split(',').map(|s| s.trim().to_string()).collect()
+            };
 
             let id = tree.add_root_goal(title.clone(), desc_text, priority, GoalSource::User, tags).await;
+            if !dependencies.is_empty() {
+                tree.set_dependencies(&id, dependencies).await;
+            }
+            
             format!("✅ Created goal '{}' (id: {})", title, id)
         }
 
@@ -119,13 +128,16 @@ pub async fn execute_goal_tool(
                 },
             };
 
-            if tree.update_status(&goal_id, new_status.clone()).await {
-                format!("✅ Updated goal {} to {:?}", goal_id, new_status)
-            } else {
-                return ToolResult {
+            match tree.update_status_safe(&goal_id, new_status.clone()).await {
+                Ok(true) => format!("✅ Updated goal {} to {:?}", goal_id, new_status),
+                Ok(false) => return ToolResult {
                     task_id, output: format!("Goal '{}' not found.", goal_id),
                     tokens_used: 0, status: ToolStatus::Failed("Goal not found".into()),
-                };
+                },
+                Err(e) => return ToolResult {
+                    task_id, output: e,
+                    tokens_used: 0, status: ToolStatus::Failed("Dependency Error".into()),
+                }
             }
         }
 
@@ -174,5 +186,81 @@ pub async fn execute_goal_tool(
         output,
         tokens_used: 0,
         status: ToolStatus::Success,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::goals::GoalStore;
+    use crate::models::scope::Scope;
+    use crate::providers::MockProvider;
+
+    fn test_scope() -> Scope {
+        Scope::Private { user_id: "goal_tester".into() }
+    }
+
+    fn mock_prov() -> Arc<dyn crate::providers::Provider> {
+        let mock = MockProvider::new();
+        Arc::new(mock)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_create_and_list() {
+        let store = Arc::new(GoalStore::new("/tmp/hive_goal_test"));
+        let prov = mock_prov();
+
+        let r = execute_goal_tool("1".into(), "action:[create] title:[Test Goal] description:[A test] priority:[0.7]".into(), test_scope(), store.clone(), prov.clone(), None).await;
+        assert_eq!(r.status, ToolStatus::Success);
+        assert!(r.output.contains("Created goal"));
+
+        let r2 = execute_goal_tool("2".into(), "action:[list]".into(), test_scope(), store.clone(), prov.clone(), None).await;
+        assert!(r2.output.contains("Test Goal"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_create_missing_title() {
+        let store = Arc::new(GoalStore::new("/tmp/hive_goal_test"));
+        let prov = mock_prov();
+
+        let r = execute_goal_tool("1".into(), "action:[create] description:[no title]".into(), test_scope(), store, prov, None).await;
+        assert!(matches!(r.status, ToolStatus::Failed(_)));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_unknown_action() {
+        let store = Arc::new(GoalStore::new("/tmp/hive_goal_test"));
+        let prov = mock_prov();
+
+        let r = execute_goal_tool("1".into(), "action:[explode]".into(), test_scope(), store, prov, None).await;
+        assert!(matches!(r.status, ToolStatus::Failed(_)));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_status_missing_id() {
+        let store = Arc::new(GoalStore::new("/tmp/hive_goal_test"));
+        let prov = mock_prov();
+
+        let r = execute_goal_tool("1".into(), "action:[status] status:[active]".into(), test_scope(), store, prov, None).await;
+        assert!(matches!(r.status, ToolStatus::Failed(_)));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_prune() {
+        let store = Arc::new(GoalStore::new("/tmp/hive_goal_test"));
+        let prov = mock_prov();
+
+        let r = execute_goal_tool("1".into(), "action:[prune]".into(), test_scope(), store, prov, None).await;
+        assert_eq!(r.status, ToolStatus::Success);
+        assert!(r.output.contains("Pruned"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_progress_missing_id() {
+        let store = Arc::new(GoalStore::new("/tmp/hive_goal_test"));
+        let prov = mock_prov();
+
+        let r = execute_goal_tool("1".into(), "action:[progress] evidence:[did things]".into(), test_scope(), store, prov, None).await;
+        assert!(matches!(r.status, ToolStatus::Failed(_)));
     }
 }

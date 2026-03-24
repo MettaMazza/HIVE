@@ -18,6 +18,7 @@ pub struct HudData {
     pub system_logs: String,
     pub recent_reasoning_traces: String,
     pub swarm_status: String,
+    pub pending_alarms: String,
 }
 
 impl HudData {
@@ -246,6 +247,31 @@ impl HudData {
             recent_reasoning_traces.push_str(&extracted_traces.join("\n\n---\n\n"));
         }
 
+        // --- CALENDAR ALARMS PULL ---
+        let mut pending_alarms = String::new();
+        if let Ok(contents) = tokio::fs::read_to_string("memory/alarms.json").await {
+            if let Ok(alarms) = serde_json::from_str::<serde_json::Value>(&contents) {
+                if let Some(arr) = alarms.as_array() {
+                    let mut found = false;
+                    for a in arr {
+                        if a.get("status").and_then(|s| s.as_str()) == Some("pending") {
+                            found = true;
+                            let time = a.get("trigger_time").and_then(|t| t.as_str()).unwrap_or("Unknown");
+                            let msg = a.get("message").and_then(|m| m.as_str()).unwrap_or("");
+                            pending_alarms.push_str(&format!("  - [{}] {}\n", time, msg));
+                        }
+                    }
+                    if !found { pending_alarms.push_str("No pending chronological alarms."); }
+                } else {
+                    pending_alarms.push_str("Alarms payload format invalid.");
+                }
+            } else {
+                pending_alarms.push_str("No pending chronological alarms.");
+            }
+        } else {
+            pending_alarms.push_str("No pending chronological alarms (file missing).");
+        }
+
         HudData {
             temporal_metrics,
             timeline_narratives,
@@ -262,6 +288,7 @@ impl HudData {
             system_logs,
             recent_reasoning_traces,
             swarm_status: crate::agent::lifecycle::AgentLifecycle::get().format_hud_line(),
+            pending_alarms,
         }
     }
 }
@@ -272,6 +299,10 @@ pub fn format_hud(data: &HudData) -> String {
     sections.push("## Apis HUD (Live System Context)".to_string());
     
     sections.push(data.temporal_metrics.clone());
+    sections.push("".to_string());
+    
+    sections.push("### Active Chronological Alarms".to_string());
+    sections.push(data.pending_alarms.clone());
     sections.push("".to_string());
 
     if !data.timeline_narratives.is_empty() {
@@ -383,7 +414,7 @@ mod tests {
 
         let hud = HudData::build(&pub_scope, mem).await;
 
-        assert_eq!(hud.active_scope, format!("Public (Broadcast Channel: {})", unique_id));
+        assert_eq!(hud.active_scope, format!("Public (Broadcast Channel: {} | Active User ID: test_user)", unique_id));
         assert!(hud.working_memory_load.ends_with(" / 256000"));
         assert_eq!(hud.scratchpad_content, Some("First noteSecond note\n".to_string()));
         assert_eq!(hud.room_roster, Some("Alice, Bob".to_string()));
@@ -407,6 +438,7 @@ mod tests {
             system_logs: String::new(),
             recent_reasoning_traces: String::new(),
             swarm_status: String::new(),
+            pending_alarms: String::new(),
         };
         
         let output = format_hud(&data);

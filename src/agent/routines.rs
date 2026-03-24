@@ -19,6 +19,7 @@ pub async fn execute_manage_routine(
     description: String,
     memory: Arc<MemoryStore>,
     telemetry_tx: Option<mpsc::Sender<String>>,
+    drives: Option<Arc<crate::engine::drives::DriveSystem>>,
 ) -> ToolResult {
     if let Some(ref tx) = telemetry_tx {
         let _ = tx.send("📋 Manage Routine Drone executing...\n".to_string()).await;
@@ -93,7 +94,28 @@ pub async fn execute_manage_routine(
                     format!("Error: Routine '{}' does not exist in the current scope.", routine_name)
                 } else {
                     match tokio::fs::read_to_string(&target_path).await {
-                        Ok(data) => format!("--- ROUTINE: {} ---\n{}", routine_name, data),
+                        Ok(data) => {
+                            let dummy_scope = if scope_str.starts_with("public_") {
+                                crate::models::scope::Scope::Public {
+                                    user_id: scope_str.replace("public_", ""),
+                                    channel_id: "system".to_string()
+                                }
+                            } else {
+                                crate::models::scope::Scope::Private {
+                                    user_id: scope_str.replace("private_", "")
+                                }
+                            };
+
+                            let recent_context = crate::agent::timeline_tool::execute_search_timeline(
+                                task_id.clone(),
+                                "action:[recent] count:[20]".into(),
+                                memory.clone(),
+                                None,
+                                &dummy_scope,
+                                drives.clone(),
+                            ).await;
+                            format!("--- ROUTINE: {} ---\n{}\n\n--- RECENT CONTEXT (Last 20 Events) ---\n{}", routine_name, data, recent_context.output)
+                        },
                         Err(e) => format!("Failed to read routine: {}", e)
                     }
                 }
@@ -122,36 +144,36 @@ mod tests {
         let mem = Arc::new(MemoryStore::default());
         
         // Test Traversal Protection
-        let res = execute_manage_routine("1".into(), "name:[../etc/passwd]".into(), mem.clone(), None).await;
+        let res = execute_manage_routine("1".into(), "name:[../etc/passwd]".into(), mem.clone(), None, None).await;
         assert_eq!(res.status, ToolStatus::Failed("Path traversal".into()));
 
         // Test Create Error - Missing .md
-        let res = execute_manage_routine("2".into(), "action:[create] name:[test]".into(), mem.clone(), None).await;
+        let res = execute_manage_routine("2".into(), "action:[create] name:[test]".into(), mem.clone(), None, None).await;
         assert!(res.output.contains("must end with .md"));
 
         // Test Create Error - Missing content
-        let res = execute_manage_routine("3".into(), "action:[create] name:[test.md]".into(), mem.clone(), None).await;
+        let res = execute_manage_routine("3".into(), "action:[create] name:[test.md]".into(), mem.clone(), None, None).await;
         assert_eq!(res.status, ToolStatus::Failed("No content".into()));
 
         // Test Create Success
-        let res = execute_manage_routine("4".into(), "action:[create] name:[my_rule.md] content:[Wash hand]".into(), mem.clone(), None).await;
+        let res = execute_manage_routine("4".into(), "action:[create] name:[my_rule.md] content:[Wash hand]".into(), mem.clone(), None, None).await;
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         assert!(res.output.contains("Successfully created"));
 
         // Test List
-        let res = execute_manage_routine("5".into(), "action:[list]".into(), mem.clone(), None).await;
+        let res = execute_manage_routine("5".into(), "action:[list]".into(), mem.clone(), None, None).await;
         assert!(res.output.contains("my_rule.md"));
 
         // Test Read
-        let res = execute_manage_routine("6".into(), "action:[read] name:[my_rule.md]".into(), mem.clone(), None).await;
+        let res = execute_manage_routine("6".into(), "action:[read] name:[my_rule.md]".into(), mem.clone(), None, None).await;
         assert!(res.output.contains("Wash hand"));
 
         // Test Read Missing
-        let res = execute_manage_routine("7".into(), "action:[read] name:[ghost.md]".into(), mem.clone(), None).await;
+        let res = execute_manage_routine("7".into(), "action:[read] name:[ghost.md]".into(), mem.clone(), None, None).await;
         assert!(res.output.contains("does not exist"));
 
         // Test Unknown Action
-        let res = execute_manage_routine("8".into(), "action:[fly]".into(), mem.clone(), None).await;
+        let res = execute_manage_routine("8".into(), "action:[fly]".into(), mem.clone(), None, None).await;
         assert!(res.output.contains("Unknown action"));
     }
 }

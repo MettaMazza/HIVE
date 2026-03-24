@@ -4,6 +4,10 @@ use mockall::automock;
 use crate::models::message::Event;
 
 pub mod ollama;
+pub mod openai;
+pub mod anthropic;
+pub mod gemini;
+pub mod xai;
 
 #[derive(thiserror::Error, Debug)]
 pub enum ProviderError {

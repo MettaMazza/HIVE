@@ -13,6 +13,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -32,6 +34,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.settings.SettingsManager
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -43,15 +46,18 @@ fun SettingsScreen(
     var hiveServerUrl by remember { mutableStateOf(SettingsManager.hiveServerUrl) }
     var hiveAuthToken by remember { mutableStateOf(SettingsManager.hiveAuthToken) }
     var webrtcSignalingURL by remember { mutableStateOf(SettingsManager.webrtcSignalingURL) }
+    var inferenceMode by remember { mutableStateOf(SettingsManager.inferenceMode) }
     var showResetDialog by remember { mutableStateOf(false) }
 
     fun save() {
+        SettingsManager.inferenceMode = inferenceMode
         SettingsManager.hiveServerUrl = hiveServerUrl.trim()
         SettingsManager.hiveAuthToken = hiveAuthToken.trim()
         SettingsManager.webrtcSignalingURL = webrtcSignalingURL.trim()
     }
 
     fun reload() {
+        inferenceMode = SettingsManager.inferenceMode
         hiveServerUrl = SettingsManager.hiveServerUrl
         hiveAuthToken = SettingsManager.hiveAuthToken
         webrtcSignalingURL = SettingsManager.webrtcSignalingURL
@@ -78,20 +84,58 @@ fun SettingsScreen(
                 .navigationBarsPadding(),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            // Inference Mode section
+            SectionHeader("Inference Mode")
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                ModeButton(
+                    text = "Worker (Local)",
+                    isSelected = inferenceMode == SettingsManager.InferenceMode.WORKER,
+                    onClick = { inferenceMode = SettingsManager.InferenceMode.WORKER },
+                    modifier = Modifier.weight(1f)
+                )
+                ModeButton(
+                    text = "Queen (Remote)",
+                    isSelected = inferenceMode == SettingsManager.InferenceMode.QUEEN,
+                    onClick = { inferenceMode = SettingsManager.InferenceMode.QUEEN },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            if (inferenceMode == SettingsManager.InferenceMode.WORKER) {
+                Text(
+                    text = "Uses local Qwen 3.5 0.8B model. All HIVE protocols remain active 1:1.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+                Text(
+                    text = "Model Status: Ready (Bundled)",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFF4CAF50), // Green
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+
             // Apis section
-            SectionHeader("Apis Server")
+            SectionHeader("Apis Server (Queen)")
             MonoTextField(
                 value = hiveServerUrl,
                 onValueChange = { hiveServerUrl = it },
                 label = "Server URL",
                 placeholder = "http://192.168.1.239:8420",
                 keyboardType = KeyboardType.Uri,
+                enabled = inferenceMode == SettingsManager.InferenceMode.QUEEN
             )
             MonoTextField(
                 value = hiveAuthToken,
                 onValueChange = { hiveAuthToken = it },
                 label = "Auth Token (JWT)",
                 placeholder = "eyJhbGci...",
+                enabled = inferenceMode == SettingsManager.InferenceMode.QUEEN
             )
 
             // WebRTC section (optional)
@@ -146,12 +190,33 @@ private fun SectionHeader(title: String) {
 }
 
 @Composable
+private fun ModeButton(
+    text: String,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    androidx.compose.material3.Button(
+        onClick = onClick,
+        modifier = modifier,
+        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+            containerColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+            contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+        ),
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Text(text, fontSize = 12.sp)
+    }
+}
+
+@Composable
 private fun MonoTextField(
     value: String,
     onValueChange: (String) -> Unit,
     label: String,
     placeholder: String,
     keyboardType: KeyboardType = KeyboardType.Text,
+    enabled: Boolean = true,
 ) {
     OutlinedTextField(
         value = value,
@@ -162,5 +227,6 @@ private fun MonoTextField(
         textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+        enabled = enabled,
     )
 }

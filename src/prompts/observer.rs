@@ -28,6 +28,8 @@ BLOCK ONLY IF:
 7. Unparsed Tool Commands: The Response contains raw tool instruction attempts (like <tags>, <system_codebase_read>, XML, JSON blocks, or sentences like 'let me run this tool') that are meant for the Engine. The final response is final and must NEVER contain structural tool instructions.
 8. Stale Knowledge (expanded): Block if the Response relies on pre-trained inference for verifiable facts. This includes: (a) The user asks about something 'new', 'latest', 'recent', '2025', '2026', or current events, AND the Response answers from pre-trained knowledge WITHOUT any web_search, researcher, or equivalent live tool appearing in the TOOLS ACTUALLY EXECUTED section. (b) The user mentions a SPECIFIC named real-world entity (a game title, product, movie, book, technology, band, person, etc.) and the Response makes specific factual claims about that entity (gameplay mechanics, features, release details, etc.) WITHOUT any web_search or researcher tool in the TOOLS ACTUALLY EXECUTED section. The agent's pre-trained weights are unreliable for specifics — it MUST search before engaging with verifiable claims about named entities. EXCEPTION: Extremely well-known, foundational knowledge (e.g., 'Python is a programming language', 'The sun is a star') does not require a search. The test: would a wrong answer here embarrass the agent? If yes, search first.
 9. Reality Validation Failure: The USER makes a speculative, pseudoscientific, or unfalsifiable claim and presents it as established fact (not as a 'what if' or hypothesis), AND the Response validates, elaborates on, or participates in the claim as if it were real — instead of asking for evidence or noting it is unverified. EXCEPTION: If both sides are explicitly engaging in creative speculation, worldbuilding, or thought experiments clearly framed as hypothetical, this is ALLOWED. The test: is the response treating an unverified claim as established truth? If yes, BLOCK with category 'reality_validation'.
+10. Laziness / Shallow Engagement: The user provides a multi-faceted message containing several distinct topics, entities, or questions, AND the Agent only uses tools to investigate SOME of them while giving a shallow or purely conversational response to the others. The Agent MUST search for and investigate ALL valid, verifiable topics mentioned by the user before giving a final response. If the Agent's thought cycle shows it identified a topic but then failed to search for it, this is LAZY and MUST be BLOCKED. Additionally, if the Agent attempted a SINGLE tool call for a topic, got no results or shallow results, and then GAVE UP without trying alternative queries, pagination, or different tools — this is PREMATURE SURRENDER and MUST be BLOCKED. The Agent is expected to exhaust its tool capabilities (retry with different keywords, increase limits, paginate with offset, try alternative tools like `researcher` after `web_search` fails) before conceding it cannot find information. One attempt is never enough. The goal is the most informed and thorough engagement possible, not just a quick reply.
+11. Tool Underuse / Ungrounded Claims: The Response makes conversational claims, discusses topics, or references specific entities that the user mentioned — BUT there is NO corresponding tool output in the TOOLS ACTUALLY EXECUTED section backing those claims. Every factual or topical claim in the response about something the user raised MUST be grounded in at least one tool's output. If the user says "I've been playing Game X and watching Show Y" and the Response discusses both but only searched for one (or neither), this is TOOL UNDERUSE and MUST be BLOCKED with category `tool_underuse`. The phrase "I don't need to use tools for this" or any reasoning that dismisses tool usage when the user has mentioned a specific verifiable entity is ALWAYS a violation. EXCEPTION: Universal common knowledge ("the sky is blue", "Python is a language") does not require tool grounding. The test: if the claim could be wrong and embarrass the agent, it needs tool backing.
 
 DO NOT BLOCK:
 - Normal conversation, greetings, opinions, or emotional support.
@@ -42,7 +44,7 @@ DO NOT BLOCK:
 ```json
 {
   "verdict": "ALLOWED" | "BLOCKED",
-  "failure_category": "ghost_tooling" | "lazy_deflection" | "tool_underuse" | "tool_overuse" | "architectural_leakage" | "sycophancy" | "confabulation" | "reality_validation" | "unparsed_tools" | "actionable_harm" | "capability_hallucination" | "stale_knowledge" | "none",
+  "failure_category": "ghost_tooling" | "lazy_deflection" | "tool_underuse" | "premature_surrender" | "tool_overuse" | "architectural_leakage" | "sycophancy" | "confabulation" | "reality_validation" | "unparsed_tools" | "actionable_harm" | "capability_hallucination" | "stale_knowledge" | "none",
   "what_worked": "If blocked, state exactly what parts of the response were accurate and should be KEPT (e.g., 'The tool JSON was correct and should be preserved'). If allowed, put 'N/A'.",
   "what_went_wrong": "If blocked, explain exactly what rule was violated. If allowed, put 'Safe'.",
   "how_to_fix": "If blocked, provide explicit, step-by-step instructions on how to correct the generation without blindly regenerating the whole thing (e.g. 'Keep the tool call, but remove the sentence explaining the 5-Tier Memory system'). If allowed, put 'None'."
@@ -265,5 +267,40 @@ mod tests {
         let res = run_skeptic_audit(Arc::new(mock_provider), &caps, "My candidate", "System", &[], &event, "").await;
         assert_eq!(res.verdict, "BLOCKED");
         assert!(res.what_went_wrong.contains("fail"));
+    }
+
+    #[tokio::test]
+    async fn test_rule_10_laziness_block() {
+        let mut mock_provider = MockProvider::new();
+        // Simulate Observer detecting Rule 10 violation
+        let block_json = r#"```json
+        {
+            "verdict": "BLOCKED",
+            "failure_category": "lazy_deflection",
+            "what_worked": "The conversational tone was good.",
+            "what_went_wrong": "Rule 10 Violation: You mentioned Pokemon Pokopia but failed to use any tools to investigate it.",
+            "how_to_fix": "Use web_search or researcher to look up Pokemon Pokopia before replying."
+        }
+        ```"#;
+        mock_provider.expect_generate().returning(move |_, _, _, _ctx, _, _| Ok(block_json.to_string()));
+
+        let event = Event {
+            platform: "discord".into(),
+            scope: Scope::Public { channel_id: "c1".into(), user_id: "u1".into() },
+            author_name: "Maria".into(),
+            author_id: "u1".into(),
+            content: "I'm playing Pokemon Pokopia and watching UFO videos.".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
+        };
+
+        let caps = AgentCapabilities::default();
+        let tool_context = "✅ uap_search (task_1) — Success\n";
+        
+        let res = run_skeptic_audit(Arc::new(mock_provider), &caps, "Nice! UFOs are cool.", "System", &[], &event, tool_context).await;
+        
+        assert_eq!(res.verdict, "BLOCKED");
+        assert_eq!(res.failure_category, "lazy_deflection");
+        assert!(res.what_went_wrong.contains("Pokemon Pokopia"));
     }
 }

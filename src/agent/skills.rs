@@ -107,6 +107,45 @@ pub async fn execute_manage_skill(
                 }
             }
         }
+        "info" => {
+            if skill_name.is_empty() {
+                "Error: Must specify name:[skill.ext]".into()
+            } else {
+                let target_path = skills_dir.join(&skill_name);
+                if !target_path.exists() {
+                    format!("Error: Skill '{}' not found in current scope.", skill_name)
+                } else if let Ok(content) = tokio::fs::read_to_string(&target_path).await {
+                    let mut args = std::collections::HashSet::new();
+                    // Heuristic extraction
+                    if skill_name.ends_with(".py") {
+                        if content.contains("argparse") {
+                            for line in content.lines() {
+                                if line.contains("add_argument") {
+                                    args.insert(line.trim().to_string());
+                                }
+                            }
+                        }
+                        if content.contains("sys.argv") || content.contains("sys.stdin") {
+                            args.insert("Requires parameters via sys.argv[] or stdin JSON".to_string());
+                        }
+                    } else if skill_name.ends_with(".sh") {
+                        for i in 1..=9 {
+                            if content.contains(&format!("${}", i)) {
+                                args.insert(format!("Positional ARG ${}", i));
+                            }
+                        }
+                    }
+                    if args.is_empty() {
+                        format!("Skill '{}' requires no obvious arguments, or uses non-standard parsing.", skill_name)
+                    } else {
+                        let arg_list: Vec<String> = args.into_iter().collect();
+                        format!("Skill '{}' expected arguments heuristic:\n- {}", skill_name, arg_list.join("\n- "))
+                    }
+                } else {
+                    format!("Failed to read skill '{}'.", skill_name)
+                }
+            }
+        }
         "execute" => {
             if skill_name.is_empty() {
                 "Error: Must specify name:[skill.py]".into()

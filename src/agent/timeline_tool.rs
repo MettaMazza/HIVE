@@ -12,23 +12,32 @@ pub async fn execute_search_timeline(
     _memory: Arc<MemoryStore>,
     telemetry_tx: Option<mpsc::Sender<String>>,
     current_scope: &Scope,
+    drives: Option<Arc<crate::engine::drives::DriveSystem>>,
 ) -> ToolResult {
     if let Some(ref tx) = telemetry_tx {
         let _ = tx.send("🧠 Timeline Drone executing...\n".to_string()).await;
     }
     tracing::debug!("[AGENT:timeline] ▶ task_id={}", task_id);
+    
+    // Partial uncertainty reduction: contextual retrieval helps settle entropy
+    if let Some(d) = drives {
+        d.modify_drive("uncertainty", -10.0).await;
+    }
+
     let action = extract_tag(&description, "action:").unwrap_or("search".to_string()).to_lowercase();
     let query_raw = extract_tag(&description, "query:").unwrap_or_default().to_lowercase();
     let limit_str = extract_tag(&description, "limit:").unwrap_or("50".to_string());
     let limit: usize = limit_str.parse().unwrap_or(50);
+    let offset_str = extract_tag(&description, "offset:").unwrap_or("0".to_string());
+    let offset: usize = offset_str.parse().unwrap_or(0);
     let scope_override = extract_tag(&description, "scope:").unwrap_or_default().to_lowercase();
 
     // Split query into individual search terms for ANY-word matching
     let query_terms: Vec<&str> = query_raw.split_whitespace().collect();
     let is_browse = action == "recent" || action == "browse" || action == "read";
     let is_exact = action == "exact";
-    // If action is "search" but no query provided, treat as browse
-    let is_browse = is_browse || (action == "search" && query_raw.is_empty());
+    let is_semantic_cluster = action == "semantic_cluster";
+    let is_browse = is_browse || is_semantic_cluster || (action == "search" && query_raw.is_empty());
 
     // The real directory structure is:
     //   memory/public_{channel_id}/{user_id}/timeline.jsonl   (public)
@@ -107,6 +116,8 @@ pub async fn execute_search_timeline(
                     .and_then(|n| n.to_str())
                     .unwrap_or("unknown");
 
+                let mut skipped = 0;
+                let mut last_dt: Option<chrono::DateTime<chrono::FixedOffset>> = None;
                 for line in all_lines.iter().rev() {
                     // Browse: return all. Exact: full-phrase match. Search: any-word match.
                     let matches = if is_browse {
@@ -128,7 +139,24 @@ pub async fn execute_search_timeline(
                                     continue;
                                 }
 
-                                let timestamp_str = json["timestamp"].as_str().unwrap_or("00:00:00");
+                                if skipped < offset {
+                                    skipped += 1;
+                                    continue;
+                                }
+
+                                let timestamp_str = json["timestamp"].as_str().unwrap_or("1970-01-01T00:00:00Z");
+                                let current_dt = chrono::DateTime::parse_from_rfc3339(timestamp_str).ok();
+                                
+                                if is_semantic_cluster {
+                                    if let (Some(curr), Some(last)) = (current_dt, last_dt) {
+                                        let hours = last.signed_duration_since(curr).num_hours();
+                                        if hours >= 1 {
+                                            results.push(format!("--- [SESSION BREAK] (Delta: {}h) ---", hours));
+                                        }
+                                    }
+                                    last_dt = current_dt;
+                                }
+
                                 let msg_idx = json["message_index"].as_u64().unwrap_or(0);
 
                                 let prefix = if timeline_paths.len() > 1 {
@@ -177,10 +205,11 @@ pub async fn execute_search_timeline(
             status: ToolStatus::Success,
         }
     } else {
-        let mut final_text = format!("Timeline Search Results for '{}' ({} timeline(s) searched):\n\n{}", query_raw, searched_count, results.join("\n\n"));
+        let mut final_text = String::new();
         if results.len() >= limit {
-            final_text.push_str(&format!("\n\n[SYSTEM WARNING: Search truncated at limit:[{}]. If the context isn't in the available results, you need to look further by running another search with a higher limit or more specific keywords before concluding it doesn't exist.]", limit));
+            final_text.push_str(&format!("[SYSTEM WARNING LIMIT HIT: This search reached limit:[{}]. If you need OLDER history, you MUST immediately run search_timeline again with `offset:[{}]` to paginate backwards and skip these {} recent matches before trying to answer from incomplete data!]\n\n", limit, offset + limit, offset + limit));
         }
+        final_text.push_str(&format!("Timeline Search Results for '{}' ({} timeline(s) searched):\n\n{}", query_raw, searched_count, results.join("\n\n")));
         ToolResult {
             task_id,
             output: final_text,
@@ -232,11 +261,11 @@ mod tests {
         let scope = Scope::Private { user_id: "test_tl_user".to_string() };
 
         // Empty query triggers browse mode (returns recent entries, not an error)
-        let res = execute_search_timeline("1".into(), "limit:[5]".into(), mem.clone(), None, &scope).await;
+        let res = execute_search_timeline("1".into(), "limit:[5]".into(), mem.clone(), None, &scope, None).await;
         assert_eq!(res.status, ToolStatus::Success);
 
         // Empty timeline search should yield success but "no timeline"
-        let res = execute_search_timeline("1".into(), "query:[apple]".into(), mem.clone(), None, &scope).await;
+        let res = execute_search_timeline("1".into(), "query:[apple]".into(), mem.clone(), None, &scope, None).await;
         assert!(res.output.contains("No long-term timeline exists"));
 
         // Setup some fake timeline data at the CORRECT path: memory/private_{user_id}/timeline.jsonl
@@ -252,14 +281,14 @@ mod tests {
         tokio::fs::write(&file_path, format!("{}\n{}\n{}\n", ev1, ev2, ev3)).await.unwrap();
 
         // Search for 'apple' with standard limit
-        let res = execute_search_timeline("1".into(), "query:[apple]".into(), mem.clone(), None, &scope).await;
+        let res = execute_search_timeline("1".into(), "query:[apple]".into(), mem.clone(), None, &scope, None).await;
         assert_eq!(res.status, ToolStatus::Success);
         assert!(res.output.contains("User: I like apple pie."));
         assert!(res.output.contains("User: Another apple reference."));
         assert!(!res.output.contains("banana"));
 
         // Search for 'apple' with limit 1
-        let res = execute_search_timeline("2".into(), "query:[apple] limit:[1]".into(), mem.clone(), None, &scope).await;
+        let res = execute_search_timeline("2".into(), "query:[apple] limit:[1]".into(), mem.clone(), None, &scope, None).await;
         assert_eq!(res.status, ToolStatus::Success);
         assert!(!res.output.contains("User: I like apple pie.")); // Older one should be dropped
         assert!(res.output.contains("User: Another apple reference.")); // Newer one is kept
@@ -281,11 +310,11 @@ mod tests {
         tokio::fs::write(dir_b.join("timeline.jsonl"), format!("{}\n", ev)).await.unwrap();
 
         // Searching from channel_A for Zenzic (default scope = own user) should fail
-        let res = execute_search_timeline("1".into(), "query:[zenzic]".into(), mem.clone(), None, &scope).await;
+        let res = execute_search_timeline("1".into(), "query:[zenzic]".into(), mem.clone(), None, &scope, None).await;
         assert!(res.output.contains("No long-term timeline exists"), "Default scope should not see other channels");
 
         // With scope:[xchannel_B], should find it (searches all users in that channel)
-        let res = execute_search_timeline("2".into(), "query:[zenzic] scope:[xchannel_B]".into(), mem.clone(), None, &scope).await;
+        let res = execute_search_timeline("2".into(), "query:[zenzic] scope:[xchannel_B]".into(), mem.clone(), None, &scope, None).await;
         assert_eq!(res.status, ToolStatus::Success);
         assert!(res.output.contains("Zenzic"), "Cross-channel search should find Zenzic, got: {}", res.output);
 
@@ -311,12 +340,12 @@ mod tests {
         tokio::fs::write(dir_bob.join("timeline.jsonl"), format!("{}\n", ev_bob)).await.unwrap();
 
         // Default search: only finds Alice (current user)
-        let res = execute_search_timeline("1".into(), "query:[hello]".into(), mem.clone(), None, &scope).await;
+        let res = execute_search_timeline("1".into(), "query:[hello]".into(), mem.clone(), None, &scope, None).await;
         assert!(res.output.contains("Alice"), "Should find Alice: {}", res.output);
         assert!(!res.output.contains("Bob"), "Should NOT find Bob in default scope: {}", res.output);
 
         // scope:[channel] search: finds BOTH users
-        let res = execute_search_timeline("2".into(), "query:[hello] scope:[channel]".into(), mem.clone(), None, &scope).await;
+        let res = execute_search_timeline("2".into(), "query:[hello] scope:[channel]".into(), mem.clone(), None, &scope, None).await;
         assert!(res.output.contains("Alice"), "Channel search should find Alice: {}", res.output);
         assert!(res.output.contains("Bob"), "Channel search should find Bob: {}", res.output);
 

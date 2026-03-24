@@ -98,9 +98,9 @@ pub struct OllamaProvider {
 }
 
 impl OllamaProvider {
-    /// Connects to a local Ollama instance defaulting to `qwen3.5:35b` as requested.
+    /// Connects to a local Ollama instance defaulting to `qwen3.5:122b` as requested.
     pub fn new() -> Self {
-        Self::with_model("qwen3.5:35b")
+        Self::with_model("qwen3.5:122b")
     }
 
     /// Creates an OllamaProvider targeting a specific model.
@@ -151,7 +151,7 @@ impl Provider for OllamaProvider {
 
             // Inject the author name softly into user messages so Apis knows who is talking
             let content = if role == "user" {
-                format!("{} {}: {}", prefix, event.author_name, event.content)
+                format!("{} [AUTHOR: {} -> APIS]: {}", prefix, event.author_name, event.content)
             } else {
                 // SPRINT 3: JSON Content Forcing
                 // If Apis responded in plain text, wrap it into a mock `reply_to_request` execution.
@@ -207,7 +207,7 @@ impl Provider for OllamaProvider {
             images: None,
         });
 
-        let mut final_user_message = format!("{}: {}", new_event.author_name, new_event.content);
+        let mut final_user_message = format!("[AUTHOR: {} -> APIS]: {}", new_event.author_name, new_event.content);
         if !agent_context.is_empty() {
             final_user_message.push_str("\n\n[ISOLATED EXECUTION TIMELINE]\n");
             final_user_message.push_str(agent_context);

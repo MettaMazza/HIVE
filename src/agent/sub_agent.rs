@@ -26,6 +26,10 @@ pub struct SubAgentSpec {
     pub scope: Scope,
     /// The requesting user's ID — used for admin checks
     pub user_id: String,
+    /// 3D Coordinate mapping for Turing Grid segregation
+    pub spatial_offset: Option<(i32, i32, i32)>,
+    /// How many layers deep this agent is currently running
+    pub swarm_depth: u8,
 }
 
 impl Default for SubAgentSpec {
@@ -36,6 +40,8 @@ impl Default for SubAgentSpec {
             timeout_secs: 300,
             scope: Scope::Private { user_id: "agent".into() },
             user_id: "agent".into(),
+            spatial_offset: None,
+            swarm_depth: 0,
         }
     }
 }
@@ -105,7 +111,7 @@ pub async fn execute_sub_agent(
     agent_id: String,
     spec: SubAgentSpec,
     provider: Arc<dyn Provider>,
-    _memory: Arc<MemoryStore>,
+    memory: Arc<MemoryStore>,
     telemetry_tx: mpsc::Sender<String>,
     agent_manager: Arc<crate::agent::AgentManager>,
     capabilities: Arc<crate::models::capabilities::AgentCapabilities>,
@@ -122,6 +128,12 @@ pub async fn execute_sub_agent(
     )).await;
 
     // Build system prompt for this sub-agent
+    let offset_msg = if let Some((x, y, z)) = spec.spatial_offset {
+        format!("\n[SPATIAL SWARM ASSIGNMENT]\nYour physical workspace is anchored at Turing Grid coordinates [{}, {}, {}]. Navigate to these exact coordinates using `turing_move` before writing any pipeline scripts. Do not overwrite memory outside your sector.\n", x, y, z)
+    } else {
+        String::new()
+    };
+    
     let system_prompt = format!(
         "You are a Sub-Agent within the HIVE swarm. Your ID is '{agent_id}'.\n\
          You have been delegated a specific task by the Queen (main agent).\n\
@@ -131,14 +143,16 @@ pub async fn execute_sub_agent(
          2. Use tools as needed — you have the same access as the main agent.\n\
          3. When your task is complete, use `reply_to_request` with your findings.\n\
          4. Be concise but thorough in your final output.\n\
-         5. If a tool fails, note it and work around it.\n\n\
+         5. If a tool fails, note it and work around it.\n{offset}\n\
          YOUR TASK:\n{task}\n",
         agent_id = agent_id,
+        offset = offset_msg,
         task = spec.task,
     );
 
     // Inject pipeline context from previous agent if in pipeline mode
-    let tool_list = agent_manager.get_available_tools_text_for_platform("agent");
+    let is_autonomy = spec.user_id == "apis_autonomy";
+    let tool_list = agent_manager.get_available_tools_text_for_platform("agent", is_autonomy);
     let full_system = format!(
         "{}\n\n{}",
         system_prompt,
@@ -164,11 +178,11 @@ pub async fn execute_sub_agent(
     let tools_called_fallback = tools_called.clone();
     let result = tokio::time::timeout(timeout, async {
         loop {
-            current_turn += 1;
-            if current_turn > spec.max_turns {
+            if current_turn >= spec.max_turns {
                 tracing::warn!("[SUB-AGENT:{}] Hit max turns ({}), forcing completion", agent_id, spec.max_turns);
                 break;
             }
+            current_turn += 1;
 
             context.push_str(&format!("\n\nSub-Agent ReAct Turn {}\n", current_turn));
 
@@ -240,10 +254,12 @@ pub async fn execute_sub_agent(
                     thought: plan.thought.clone(),
                     tasks: safe_tasks,
                 };
+                
+                let pass_context = format!("[SWARM_DEPTH:{}] {}", spec.swarm_depth, spec.task);
 
                 let tool_results = agent_manager.execute_plan(
                     safe_plan,
-                    &spec.task,
+                    &pass_context,
                     spec.scope.clone(),
                     Some(telemetry_tx.clone()),
                     Some(agent_manager.clone()),
@@ -298,6 +314,17 @@ pub async fn execute_sub_agent(
         }
 
         // Max turns exceeded — return whatever context we have
+        let fatal_event = Event {
+            platform: "internal".into(),
+            scope: spec.scope.clone(),
+            author_name: "Swarm Watchdog".into(),
+            author_id: "system".into(),
+            content: format!("[SWARM FATAL] Agent '{}' hit max turns ({}).", agent_id, spec.max_turns),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
+        };
+        memory.add_event(fatal_event).await;
+
         SubAgentResult {
             agent_id: agent_id.clone(),
             output: format!("[Sub-agent hit max turns ({}). Partial context available.]", spec.max_turns),
@@ -315,6 +342,17 @@ pub async fn execute_sub_agent(
                 "⏱️ **[{}]** Timed out after {}s",
                 agent_id, spec.timeout_secs
             )).await;
+            
+            let fatal_event = Event {
+                platform: "internal".into(),
+                scope: spec.scope.clone(),
+                author_name: "Swarm Watchdog".into(),
+                author_id: "system".into(),
+                content: format!("[SWARM FATAL] Agent '{}' Timed Out after {}s.", agent_id, spec.timeout_secs),
+                timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                message_index: None,
+            };
+            memory.add_event(fatal_event).await;
 
             SubAgentResult {
                 agent_id,
@@ -334,14 +372,14 @@ mod tests {
     use crate::providers::MockProvider;
     use crate::models::capabilities::AgentCapabilities;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_sub_agent_spec_defaults() {
         let spec = SubAgentSpec::default();
         assert_eq!(spec.max_turns, 8);
         assert_eq!(spec.timeout_secs, 300);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_spawn_strategy_from_str() {
         assert_eq!(SpawnStrategy::from_str("parallel"), SpawnStrategy::Parallel);
         assert_eq!(SpawnStrategy::from_str("pipeline"), SpawnStrategy::Pipeline);
@@ -350,12 +388,12 @@ mod tests {
         assert_eq!(SpawnStrategy::from_str("unknown"), SpawnStrategy::Parallel);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_sub_agent_completes_on_reply() {
         let mut mock = MockProvider::new();
         mock.expect_generate()
             .returning(|_, _, _, _, _, _| {
-                Ok(r#"{"thought":"Done","tasks":[{"task_id":"reply","tool_type":"reply_to_request","description":"Here is my finding: test result","depends_on":[]}]}"#.to_string())
+                Ok(r#"{"thought":["A","B","C","D"],"tasks":[{"task_id":"reply","tool_type":"reply_to_request","description":"Here is my finding: test result","depends_on":[]}]}"#.to_string())
             });
 
         let provider: Arc<dyn Provider> = Arc::new(mock);
@@ -371,6 +409,8 @@ mod tests {
             timeout_secs: 30,
             scope: Scope::Private { user_id: "test".into() },
             user_id: "test".into(),
+            spatial_offset: None,
+            swarm_depth: 0,
         };
 
         let result = execute_sub_agent(
@@ -395,7 +435,7 @@ mod tests {
         // Always return a tool call, never reply_to_request
         mock.expect_generate()
             .returning(|_, _, _, _, _, _| {
-                Ok(r#"{"thought":"Searching...","tasks":[{"task_id":"s1","tool_type":"web_search","description":"test query","depends_on":[]}]}"#.to_string())
+                Ok(r#"{"thought":["A","B","C","D"],"tasks":[{"task_id":"s1","tool_type":"web_search","description":"test query","depends_on":[]}]}"#.to_string())
             });
 
         let provider: Arc<dyn Provider> = Arc::new(mock);
@@ -410,6 +450,8 @@ mod tests {
             timeout_secs: 30,
             scope: Scope::Private { user_id: "test".into() },
             user_id: "test".into(),
+            spatial_offset: None,
+            swarm_depth: 0,
         };
 
         let result = execute_sub_agent(
@@ -434,7 +476,7 @@ mod tests {
             .returning(|_, _, _, ctx, _, _| {
                 // Verify pipeline context is injected
                 assert!(ctx.contains("PREVIOUS AGENT"));
-                Ok(r#"{"thought":"Got context","tasks":[{"task_id":"reply","tool_type":"reply_to_request","description":"Processed pipeline data","depends_on":[]}]}"#.to_string())
+                Ok(r#"{"thought":["A","B","C","D"],"tasks":[{"task_id":"reply","tool_type":"reply_to_request","description":"Processed pipeline data","depends_on":[]}]}"#.to_string())
             });
 
         let provider: Arc<dyn Provider> = Arc::new(mock);
@@ -449,6 +491,8 @@ mod tests {
             timeout_secs: 30,
             scope: Scope::Private { user_id: "test".into() },
             user_id: "test".into(),
+            spatial_offset: None,
+            swarm_depth: 0,
         };
 
         let result = execute_sub_agent(

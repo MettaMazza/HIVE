@@ -110,6 +110,10 @@ async fn spawn_parallel(
 
     for (i, spec) in specs.into_iter().enumerate() {
         let agent_id = format!("swarm-{}", i + 1);
+        let mut spec = spec;
+        if spec.spatial_offset.is_none() {
+            spec.spatial_offset = Some((((i as i32) + 1) * 100, 0, 0));
+        }
         let p = provider.clone();
         let m = memory.clone();
         let tx = telemetry_tx.clone();
@@ -157,6 +161,10 @@ async fn spawn_pipeline(
 
     for (i, spec) in specs.into_iter().enumerate() {
         let agent_id = format!("pipe-{}", i + 1);
+        let mut spec = spec;
+        if spec.spatial_offset.is_none() {
+            spec.spatial_offset = Some((((i as i32) + 1) * 100, 100, 0));
+        }
 
         let result = crate::agent::sub_agent::execute_sub_agent(
             agent_id,
@@ -196,6 +204,10 @@ async fn spawn_competitive(
     let mut handles = vec![];
     for (i, spec) in specs.into_iter().enumerate() {
         let agent_id = format!("racer-{}", i + 1);
+        let mut spec = spec;
+        if spec.spatial_offset.is_none() {
+            spec.spatial_offset = Some((((i as i32) + 1) * 100, 200, 0));
+        }
         let p = provider.clone();
         let m = memory.clone();
         let tx = telemetry_tx.clone();
@@ -260,15 +272,17 @@ mod tests {
             timeout_secs: 10,
             scope: Scope::Private { user_id: "test".into() },
             user_id: "test".into(),
+            spatial_offset: None,
+            swarm_depth: 0,
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_parallel_spawn_multiple() {
         let mut mock = MockProvider::new();
         mock.expect_generate()
             .returning(|_, _, _, _, _, _| {
-                Ok(r#"{"thought":"Done","tasks":[{"task_id":"r","tool_type":"reply_to_request","description":"Agent output","depends_on":[]}]}"#.to_string())
+                Ok(r#"{"thought":["A","B","C","D"],"tasks":[{"task_id":"r","tool_type":"reply_to_request","description":"Agent output","depends_on":[]}]}"#.to_string())
             });
 
         let provider: Arc<dyn Provider> = Arc::new(mock);
@@ -293,7 +307,7 @@ mod tests {
         assert!(result.synthesis.is_none());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_strategy_from_str() {
         assert_eq!(SpawnStrategy::from_str("pipeline"), SpawnStrategy::Pipeline);
         assert_eq!(SpawnStrategy::from_str("competitive"), SpawnStrategy::Competitive);

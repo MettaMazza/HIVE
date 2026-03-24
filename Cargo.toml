@@ -28,7 +28,26 @@ dotenv = "0.15.0"
 base64 = "0.22.1"
 uuid = { version = "1.22.0", features = ["v4"] }
 tokio-tungstenite = "0.26.2"
+lettre = { version = "0.11.19", default-features = false, features = ["builder", "tokio1", "tokio1-rustls-tls", "smtp-transport"] }
+axum = "0.8.8"
+regex = "1.12.3"
+imap = "2"
+native-tls = "0.2"
+tower-http = { version = "0.6.8", features = ["fs", "cors"] }
+mailparse = "0.16.1"
 
 [dev-dependencies]
 tempfile = "3.26.0"
 wiremock = "0.6.5"
+
+[lib]
+name = "hive_core"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies.jni]
+version = "0.21.1"
+
+[dependencies.openssl]
+version = "0.10"
+features = ["vendored"]
+

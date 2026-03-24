@@ -71,6 +71,16 @@ pub async fn execute_operate_synaptic_graph(
             memory.synaptic.store_relationship(&from, &relation, &to).await;
             ToolResult { task_id, output: format!("Relationship stored: '{}' --[{}]--> '{}'", from, relation, to), tokens_used: 0, status: ToolStatus::Success }
         }
+        "link_memory" => {
+            let concept = extract_tag(&description, "concept:").unwrap_or_default();
+            let memory_type = extract_tag(&description, "type:").unwrap_or_default();
+            let id = extract_tag(&description, "id:").unwrap_or_default();
+            if concept.is_empty() || memory_type.is_empty() || id.is_empty() {
+                return ToolResult { task_id, output: "Error: 'link_memory' requires 'concept:', 'type:', and 'id:' fields. Example: action:[link_memory] concept:[User Objective] type:[timeline] id:[42]".to_string(), tokens_used: 0, status: ToolStatus::Failed("Missing fields".into()) };
+            }
+            memory.synaptic.store_relationship(&concept, "linked_memory", &format!("{}:{}", memory_type, id)).await;
+            ToolResult { task_id, output: format!("Concept '{}' successfully hard-linked to {} block [{}].", concept, memory_type, id), tokens_used: 0, status: ToolStatus::Success }
+        }
         "stats" => {
             let (nodes, edges) = memory.synaptic.stats().await;
             ToolResult { task_id, output: format!("Synaptic Graph Stats:\n- Nodes (concepts): {}\n- Edges (relationships): {}", nodes, edges), tokens_used: 0, status: ToolStatus::Success }

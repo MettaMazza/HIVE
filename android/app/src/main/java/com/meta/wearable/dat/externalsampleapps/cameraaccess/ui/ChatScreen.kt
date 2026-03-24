@@ -62,16 +62,20 @@ fun ChatScreen(
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
 
-    val apiClient = remember {
-        HiveApiClient(SettingsManager.hiveServerUrl).apply {
-            accessToken = SettingsManager.hiveAuthToken
-        }
-    }
 
     // Auto-scroll on new messages
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
             listState.animateScrollToItem(messages.size - 1)
+        }
+    }
+
+    // Sync local AI responses into message list
+    LaunchedEffect(uiState.aiTranscript) {
+        if (SettingsManager.isWorkerMode && uiState.aiTranscript.isNotEmpty()) {
+            val response = uiState.aiTranscript
+            messages = messages + ChatMessage(response, isUser = false)
+            geminiViewModel.clearTranscripts()
         }
     }
 
@@ -133,15 +137,27 @@ fun ChatScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(vertical = 8.dp),
                 ) {
-                    if (messages.isEmpty()) {
+                    if (messages.isEmpty() && !uiState.isDownloading) {
                         item {
                             EmptyState()
+                        }
+                    }
+                    if (uiState.isDownloading) {
+                        item {
+                            Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                                Text("Downloading Local Brain: ${(uiState.downloadProgress * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
+                                LinearProgressIndicator(
+                                    progress = uiState.downloadProgress,
+                                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                                    color = Color(0xFF4CAF50)
+                                )
+                            }
                         }
                     }
                     items(messages) { message ->
                         MessageBubble(message)
                     }
-                    if (isLoading) {
+                    if (isLoading || uiState.isInferring) {
                         item {
                             TypingIndicator()
                         }
@@ -161,11 +177,13 @@ fun ChatScreen(
 
                             scope.launch {
                                 try {
-                                    val response = apiClient.sendMessage(userMsg)
-                                    messages = messages + ChatMessage(
-                                        response.ifEmpty { "No response." },
-                                        isUser = false,
-                                    )
+                                    val response = geminiViewModel.sendTextMessage(userMsg)
+                                    if (!SettingsManager.isWorkerMode) {
+                                        messages = messages + ChatMessage(
+                                            response.ifEmpty { "No response." },
+                                            isUser = false,
+                                        )
+                                    }
                                 } catch (e: Exception) {
                                     messages = messages + ChatMessage(
                                         "Connection error: ${e.message}",
@@ -176,7 +194,7 @@ fun ChatScreen(
                             }
                         }
                     },
-                    isLoading = isLoading,
+                    isLoading = isLoading || uiState.isInferring,
                 )
             }
         }
@@ -376,7 +394,13 @@ private fun VoiceModeContent(
             isListening = uiState.isListening,
             onClick = {
                 if (uiState.isGeminiActive) geminiViewModel.stopSession()
-                else geminiViewModel.startSession()
+                else {
+                    // Trigger checkAndDownloadModel in startSession
+                    geminiViewModel.startSession()
+                    if (SettingsManager.isWorkerMode) {
+                        geminiViewModel.checkAndDownloadModel()
+                    }
+                }
             },
         )
 

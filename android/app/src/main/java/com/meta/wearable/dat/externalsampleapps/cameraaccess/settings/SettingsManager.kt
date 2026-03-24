@@ -57,6 +57,15 @@ object SettingsManager {
         get() = prefs.getString("hiveDeviceToken", null)
         set(value) = prefs.edit().putString("hiveDeviceToken", value).apply()
 
+    enum class InferenceMode { WORKER, QUEEN }
+
+    var inferenceMode: InferenceMode
+        get() = InferenceMode.valueOf(prefs.getString("inferenceMode", InferenceMode.WORKER.name) ?: InferenceMode.WORKER.name)
+        set(value) = prefs.edit().putString("inferenceMode", value.name).apply()
+
+    val isWorkerMode: Boolean
+        get() = inferenceMode == InferenceMode.WORKER
+
     fun resetAll() {
         prefs.edit().clear().apply()
     }

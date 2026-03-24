@@ -81,3 +81,30 @@ pub async fn execute_read_attachment(
         Err(e) => ToolResult { task_id, output: format!("Failed to fetch attachment: {}. The CDN URL may have expired.", e), tokens_used: 0, status: ToolStatus::Failed(e.to_string()) },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_empty_url() {
+        let r = execute_read_attachment("1".into(), "no url here".into(), None).await;
+        assert!(matches!(r.status, ToolStatus::Failed(_)));
+        assert!(r.output.contains("No valid URL"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_non_discord_url() {
+        let r = execute_read_attachment("1".into(), "url:[https://evil.com/file.txt]".into(), None).await;
+        assert!(matches!(r.status, ToolStatus::Failed(_)));
+        assert!(r.output.contains("Access Denied"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_discord_url_network_fail() {
+        // Valid domain but fake path — will fail at network level gracefully
+        let r = execute_read_attachment("1".into(), "url:[https://cdn.discordapp.com/fake/path]".into(), None).await;
+        // Either network error or HTTP error — both produce a ToolResult rather than panic
+        assert!(r.output.len() > 0);
+    }
+}

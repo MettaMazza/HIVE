@@ -138,7 +138,7 @@ pub fn dispatch_native_tool(
         let is_admin = capabilities.as_ref().map_or(false, |c| c.admin_users.contains(&invoker_uid));
 
         let handle = tokio::spawn(crate::agent::outreach::execute_outreach(
-            task_id, desc, outreach_gate, inbox, drives, tx_clone, outbound_tx, invoker_uid, is_admin,
+            task_id, desc, outreach_gate, inbox, drives, tx_clone, outbound_tx, invoker_uid, is_admin, goal_store.clone()
         ));
         return Some(handle);
     } 
@@ -201,6 +201,41 @@ pub fn dispatch_native_tool(
         });
         return Some(handle);
     } 
+    
+    if tool_type == "take_snapshot" {
+        let handle = tokio::spawn(async move {
+            crate::agent::visualizer_tool::execute_visualizer(task_id, desc, tx_clone).await
+        });
+        return Some(handle);
+    }
+    
+    if tool_type == "send_email" {
+        let handle = tokio::spawn(async move {
+            crate::agent::email_tool::execute_email(task_id, desc, tx_clone).await
+        });
+        return Some(handle);
+    }
+    
+    if tool_type == "set_alarm" {
+        let handle = tokio::spawn(async move {
+            crate::agent::calendar_tool::execute_calendar(task_id, desc, tx_clone).await
+        });
+        return Some(handle);
+    }
+    
+    if tool_type == "smart_home" {
+        let handle = tokio::spawn(async move {
+            crate::agent::smarthome_tool::execute_smarthome(task_id, desc, tx_clone).await
+        });
+        return Some(handle);
+    }
+    
+    if tool_type == "system_recompile" {
+        let handle = tokio::spawn(async move {
+            crate::agent::compiler_tool::execute_compiler(task_id, desc, tx_clone).await
+        });
+        return Some(handle);
+    }
     
     if tool_type == "operate_turing_grid" {
         let mem_clone = memory.clone();
@@ -299,8 +334,9 @@ pub fn dispatch_native_tool(
     } 
     
     if tool_type == "autonomy_activity" {
+        let drives_clone = drives.clone();
         let handle = tokio::spawn(async move {
-            crate::agent::autonomy_tool::execute_autonomy_activity(task_id, desc, tx_clone).await
+            crate::agent::autonomy_tool::execute_autonomy_activity(task_id, desc, drives_clone, tx_clone).await
         });
         return Some(handle);
     }
@@ -315,8 +351,12 @@ pub fn dispatch_native_tool(
     if tool_type == "review_reasoning" {
         let mem_clone = memory.clone();
         let scope_clone = scope.clone();
+        let am_clone = agent_manager.clone();
+        let prov_clone = Some(provider.clone());
+        let caps_clone = capabilities.clone();
+        let drives_clone = drives.clone();
         let handle = tokio::spawn(async move {
-            crate::agent::reasoning_tool::execute_review_reasoning(task_id, desc, mem_clone, scope_clone, tx_clone).await
+            crate::agent::reasoning_tool::execute_review_reasoning(task_id, desc, mem_clone, scope_clone, tx_clone, am_clone, prov_clone, caps_clone, drives_clone).await
         });
         return Some(handle);
     }
@@ -348,8 +388,9 @@ pub fn dispatch_native_tool(
     
     if tool_type == "manage_routine" {
         let mem_clone = memory.clone();
+        let drives_clone = drives.clone();
         let handle = tokio::spawn(async move {
-            crate::agent::routines::execute_manage_routine(task_id, desc, mem_clone, tx_clone).await
+            crate::agent::routines::execute_manage_routine(task_id, desc, mem_clone, tx_clone, drives_clone).await
         });
         return Some(handle);
     }
@@ -395,8 +436,9 @@ pub fn dispatch_native_tool(
     if tool_type == "search_timeline" {
         let mem_clone = memory.clone();
         let scope_clone = scope.clone();
+        let drives_clone = drives.clone();
         let handle = tokio::spawn(async move {
-            crate::agent::timeline_tool::execute_search_timeline(task_id, desc, mem_clone, tx_clone, &scope_clone).await
+            crate::agent::timeline_tool::execute_search_timeline(task_id, desc, mem_clone, tx_clone, &scope_clone, drives_clone).await
         });
         return Some(handle);
     }
@@ -404,8 +446,9 @@ pub fn dispatch_native_tool(
     if tool_type == "manage_scratchpad" {
         let mem_clone = memory.clone();
         let scope_clone = scope.clone();
+        let drives_clone = drives.clone();
         let handle = tokio::spawn(async move {
-            crate::agent::scratchpad_tool::execute_manage_scratchpad(task_id, desc, mem_clone, tx_clone, &scope_clone).await
+            crate::agent::scratchpad_tool::execute_manage_scratchpad(task_id, desc, mem_clone, tx_clone, &scope_clone, drives_clone).await
         });
         return Some(handle);
     }
@@ -442,6 +485,8 @@ pub fn dispatch_native_tool(
         let caps = capabilities.clone();
         let prov = provider.clone();
         let mem = memory.clone();
+        
+        let context_clone = context.to_string();
 
         if am.is_none() || caps.is_none() {
             let handle = tokio::spawn(async move {
@@ -478,6 +523,19 @@ pub fn dispatch_native_tool(
             } else {
                 vec![goal]
             };
+            
+            let swarm_depth = crate::agent::preferences::extract_tag(&context_clone, "SWARM_DEPTH:")
+                .and_then(|d| d.parse::<u8>().ok())
+                .unwrap_or(0);
+                
+            if swarm_depth >= 2 {
+                return ToolResult {
+                    task_id,
+                    output: "Swarm delegation failed: Recursive Swarm Depth Exhausted (Limit: 2). Cannot delegate further.".into(),
+                    tokens_used: 0,
+                    status: ToolStatus::Failed("Depth Limit Reached".into()),
+                };
+            }
 
             if task_list.is_empty() {
                 return ToolResult {
@@ -501,6 +559,8 @@ pub fn dispatch_native_tool(
                     timeout_secs: 300,
                     scope: scope_clone.clone(),
                     user_id: user_id.clone(),
+                    spatial_offset: None,
+                    swarm_depth: swarm_depth + 1,
                 }
             }).collect();
 
@@ -560,6 +620,26 @@ pub fn dispatch_native_tool(
         "escalate_to_admin", "report_concern", "rate_limit_user", "request_consent", "wellbeing_status"
     ];
     if moderation_tools.contains(&tool_type) {
+        // AUTONOMY GUARD: Block moderation tools during autonomy to prevent Apis from
+        // testing self-moderation on herself, which causes autonomy to silently fail or hang.
+        let is_autonomy = match scope {
+            Scope::Public { user_id, .. } => user_id == "apis_autonomy",
+            Scope::Private { user_id } => user_id == "apis_autonomy",
+        };
+        if is_autonomy {
+            let tool_type_clone = tool_type.to_string();
+            tracing::warn!("[AUTONOMY GUARD] 🛡️ Blocked self-moderation tool '{}' during autonomy mode.", tool_type_clone);
+            let handle = tokio::spawn(async move {
+                ToolResult {
+                    task_id,
+                    output: format!("SYSTEM: Tool '{}' is disabled during Autonomy mode. Self-moderation tools cannot be used on yourself. Choose a different action.", tool_type_clone),
+                    tokens_used: 0,
+                    status: ToolStatus::Failed("Blocked in Autonomy".into()),
+                }
+            });
+            return Some(handle);
+        }
+
         let tool_type_clone = tool_type.to_string();
         let scope_clone = scope.clone();
         let handle = tokio::spawn(async move {
@@ -612,6 +692,7 @@ mod tests {
         let tools = vec![
             "channel_reader", "outreach", "codebase_list", "codebase_read",
             "web_search", "researcher", "generate_image", "voice_synthesizer",
+            "take_snapshot", "send_email", "set_alarm", "smart_home", "system_recompile",
             "operate_turing_grid", "file_writer", "read_logs", "run_bash_command",
             "process_manager", "file_system_operator", "autonomy_activity",
             "review_reasoning", "read_attachment", "manage_user_preferences",

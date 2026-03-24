@@ -1,5 +1,6 @@
 use crate::models::tool::{ToolResult, ToolStatus};
 use tokio::sync::mpsc;
+use headless_chrome::Browser;
 
 pub async fn execute_web_search(
     task_id: String,
@@ -19,7 +20,7 @@ pub async fn execute_web_search(
 
     telemetry!(
         telemetry_tx,
-        format!("🌐 Web Search Drone: searching for '{}'…\n", query)
+        format!("🌐 Web Search Drone: processing request…\n")
     );
 
     let client = reqwest::Client::builder()
@@ -27,6 +28,90 @@ pub async fn execute_web_search(
         .user_agent("Mozilla/5.0 (compatible; HIVE/1.0)")
         .build()
         .unwrap_or_default();
+        
+    let action = crate::agent::preferences::extract_tag(&description, "action:").unwrap_or_else(|| "search".to_string());
+    
+    // ── Tier 0: Direct URL Visit ─────────────────────────────────────────────
+    if action == "visit" {
+        let url = crate::agent::preferences::extract_tag(&description, "url:").unwrap_or_default();
+        if url.is_empty() {
+             return ToolResult { task_id, output: "Error: Missing url:[...]".into(), tokens_used: 0, status: ToolStatus::Failed("Missing url".into()) };
+        }
+        telemetry!(telemetry_tx, format!("  → Visiting Direct URL: {}\n", url));
+        match client.get(&url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                let html = resp.text().await.unwrap_or_default();
+                let stripped = strip_html_tags(&html);
+                let payload = stripped.split_whitespace().collect::<Vec<_>>().join(" ");
+                // Cap at 10,000 characters to prevent buffer blowouts
+                let chunk: String = payload.chars().take(10000).collect();
+                telemetry!(telemetry_tx, "  ✅ Visit complete.\n".to_string());
+                return ToolResult {
+                     task_id,
+                     output: format!("--- WEBPAGE CONTENT ({}) ---\n{}", url, chunk),
+                     tokens_used: 0,
+                     status: ToolStatus::Success,
+                };
+            }
+            Ok(resp) => {
+                return ToolResult { task_id, output: format!("HTTP Error: {}", resp.status()), tokens_used: 0, status: ToolStatus::Failed("HTTP error".into()) };
+            }
+            Err(e) => {
+                return ToolResult { task_id, output: format!("Network Error: {}", e), tokens_used: 0, status: ToolStatus::Failed("Network error".into()) };
+            }
+        }
+    }
+
+    // ── Tier 0.5: DOM Headless Navigation ────────────────────────────────────
+    if action == "navigate_dom" {
+        let url = crate::agent::preferences::extract_tag(&description, "url:").unwrap_or_default();
+        if url.is_empty() {
+             return ToolResult { task_id, output: "Error: Missing url:[...]".into(), tokens_used: 0, status: ToolStatus::Failed("Missing url".into()) };
+        }
+        
+        let css_selector = crate::agent::preferences::extract_tag(&description, "css_selector:").unwrap_or_else(|| "body".to_string());
+        
+        telemetry!(telemetry_tx, format!("  → Spinning up Headless Chrome for DOM Navigation: {}\n", url));
+        
+        let c_url = url.clone();
+        let c_css = css_selector.clone();
+        
+        // Browser operations are blocking; run inside spawn_blocking
+        let result = tokio::task::spawn_blocking(move || -> Result<String, String> {
+            let browser = Browser::default().map_err(|e| format!("Browser launch failed: {:?}", e))?;
+            let tab = browser.new_tab().map_err(|e| format!("Failed to open tab: {:?}", e))?;
+            
+            tab.navigate_to(&c_url).map_err(|e| format!("Navigation failed: {:?}", e))?;
+            tab.wait_until_navigated().map_err(|e| format!("Wait for navigation failed: {:?}", e))?;
+            
+            // Wait for selector
+            let element = tab.wait_for_element(&c_css).map_err(|e| format!("Selector not found '{}': {:?}", c_css, e))?;
+            
+            let text = element.get_inner_text().map_err(|e| format!("Failed to extract inner text: {:?}", e))?;
+            Ok(text)
+        }).await;
+        
+        match result {
+            Ok(Ok(text)) => {
+                let payload = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                let chunk: String = payload.chars().take(10000).collect();
+                telemetry!(telemetry_tx, format!("  ✅ DOM Navigated & Extracted '{}'.\n", css_selector));
+                return ToolResult {
+                     task_id,
+                     output: format!("--- WEBPAGE DOM ({}) Selector: '{}' ---\n{}", url, css_selector, chunk),
+                     tokens_used: 0,
+                     status: ToolStatus::Success,
+                };
+            }
+            Ok(Err(e)) => {
+                telemetry!(telemetry_tx, format!("  ❌ DOM Error: {}\n", e));
+                return ToolResult { task_id, output: e, tokens_used: 0, status: ToolStatus::Failed("DOM Nav Failed".into()) };
+            }
+            Err(e) => {
+                return ToolResult { task_id, output: format!("Tokio Join Error: {:?}", e), tokens_used: 0, status: ToolStatus::Failed("Thread Panic".into()) };
+            }
+        }
+    }
 
     // ── Tier 1: Brave Search API ─────────────────────────────────────────────
     if let Ok(api_key) = std::env::var("BRAVE_SEARCH_API_KEY")

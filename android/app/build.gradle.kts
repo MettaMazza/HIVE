@@ -40,6 +40,10 @@ android {
     sourceCompatibility = JavaVersion.VERSION_1_8
     targetCompatibility = JavaVersion.VERSION_1_8
   }
+  androidResources {
+    // Crucial: ensure .bin files correctly unpack uncompressed
+    noCompress += "bin"
+  }
   kotlinOptions { jvmTarget = "1.8" }
   buildFeatures { compose = true }
   composeOptions { kotlinCompilerExtensionVersion = "1.5.1" }
@@ -76,6 +80,7 @@ dependencies {
   implementation(libs.datastore.preferences)
   implementation(libs.gson)
   implementation(libs.lifecycle.process)
+  implementation(libs.mediapipe.genai)
   androidTestImplementation(libs.androidx.ui.test.junit4)
   androidTestImplementation(libs.androidx.test.uiautomator)
   androidTestImplementation(libs.androidx.test.rules)

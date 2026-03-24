@@ -10,6 +10,7 @@ pub mod agent;
 pub mod teacher;
 pub mod computer;
 pub mod voice;
+pub mod server;
 
 use std::sync::Arc;
 use tokio::io::AsyncBufRead;
@@ -20,6 +21,7 @@ use crate::platforms::discord::DiscordPlatform;
 use crate::platforms::cli::CliPlatform;
 use crate::platforms::glasses::GlassesPlatform;
 use crate::providers::ollama::OllamaProvider;
+use crate::providers::Provider;
 
 #[cfg(not(tarpaulin_include))]
 #[cfg(not(test))]
@@ -70,7 +72,28 @@ pub async fn run_app() {
 
     // 1. Initialize Core Storage Systems First
     let memory_store = Arc::new(crate::memory::MemoryStore::default());
-    let provider = Arc::new(OllamaProvider::new());
+    let provider: Arc<dyn Provider> = match std::env::var("HIVE_PROVIDER").unwrap_or_else(|_| "ollama".into()).to_lowercase().as_str() {
+        "openai" | "gpt" => {
+            tracing::info!("[PROVIDER] Using OpenAI API provider");
+            Arc::new(crate::providers::openai::OpenAiProvider::new().expect("Failed to init OpenAI provider — is OPENAI_API_KEY set?"))
+        }
+        "anthropic" | "claude" => {
+            tracing::info!("[PROVIDER] Using Anthropic Claude API provider");
+            Arc::new(crate::providers::anthropic::AnthropicProvider::new().expect("Failed to init Anthropic provider — is ANTHROPIC_API_KEY set?"))
+        }
+        "gemini" | "google" => {
+            tracing::info!("[PROVIDER] Using Google Gemini API provider");
+            Arc::new(crate::providers::gemini::GeminiProvider::new().expect("Failed to init Gemini provider — is GEMINI_API_KEY set?"))
+        }
+        "xai" | "grok" => {
+            tracing::info!("[PROVIDER] Using xAI Grok API provider");
+            Arc::new(crate::providers::xai::XaiProvider::new().expect("Failed to init xAI provider — is XAI_API_KEY set?"))
+        }
+        _ => {
+            tracing::info!("[PROVIDER] Using local Ollama provider");
+            Arc::new(OllamaProvider::new())
+        }
+    };
     
     // 2. Initialize Agent Manager to gather Native Tolls (Tools)
     let agent_manager = crate::agent::AgentManager::new(provider.clone(), memory_store.clone());
@@ -98,7 +121,7 @@ pub async fn run_app() {
     // 4. Build the engine with our defined platforms and injected contexts
     let glasses_provider: Arc<dyn crate::providers::Provider> = Arc::new(OllamaProvider::with_model("qwen3.5:35b"));
     let engine = EngineBuilder::new()
-        .with_platform(Box::new(DiscordPlatform::new(discord_token, memory_store.clone())))
+        .with_platform(Box::new(DiscordPlatform::new(discord_token, memory_store.clone(), Arc::new(capabilities.clone()))))
         .with_platform(Box::new(CliPlatform::new(reader)))
         .with_platform(Box::new(GlassesPlatform::new()))
         .with_provider(provider)
@@ -183,6 +206,21 @@ pub async fn run_app() {
                 tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
             }
         });
+    }
+
+    // 7. Spawn the Local Memory Visualizer Server (Axum)
+    {
+        crate::server::visualizer_server::spawn_visualizer_server(memory_store.clone()).await;
+    }
+
+    // 8. Spawn the Native IMAP Background Inbox Listener
+    {
+        crate::engine::email_watcher::spawn_email_watcher(memory_store.clone()).await;
+    }
+
+    // 9. Spawn the Chronos Temporal Operations Daemon
+    {
+        crate::engine::chronos::spawn_chronos(memory_store.clone()).await;
     }
 
     // Run the engine indefinitely

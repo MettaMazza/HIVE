@@ -257,6 +257,15 @@ impl Neo4jGraph {
         let edges = self.edges.read().await;
         (nodes.len(), edges.len())
     }
+
+    /// Export the entire raw graph for Visualizer Dashboard rendering.
+    pub async fn export_graph(&self) -> (Vec<SynapticNode>, Vec<SynapticEdge>) {
+        let nodes = self.nodes.read().await;
+        let edges = self.edges.read().await;
+        let n: Vec<SynapticNode> = nodes.values().cloned().collect();
+        let e: Vec<SynapticEdge> = edges.clone();
+        (n, e)
+    }
 }
 
 #[cfg(test)]

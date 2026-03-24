@@ -8,6 +8,8 @@ pub mod react;
 pub mod repair;
 pub mod builder;
 pub mod core;
+pub mod email_watcher;
+pub mod chronos;
 
 pub use builder::EngineBuilder;
 

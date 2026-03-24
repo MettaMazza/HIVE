@@ -34,6 +34,7 @@ pub struct Handler {
     pub(crate) aicoms_enabled: Arc<std::sync::atomic::AtomicBool>,
     pub(crate) bot_debounce: BotDebounceBuffer,
     pub(crate) memory: Arc<crate::memory::MemoryStore>,
+    pub(crate) capabilities: Arc<crate::models::capabilities::AgentCapabilities>,
 }
 
 #[async_trait]
@@ -99,10 +100,12 @@ pub struct DiscordPlatform {
     aicoms_enabled: Arc<std::sync::atomic::AtomicBool>,
     bot_debounce: BotDebounceBuffer,
     memory: Arc<crate::memory::MemoryStore>,
+    capabilities: Arc<crate::models::capabilities::AgentCapabilities>,
+    session_telemetry: Arc<Mutex<std::collections::HashMap<String, u64>>>,
 }
 
 impl DiscordPlatform {
-    pub fn new(token: String, memory: Arc<crate::memory::MemoryStore>) -> Self {
+    pub fn new(token: String, memory: Arc<crate::memory::MemoryStore>, capabilities: Arc<crate::models::capabilities::AgentCapabilities>) -> Self {
         Self { 
             token,
             http: Mutex::new(None),
@@ -113,6 +116,8 @@ impl DiscordPlatform {
             aicoms_enabled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             bot_debounce: Arc::new(Mutex::new(std::collections::HashMap::new())),
             memory,
+            capabilities,
+            session_telemetry: Arc::new(Mutex::new(std::collections::HashMap::new())),
         }
     }
 }
@@ -136,6 +141,7 @@ impl Platform for DiscordPlatform {
             aicoms_enabled: self.aicoms_enabled.clone(),
             bot_debounce: self.bot_debounce.clone(),
             memory: self.memory.clone(),
+            capabilities: self.capabilities.clone(),
         };
 
         let mut client = Client::builder(&self.token, intents)
@@ -182,17 +188,51 @@ impl Platform for DiscordPlatform {
         };
 
         if response.is_telemetry {
-            if thinking_msg_id > 0 {
+            let mut effective_tid = thinking_msg_id;
+            
+            // If we have a session ID (4th part) but no thinking_msg_id, look it up or create it
+            if effective_tid == 0 && parts.len() >= 4 {
+                let session_id = parts[3].to_string();
+                let mut session_map = self.session_telemetry.lock().await;
+                
+                if let Some(&id) = session_map.get(&session_id) {
+                    effective_tid = id;
+                } else {
+                    let embed = serenity::builder::CreateEmbed::new()
+                        .title("🐝 HIVE Autonomy: Thinking...")
+                        .description("⏳ Initializing internal monologue...")
+                        .color(0xFFD700);
+                    let builder = serenity::builder::CreateMessage::new().embed(embed);
+                    
+                    match channel.send_message(http, builder).await {
+                        Ok(msg) => {
+                            effective_tid = msg.id.get();
+                            session_map.insert(session_id, effective_tid);
+                            
+                            let (tx, rx) = tokio::sync::watch::channel(Some("⏳ Processing...".to_string()));
+                            self.active_telemetry.lock().await.insert(effective_tid, tx);
+                            
+                            let http_clone = http.clone();
+                            tokio::spawn(async move {
+                                crate::platforms::telemetry::spawn_telemetry_loop(http_clone, channel, effective_tid, rx);
+                            });
+                        }
+                        Err(e) => tracing::error!("[TELEMETRY:DISCORD] ❌ Failed to create autonomy session message: {}", e),
+                    }
+                }
+            }
+
+            if effective_tid > 0 {
                 let map = self.active_telemetry.lock().await;
                 let map_size = map.len();
-                if let Some(tx) = map.get(&thinking_msg_id) {
+                if let Some(tx) = map.get(&effective_tid) {
                     let text_preview: String = response.text.chars().take(80).collect();
-                    tracing::debug!("[TELEMETRY:DISCORD] 📨 Updating embed msg_id={} (map_size={}, text='{}')", thinking_msg_id, map_size, text_preview);
+                    tracing::debug!("[TELEMETRY:DISCORD] 📨 Updating embed msg_id={} (map_size={}, text='{}')", effective_tid, map_size, text_preview);
                     let _ = tx.send(Some(response.text.clone()));
                 } else {
-                    tracing::warn!("[TELEMETRY:DISCORD] ⚠️ msg_id={} NOT FOUND in active_telemetry map (map_size={}, keys={:?})", thinking_msg_id, map_size, map.keys().collect::<Vec<_>>());
+                    tracing::warn!("[TELEMETRY:DISCORD] ⚠️ msg_id={} NOT FOUND in active_telemetry map (map_size={}, keys={:?})", effective_tid, map_size, map.keys().collect::<Vec<_>>());
                 }
-            } else if response.platform != "discord:1480192647657427044" {
+            } else if !response.platform.starts_with("discord:1480192647657427044") {
                 tracing::warn!("[TELEMETRY:DISCORD] ⚠️ thinking_msg_id=0 — cannot route telemetry (platform='{}')", response.platform);
             }
         } else {
@@ -334,13 +374,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_discord_name() {
-        let discord = DiscordPlatform::new("".to_string(), Arc::new(crate::memory::MemoryStore::default()));
+        let discord = DiscordPlatform::new("".to_string(), Arc::new(crate::memory::MemoryStore::default()), Arc::new(crate::models::capabilities::AgentCapabilities::default()));
         assert_eq!(discord.name(), "discord");
     }
 
     #[tokio::test]
     async fn test_discord_send_invalid_platform_id() {
-        let discord = DiscordPlatform::new("".to_string(), Arc::new(crate::memory::MemoryStore::default()));
+        let discord = DiscordPlatform::new("".to_string(), Arc::new(crate::memory::MemoryStore::default()), Arc::new(crate::models::capabilities::AgentCapabilities::default()));
         let res = Response {
             platform: "discord".to_string(),
             target_scope: Scope::Public { channel_id: "123".to_string(), user_id: "user".to_string() },
@@ -353,7 +393,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_discord_send_uninitialized_http() {
-        let discord = DiscordPlatform::new("".to_string(), Arc::new(crate::memory::MemoryStore::default()));
+        let discord = DiscordPlatform::new("".to_string(), Arc::new(crate::memory::MemoryStore::default()), Arc::new(crate::models::capabilities::AgentCapabilities::default()));
         let res = Response {
             platform: "discord:1234:5678".to_string(),
             target_scope: Scope::Public { channel_id: "123".to_string(), user_id: "user".to_string() },

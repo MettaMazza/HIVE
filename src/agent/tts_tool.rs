@@ -8,12 +8,13 @@ pub async fn execute_voice_synthesizer(
     telemetry_tx: Option<mpsc::Sender<String>>,
 ) -> ToolResult {
     let text = extract_tag(&description, "text:").unwrap_or_else(|| description.clone());
+    let voice_tag = extract_tag(&description, "voice:");
     
     tracing::debug!("[AGENT:tts] ▶ task_id={}", task_id);
     // Attempt ONNX generation
     let mock_res = match crate::voice::kokoro::KokoroTTS::new().await {
         Ok(engine) => {
-            match engine.get_audio_path(&text).await {
+            match engine.get_audio_path(&text, voice_tag.as_deref()).await {
                 Ok(path) => Ok(path),
                 Err(e) => Err(format!("Voice generation failed: {}", e)),
             }

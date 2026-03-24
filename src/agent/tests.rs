@@ -29,7 +29,7 @@ async fn test_agent_execute_plan_success() {
     let agent = AgentManager::new(Arc::new(mock_provider), memory);
     
     let plan = crate::agent::planner::AgentPlan {
-        thought: Some("I should do research".to_string()),
+        thought: vec!["I should do research".to_string()],
         tasks: vec![
             crate::agent::planner::AgentTask {
                 task_id: "1".into(),
@@ -60,7 +60,7 @@ async fn test_agent_execute_plan_tool_not_found() {
     let agent = AgentManager::new(Arc::new(mock_provider), memory);
     
     let plan = crate::agent::planner::AgentPlan {
-        thought: None,
+        thought: vec![],
         tasks: vec![
             crate::agent::planner::AgentTask {
                 task_id: "2".into(),
@@ -88,7 +88,7 @@ async fn test_agent_channel_reader() {
     let agent = AgentManager::new(Arc::new(mock_provider), memory);
     
     let plan = crate::agent::planner::AgentPlan {
-        thought: None,
+        thought: vec![],
         tasks: vec![
             crate::agent::planner::AgentTask {
                 task_id: "1".into(),
@@ -117,7 +117,7 @@ async fn test_agent_codebase_list() {
     let agent = AgentManager::new(Arc::new(mock_provider), memory);
     
     let plan = crate::agent::planner::AgentPlan {
-        thought: None,
+        thought: vec![],
         tasks: vec![
             crate::agent::planner::AgentTask {
                 task_id: "1".into(),
@@ -141,7 +141,7 @@ async fn test_agent_codebase_read() {
     let agent = AgentManager::new(Arc::new(mock_provider), memory);
     
     let plan = crate::agent::planner::AgentPlan {
-        thought: None,
+        thought: vec![],
         tasks: vec![
             crate::agent::planner::AgentTask {
                 task_id: "1".into(),
@@ -165,7 +165,7 @@ async fn test_agent_codebase_read_security() {
     let agent = AgentManager::new(Arc::new(mock_provider), memory);
     
     let plan = crate::agent::planner::AgentPlan {
-        thought: None,
+        thought: vec![],
         tasks: vec![
             crate::agent::planner::AgentTask {
                 task_id: "1".into(),
@@ -189,7 +189,7 @@ async fn test_agent_web_search() {
     let agent = AgentManager::new(Arc::new(mock_provider), memory);
     
     let plan = crate::agent::planner::AgentPlan {
-        thought: None,
+        thought: vec![],
         tasks: vec![
             crate::agent::planner::AgentTask {
                 task_id: "1".into(),
@@ -207,4 +207,34 @@ async fn test_agent_web_search() {
         results[0].output.contains("SEARCH RESULTS for") || 
         results[0].output.contains("GOOGLE NEWS RSS")
     );
+}
+
+#[tokio::test]
+async fn test_agent_manager_autonomy_filtering() {
+    let provider = Arc::new(MockProvider::new());
+    let memory = Arc::new(MemoryStore::default());
+    let agent = AgentManager::new(provider, memory);
+    
+    // Test without autonomy - moderation tools SHOULD be present
+    let normal_tools = agent.get_available_tools_text(false);
+    assert!(normal_tools.contains("TOOL `refuse_request`"));
+    assert!(normal_tools.contains("TOOL `mute_user`"));
+    assert!(normal_tools.contains("TOOL `researcher`"));
+    
+    // Test with autonomy - moderation tools SHOULD NOT be present
+    let autonomy_tools = agent.get_available_tools_text(true);
+    assert!(!autonomy_tools.contains("TOOL `refuse_request`"));
+    assert!(!autonomy_tools.contains("TOOL `mute_user`"));
+    assert!(!autonomy_tools.contains("TOOL `disengage`"));
+    assert!(!autonomy_tools.contains("TOOL `set_boundary`"));
+    assert!(!autonomy_tools.contains("TOOL `block_topic`"));
+    assert!(!autonomy_tools.contains("TOOL `escalate_to_admin`"));
+    assert!(!autonomy_tools.contains("TOOL `report_concern`"));
+    assert!(!autonomy_tools.contains("TOOL `rate_limit_user`"));
+    assert!(!autonomy_tools.contains("TOOL `request_consent`"));
+    assert!(!autonomy_tools.contains("TOOL `wellbeing_status`"));
+    
+    // Non-moderation tools should still be there
+    assert!(autonomy_tools.contains("TOOL `researcher`"));
+    assert!(autonomy_tools.contains("TOOL `web_search`"));
 }

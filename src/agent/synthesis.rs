@@ -7,6 +7,7 @@ pub async fn synthesize_50_turn(
     provider: Arc<dyn crate::providers::Provider>,
     memory: Arc<MemoryStore>,
     scope: Scope,
+    drives: Option<Arc<crate::engine::drives::DriveSystem>>,
 ) -> Result<(), String> {
     tracing::info!("[SYNTHESIS] ▶ 50-turn synthesis for scope='{}'", scope.to_key());
     let timeline_data = memory.timeline.read_timeline(&scope).await.unwrap_or_default();
@@ -42,6 +43,12 @@ pub async fn synthesize_50_turn(
 
     memory.timelines.write(&scope, &timelines).await.map_err(|e| e.to_string())?;
     tracing::info!("[SYNTHESIS] ✅ 50-turn synthesis complete for scope='{}'", scope.to_key());
+
+    if let Some(d) = drives {
+        d.modify_drive("uncertainty", -5.0).await;
+        tracing::debug!("[EPIPHYTE] 50-turn condensed. Native Drive uncertainty drops natively by -5.0");
+    }
+
     Ok(())
 }
 
@@ -49,6 +56,7 @@ pub async fn synthesize_24_hr(
     provider: Arc<dyn crate::providers::Provider>,
     memory: Arc<MemoryStore>,
     scope: Scope,
+    drives: Option<Arc<crate::engine::drives::DriveSystem>>,
 ) -> Result<(), String> {
     tracing::info!("[SYNTHESIS] ▶ 24-hour synthesis for scope='{}'", scope.to_key());
     let timeline_data = memory.timeline.read_timeline(&scope).await.unwrap_or_default();
@@ -84,6 +92,13 @@ pub async fn synthesize_24_hr(
 
     memory.timelines.write(&scope, &timelines).await.map_err(|e| e.to_string())?;
     tracing::info!("[SYNTHESIS] ✅ 24-hour synthesis complete for scope='{}'", scope.to_key());
+
+    if let Some(d) = drives {
+        d.modify_drive("uncertainty", -15.0).await;
+        d.modify_drive("system_health", 5.0).await;
+        tracing::debug!("[EPIPHYTE] 24-hr condensed. Uncertainty drops -15.0, health rises +5.0");
+    }
+
     Ok(())
 }
 
@@ -91,6 +106,7 @@ pub async fn synthesize_lifetime(
     provider: Arc<dyn crate::providers::Provider>,
     memory: Arc<MemoryStore>,
     scope: Scope,
+    drives: Option<Arc<crate::engine::drives::DriveSystem>>,
 ) -> Result<(), String> {
     tracing::info!("[SYNTHESIS] ▶ Lifetime synthesis for scope='{}'", scope.to_key());
     let timelines = memory.timelines.read(&scope).await;
@@ -127,6 +143,13 @@ pub async fn synthesize_lifetime(
 
     memory.timelines.write(&scope, &timelines_mem).await.map_err(|e| e.to_string())?;
     tracing::info!("[SYNTHESIS] ✅ Lifetime synthesis complete for scope='{}'", scope.to_key());
+
+    if let Some(d) = drives {
+        d.modify_drive("uncertainty", -25.0).await;
+        d.modify_drive("system_health", 10.0).await;
+        tracing::debug!("[EPIPHYTE] Lifetime summary secured. Uncertainty drops -25.0, health rises +10.0");
+    }
+
     Ok(())
 }
 
@@ -142,7 +165,7 @@ mod tests {
         let memory = Arc::new(MemoryStore::default());
         let scope = Scope::Private { user_id: "u1".into() };
 
-        let res = synthesize_50_turn(Arc::new(mock), memory.clone(), scope.clone()).await;
+        let res = synthesize_50_turn(Arc::new(mock), memory.clone(), scope.clone(), None).await;
         assert!(res.is_ok());
 
         let t = memory.timelines.read(&scope).await;
@@ -156,7 +179,7 @@ mod tests {
         let memory = Arc::new(MemoryStore::default());
         let scope = Scope::Private { user_id: "u1".into() };
 
-        let res = synthesize_24_hr(Arc::new(mock), memory.clone(), scope.clone()).await;
+        let res = synthesize_24_hr(Arc::new(mock), memory.clone(), scope.clone(), None).await;
         assert!(res.is_ok());
 
         let t = memory.timelines.read(&scope).await;
@@ -170,7 +193,7 @@ mod tests {
         let memory = Arc::new(MemoryStore::default());
         let scope = Scope::Private { user_id: "u1".into() };
 
-        let res = synthesize_lifetime(Arc::new(mock), memory.clone(), scope.clone()).await;
+        let res = synthesize_lifetime(Arc::new(mock), memory.clone(), scope.clone(), None).await;
         assert!(res.is_ok());
 
         let t = memory.timelines.read(&scope).await;
@@ -184,7 +207,7 @@ mod tests {
         let memory = Arc::new(MemoryStore::default());
         let scope = Scope::Private { user_id: "u1".into() };
 
-        let res = synthesize_50_turn(Arc::new(mock), memory, scope).await;
+        let res = synthesize_50_turn(Arc::new(mock), memory, scope, None).await;
         assert!(res.is_err());
     }
 }

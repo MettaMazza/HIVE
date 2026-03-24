@@ -334,7 +334,7 @@ mod tests {
         assert_eq!(s.relationship_strength, 50);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_outreach_gate_crud() {
         use tempfile::TempDir;
         let tmp = TempDir::new().unwrap();
@@ -371,7 +371,7 @@ mod tests {
         assert!(s4.last_outreach.is_some());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_outreach_gate_can_outreach_logic() {
         use tempfile::TempDir;
         let tmp = TempDir::new().unwrap();
@@ -410,7 +410,7 @@ mod tests {
         assert!(reason_ai.contains("AI approved"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_outreach_gate_can_outreach_llm_rejection_and_fallback() {
         use tempfile::TempDir;
         let tmp = TempDir::new().unwrap();
