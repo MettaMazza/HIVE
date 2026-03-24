@@ -40,7 +40,7 @@ The following prompt is designed to push the HIVE Agent stack to its absolute li
 > 25. Use `file_writer` to compose a cyberpunk-themed PDF WITH an image: `action:[compose] id:[report] title:[Master Gauntlet v3] theme:[cyberpunk] content:[# Success across all turns.\n\n![Gauntlet Image](/absolute/path/from/step24)\n\nAll systems verified.]`. Use an actual absolute path from the cached images list in step 24.
 > 26. Use `file_writer` to render the same report as markdown: `action:[render] id:[report] format:[md]` to verify multi-format output works.
 > 27. Use `download` to download a test file: `url:[https://httpbin.org/json]` to verify the download tool and file server.
-> 28. Use `synthesizer` to fan-in all observations, parse the results, and generate the final response.
+
 > 
 > V1.5 Singularity (IoT, Email, Alarms & Core Compiler)**
 > 29. Use `send_email` to send a test message: `action:[send] email:[test@hive.local] subject:[Gauntlet Update] content:[Reaching Turn 7.]`.
@@ -95,7 +95,7 @@ The following prompt is designed to push the HIVE Agent stack to its absolute li
 > - 👾 `process_manager`: PASS / FAIL (or ADMIN)
 > - 💻 `file_system_operator`: PASS / FAIL (or ADMIN)
 > - ⌨️ `run_bash_command`: PASS / FAIL (or ADMIN)
-> - 🪄 `synthesizer`: PASS / FAIL
+
 > - 🎯 `manage_goals` (create): PASS / FAIL
 > - 🎯 `manage_goals` (decompose): PASS / FAIL
 > - 🎯 `manage_goals` (list): PASS / FAIL

@@ -469,19 +469,6 @@ pub async fn execute_react_loop(
         }
         
         if let Some(reply) = reply_task {
-            // DEFER RULE: If standard tools also executed on this same turn,
-            // the reply was written BEFORE tool results were available. Discard
-            // it and continue the loop so the LLM can write a reply that
-            // actually references the tool output.
-            if standard_tool_count > 0 {
-                tracing::info!("[REACT] ⏳ Deferring reply — {} standard tools also ran this turn. Will re-prompt with tool results.", standard_tool_count);
-                context_from_agent.push_str(&format!(
-                    "Cycle {} - [SYSTEM: Your reply_to_request was deferred because tools also executed this turn. \
-                    You now have the tool results above. Write a NEW reply_to_request that incorporates these results.]\n\n",
-                    current_turn
-                ));
-                continue;
-            }
 
             observer_attempts += 1;
             let mut candidate_answer = reply.description;
