@@ -481,29 +481,12 @@ pub async fn execute_react_loop(
                 }
             }
 
-            // OUTPUT FORWARDING — Phase 2: Automatic injection safety net.
-            // ONLY for verbatim-forwarding tools (read_attachment, download).
-            // NEVER auto-inject web_search, researcher, codebase_read etc. — those
-            // contain raw internal results that should never be shown to users.
-            if reply.source.is_none() && candidate_answer.len() < 2000 {
-                let verbatim_tools = ["read_attachment", "download"];
-                if let Some((_largest_id, largest_output)) = tool_outputs.iter()
-                    .filter(|(id, _)| {
-                        // Only consider outputs from verbatim-safe tools
-                        completed_tools.iter().any(|(tid, ttype)| {
-                            tid == *id && verbatim_tools.contains(&ttype.as_str())
-                        })
-                    })
-                    .max_by_key(|(_, v)| v.len())
-                    .filter(|(_, v)| v.len() > 2000)
-                {
-                    tracing::info!(
-                        "[OUTPUT FORWARD] 🛡️ Auto-injecting verbatim tool output ({} bytes) — LLM reply was only {} chars.",
-                        largest_output.len(), candidate_answer.len()
-                    );
-                    candidate_answer = format!("{}\n\n{}", candidate_answer.trim(), largest_output.trim());
-                }
-            }
+            // OUTPUT FORWARDING — Phase 2 (REMOVED)
+            // Previously auto-injected read_attachment/download outputs when the
+            // model's reply was under 2000 chars. This caused infinite observer
+            // audit loops because injected content (e.g. gauntlet instructions)
+            // contained raw tool syntax that the observer correctly blocked.
+            // The model must explicitly use source:"task_id" to forward content.
 
             // ── SKEPTIC OBSERVER AUDIT (SYNCHRONOUS) ──
             // With the KV-cache optimization in observer.rs, this audit now
