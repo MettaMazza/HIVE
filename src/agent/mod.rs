@@ -532,8 +532,11 @@ impl AgentManager {
         out
     }
 
-    /// Executes a agent plan by spawning all tasks concurrently.
-    /// In a fully robust graph, we would respect `depends_on`. For now, we fan out in parallel.
+    /// Executes a plan respecting `depends_on` via wave-based scheduling.
+    /// Wave 0: tasks with no dependencies (fan out in parallel).
+    /// Wave N: tasks whose deps are all in the completed set (fan out in parallel).
+    /// Prevents races where dependent tasks (goal decompose, forge test) run before
+    /// the task that creates the entity they reference.
     #[cfg(not(tarpaulin_include))]
     pub async fn execute_plan(
         &self,
@@ -545,68 +548,135 @@ impl AgentManager {
         swarm_caps: Option<Arc<crate::models::capabilities::AgentCapabilities>>,
         outbound_tx: Option<tokio::sync::mpsc::Sender<crate::models::message::Response>>,
     ) -> Vec<ToolResult> {
-        let mut futures = vec![];
+        use std::collections::HashSet;
 
-        for task in plan.tasks {
-            if let Some(handle) = crate::agent::registry::execution::dispatch_native_tool(
-                &task,
-                context,
-                &scope,
-                telemetry_tx.clone(),
-                self.memory.clone(),
-                self.provider.clone(),
-                self.outreach_gate.clone(),
-                self.inbox.clone(),
-                self.drives.clone(),
-                Some(self.composer.clone()),
-                swarm_agent.clone(),
-                swarm_caps.clone(),
-                self.goal_store.clone(),
-                self.tool_forge.clone(),
-                outbound_tx.clone(),
-            ) {
-                futures.push(handle);
-                continue;
+        let mut all_results: Vec<ToolResult> = vec![];
+        let mut completed_ids: HashSet<String> = HashSet::new();
+        let mut remaining_tasks = plan.tasks;
+
+        // Safety: cap at 20 waves to prevent infinite loops from circular deps
+        for wave in 0..20 {
+            if remaining_tasks.is_empty() {
+                break;
             }
 
-            if let Some(template) = self.get_template(&task.tool_type) {
-                let context_clone = context.to_string();
-                let provider_clone = self.provider.clone();
-                let task_id = task.task_id.clone();
-                let desc = task.description.clone();
+            // Partition: ready tasks (all deps satisfied) vs blocked tasks
+            let (ready, blocked): (Vec<_>, Vec<_>) = remaining_tasks.into_iter().partition(|t| {
+                t.depends_on.is_empty() || t.depends_on.iter().all(|dep| completed_ids.contains(dep))
+            });
 
-                let tx_clone = telemetry_tx.clone();
-                let template_name = template.name.clone();
-
-                let handle = tokio::spawn(async move {
-                    if let Some(ref tx) = tx_clone {
-                        let _ = tx.send(format!("🚀 Spawning Tool `{}` for Task: {}\n", template_name, task_id)).await;
+            if ready.is_empty() {
+                // All remaining tasks have unsatisfiable deps — force-run them to avoid deadlock
+                tracing::warn!(
+                    "[AGENT:execute_plan] Wave {} deadlock: {} tasks have unsatisfiable depends_on, force-dispatching",
+                    wave, blocked.len()
+                );
+                remaining_tasks = blocked;
+                let forced: Vec<_> = remaining_tasks.drain(..).collect();
+                let mut futures = vec![];
+                for task in forced {
+                    futures.push(self.dispatch_single_task(
+                        task, context, &scope, telemetry_tx.clone(),
+                        swarm_agent.clone(), swarm_caps.clone(), outbound_tx.clone(),
+                    ));
+                }
+                for f in futures {
+                    if let Ok(res) = f.await {
+                        completed_ids.insert(res.task_id.clone());
+                        all_results.push(res);
                     }
-                    let executor = tool::ToolExecutor::new(provider_clone, template);
-                    executor.execute(&task_id, &desc, &context_clone, tx_clone).await
-                });
-
-                futures.push(handle);
-            } else {
-                // Return immediate failure if tool doesn't exist
-                futures.push(tokio::spawn(async move {
-                    ToolResult {
-                        task_id: task.task_id.clone(),
-                        output: String::new(),
-                        tokens_used: 0,
-                        status: ToolStatus::Failed(format!("Tool type '{}' not found", task.tool_type)),
-                    }
-                }));
+                }
+                break;
             }
+
+            tracing::debug!(
+                "[AGENT:execute_plan] Wave {}: dispatching {} ready tasks, {} blocked",
+                wave, ready.len(), blocked.len()
+            );
+
+            // Dispatch all ready tasks in parallel
+            let mut futures = vec![];
+            for task in ready {
+                futures.push(self.dispatch_single_task(
+                    task, context, &scope, telemetry_tx.clone(),
+                    swarm_agent.clone(), swarm_caps.clone(), outbound_tx.clone(),
+                ));
+            }
+
+            // Collect results
+            for f in futures {
+                if let Ok(res) = f.await {
+                    completed_ids.insert(res.task_id.clone());
+                    all_results.push(res);
+                }
+            }
+
+            remaining_tasks = blocked;
         }
 
-        let mut results = vec![];
-        for f in futures {
-            if let Ok(res) = f.await {
-                results.push(res);
-            }
+        all_results
+    }
+
+    /// Dispatch a single task to either native handler or LLM-backed template.
+    #[cfg(not(tarpaulin_include))]
+    fn dispatch_single_task(
+        &self,
+        task: crate::agent::planner::AgentTask,
+        context: &str,
+        scope: &crate::models::scope::Scope,
+        telemetry_tx: Option<tokio::sync::mpsc::Sender<String>>,
+        swarm_agent: Option<Arc<AgentManager>>,
+        swarm_caps: Option<Arc<crate::models::capabilities::AgentCapabilities>>,
+        outbound_tx: Option<tokio::sync::mpsc::Sender<crate::models::message::Response>>,
+    ) -> tokio::task::JoinHandle<ToolResult> {
+        if let Some(handle) = crate::agent::registry::execution::dispatch_native_tool(
+            &task,
+            context,
+            scope,
+            telemetry_tx.clone(),
+            self.memory.clone(),
+            self.provider.clone(),
+            self.outreach_gate.clone(),
+            self.inbox.clone(),
+            self.drives.clone(),
+            Some(self.composer.clone()),
+            swarm_agent.clone(),
+            swarm_caps.clone(),
+            self.goal_store.clone(),
+            self.tool_forge.clone(),
+            outbound_tx.clone(),
+        ) {
+            return handle;
         }
-        results
+
+        if let Some(template) = self.get_template(&task.tool_type) {
+            let context_clone = context.to_string();
+            let provider_clone = self.provider.clone();
+            let task_id = task.task_id.clone();
+            let desc = task.description.clone();
+            let tx_clone = telemetry_tx.clone();
+            let template_name = template.name.clone();
+
+            return tokio::spawn(async move {
+                if let Some(ref tx) = tx_clone {
+                    let _ = tx.send(format!("🚀 Spawning Tool `{}` for Task: {}\n", template_name, task_id)).await;
+                }
+                let executor = tool::ToolExecutor::new(provider_clone, template);
+                executor.execute(&task_id, &desc, &context_clone, tx_clone).await
+            });
+        }
+
+        // Return immediate failure if tool doesn't exist
+        let task_id = task.task_id.clone();
+        let tool_type = task.tool_type.clone();
+        tokio::spawn(async move {
+            ToolResult {
+                task_id,
+                output: String::new(),
+                tokens_used: 0,
+                status: ToolStatus::Failed(format!("Tool type '{}' not found", tool_type)),
+            }
+        })
     }
 }
 
