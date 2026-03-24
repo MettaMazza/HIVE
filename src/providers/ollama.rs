@@ -78,6 +78,10 @@ struct OllamaMessage {
 struct OllamaOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     num_predict: Option<u32>,
+    /// Explicit context window size. Ollama defaults to 2048 if not set,
+    /// which silently discards most of the prompt. qwen3.5 supports 256K natively.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    num_ctx: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -137,7 +141,7 @@ impl Provider for OllamaProvider {
         // Format the securely-scoped history FIRST
         // Individual messages are capped to prevent one massive response from bloating all subsequent calls.
         // Full messages remain in working memory & disk — only the LLM prompt copy is capped.
-        const HISTORY_MSG_CAP: usize = 2000;
+        const HISTORY_MSG_CAP: usize = 8000;
         for event in history {
             let role = if event.author_name == "Apis" {
                 "assistant"
@@ -255,8 +259,11 @@ impl Provider for OllamaProvider {
             model: self.model.clone(),
             messages,
             stream: true,
-            keep_alive: "30m".to_string(),
-            options: max_tokens.map(|n| OllamaOptions { num_predict: Some(n) }),
+            keep_alive: "-1".to_string(),
+            options: Some(OllamaOptions {
+                num_predict: max_tokens,
+                num_ctx: Some(131_072),
+            }),
         };
 
         let mut res = self.client.post(&self.endpoint)

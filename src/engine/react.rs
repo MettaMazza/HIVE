@@ -377,7 +377,7 @@ pub async fn execute_react_loop(
                 // For LLM context, cap large outputs to prevent extreme prompt bloat.
                 // Since HIVE runs on high-performance M3 Ultra hardware, we allow
                 // a generous 100KB limit for tool outputs in the reasoning loop.
-                const LLM_CONTEXT_CAP: usize = 100_000;
+                const LLM_CONTEXT_CAP: usize = 200_000;
                 let display_output = if res.output.len() > LLM_CONTEXT_CAP {
                     // Safe UTF-8 truncation: Find the nearest char boundary at or below the cap
                     let safe_boundary = res.output

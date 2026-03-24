@@ -75,7 +75,7 @@ impl Provider for AnthropicProvider {
         let mut messages = Vec::new();
 
         // History
-        const HISTORY_MSG_CAP: usize = 2000;
+        const HISTORY_MSG_CAP: usize = 8000;
         for event in history {
             let role = if event.author_name == "Apis" { "assistant" } else { "user" };
             let content = if role == "user" {

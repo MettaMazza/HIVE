@@ -101,12 +101,12 @@ impl WorkingMemory {
             }
         }
 
-        // HARD CAP: Retain only the most recent 40 messages (20 conversational turns).
+        // HARD CAP: Retain only the most recent 100 messages (50 conversational turns).
         // Prevents unbounded System Prompt growth, KV Cache explosion, and massive latency creep.
         // Data is not permanently lost; `memory::autosave` and `memory::timeline` retain full persistence.
-        if history.len() > 40 {
-            let start = history.len() - 40;
-            tracing::debug!("[MEMORY:Working] get_history: capping {} events to 40 (scope='{}')", history.len(), requesting_scope.to_key());
+        if history.len() > 100 {
+            let start = history.len() - 100;
+            tracing::debug!("[MEMORY:Working] get_history: capping {} events to 100 (scope='{}')", history.len(), requesting_scope.to_key());
             history = history[start..].to_vec();
         }
 
@@ -382,8 +382,8 @@ mod tests {
         let mem = WorkingMemory::new(Some(test_dir.clone()));
         let scope = Scope::Private { user_id: "capper".into() };
 
-        // Add 50 events
-        for i in 0..50 {
+        // Add 120 events
+        for i in 0..120 {
             mem.add_event(Event {
                 platform: "test".into(),
                 scope: scope.clone(),
@@ -395,11 +395,11 @@ mod tests {
             }).await;
         }
 
-        // Fetch history, should be capped at 40
+        // Fetch history, should be capped at 100
         let hist = mem.get_history(&scope).await;
-        assert_eq!(hist.len(), 40);
-        // The first 10 should be truncated, so the earliest we see is User10
-        assert_eq!(hist[0].author_name, "User10");
+        assert_eq!(hist.len(), 100);
+        // The first 20 should be truncated, so the earliest we see is User20
+        assert_eq!(hist[0].author_name, "User20");
 
         let _ = tokio::fs::remove_dir_all(&test_dir).await;
     }

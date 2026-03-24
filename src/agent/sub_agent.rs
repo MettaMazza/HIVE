@@ -269,8 +269,8 @@ pub async fn execute_sub_agent(
 
                 for res in &tool_results {
                     tools_called.push(res.task_id.clone());
-                    let display = if res.output.len() > 4000 {
-                        format!("{}...[truncated, {} bytes total]", &res.output[..4000], res.output.len())
+                    let display = if res.output.len() > 16000 {
+                        format!("{}...[truncated, {} bytes total]", &res.output[..16000], res.output.len())
                     } else {
                         res.output.clone()
                     };
