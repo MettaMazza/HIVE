@@ -10,7 +10,7 @@ tarpaulin-report.html
 models/
 
 # Runtime memory data
-memory/
+/memory/
 
 # OS files
 .DS_Store
