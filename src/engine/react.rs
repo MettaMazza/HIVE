@@ -287,7 +287,6 @@ pub async fn execute_react_loop(
             }
         }
         
-        let mut standard_tool_count: usize = 0;
 
         if !standard_tasks.is_empty() {
             let task_meta: Vec<(String, String)> = standard_tasks.iter()
@@ -366,7 +365,6 @@ pub async fn execute_react_loop(
             tool_results.extend(failed_admin_attempts);
             
             let result_count = tool_results.len();
-            standard_tool_count = result_count;
             for res in &tool_results {
                 // Store FULL raw output in the HashMap for reliable source forwarding.
                 // This is the authoritative copy used for verbatim delivery to the user.
