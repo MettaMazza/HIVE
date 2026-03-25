@@ -90,6 +90,12 @@ struct OllamaRequest {
     messages: Vec<OllamaMessage>,
     stream: bool,
     keep_alive: i64,
+    /// Ollama native output format enforcement.
+    /// Set to `"json"` to enforce valid JSON at the GBNF grammar level.
+    /// This prevents the model from producing non-JSON tokens regardless
+    /// of context size or prompt pressure.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    format: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     options: Option<OllamaOptions>,
 }
@@ -260,6 +266,7 @@ impl Provider for OllamaProvider {
             messages,
             stream: true,
             keep_alive: -1,
+            format: Some(serde_json::Value::String("json".into())),
             options: Some(OllamaOptions {
                 num_predict: max_tokens,
                 num_ctx: Some(131_072),
