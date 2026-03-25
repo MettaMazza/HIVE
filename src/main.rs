@@ -137,6 +137,19 @@ pub async fn run_app() {
             .and_then(|v| v.parse().ok())
             .unwrap_or(8420);
         let token = std::env::var("HIVE_FILE_TOKEN").unwrap_or_default();
+
+        // Kill any stale process hogging the port from a previous run
+        if let Ok(output) = std::process::Command::new("lsof")
+            .args(["-ti", &format!(":{}", port)])
+            .output()
+        {
+            let pids = String::from_utf8_lossy(&output.stdout);
+            for pid in pids.split_whitespace() {
+                let _ = std::process::Command::new("kill").args(["-9", pid]).output();
+                tracing::info!("[FILE SERVER] 🔪 Killed stale process {} on port {}", pid, port);
+            }
+        }
+
         tokio::spawn(async move {
             // Retry loop — handles port conflict on rapid restarts
             loop {
