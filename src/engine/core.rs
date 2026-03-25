@@ -839,20 +839,26 @@ impl Engine {
                     // _permit dropped here → releases inference slot
                     // _scope_guard dropped here → releases per-scope lock
 
-                    // 7.4. Deferred Background Synthesis — runs AFTER the user gets their response.
-                    // This prevents concurrent provider.generate() calls that corrupt Ollama streams.
+                    // 7.4. Deferred Background Synthesis — spawned AFTER _permit drops.
+                    // Acquires its own inference slot, so it naturally queues behind
+                    // any incoming user messages (user events are already waiting on
+                    // the semaphore by the time synthesis tries to acquire).
                     if bg_synth_needed || bg_daily_needed {
-                        tracing::info!("[SYNTHESIS] 🔄 Running deferred synthesis (50-turn={}, daily={}, lifetime={})",
-                            bg_synth_needed, bg_daily_needed, bg_lifetime_needed);
-                        if bg_synth_needed {
-                            let _ = crate::agent::synthesis::synthesize_50_turn(synth_provider.clone(), synth_memory.clone(), synth_scope.clone(), Some(synth_drives.clone())).await;
-                        }
-                        if bg_daily_needed {
-                            let _ = crate::agent::synthesis::synthesize_24_hr(synth_provider.clone(), synth_memory.clone(), synth_scope.clone(), Some(synth_drives.clone())).await;
-                        }
-                        if bg_lifetime_needed {
-                            let _ = crate::agent::synthesis::synthesize_lifetime(synth_provider.clone(), synth_memory.clone(), synth_scope.clone(), Some(synth_drives.clone())).await;
-                        }
+                        let synth_semaphore = semaphore_bg.clone();
+                        tokio::spawn(async move {
+                            let _synth_permit = synth_semaphore.acquire().await.expect("Semaphore closed");
+                            tracing::info!("[SYNTHESIS] 🎫 Acquired inference slot for deferred synthesis (50-turn={}, daily={}, lifetime={})",
+                                bg_synth_needed, bg_daily_needed, bg_lifetime_needed);
+                            if bg_synth_needed {
+                                let _ = crate::agent::synthesis::synthesize_50_turn(synth_provider.clone(), synth_memory.clone(), synth_scope.clone(), Some(synth_drives.clone())).await;
+                            }
+                            if bg_daily_needed {
+                                let _ = crate::agent::synthesis::synthesize_24_hr(synth_provider.clone(), synth_memory.clone(), synth_scope.clone(), Some(synth_drives.clone())).await;
+                            }
+                            if bg_lifetime_needed {
+                                let _ = crate::agent::synthesis::synthesize_lifetime(synth_provider.clone(), synth_memory.clone(), synth_scope.clone(), Some(synth_drives.clone())).await;
+                            }
+                        });
                     }
 
                     // 7.5. Spawn Continuous Autonomy timer (5 min)
