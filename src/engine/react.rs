@@ -103,11 +103,11 @@ pub async fn execute_react_loop(
         }
 
         if current_turn > 1 && !completed_tools.is_empty() {
-            context_from_agent.push_str("\n[COMPLETED TOOLS — DO NOT RE-EXECUTE THESE]\n");
+            context_from_agent.push_str("\n[COMPLETED TOOLS — results available above]\n");
             for (tid, ttype) in &completed_tools {
-                context_from_agent.push_str(&format!("✅ {} ({}) — DONE, result already in your timeline above\n", ttype, tid));
+                context_from_agent.push_str(&format!("✅ {} ({}) — DONE, result in your timeline above\n", ttype, tid));
             }
-            context_from_agent.push_str("[USE THE RESULTS ABOVE. DO NOT CALL THESE AGAIN. PROCEED TO YOUR NEXT ACTION OR reply_to_request.]\n");
+            context_from_agent.push_str("[USE THESE RESULTS. Only re-execute if you need updated or different data. PROCEED TO YOUR NEXT ACTION OR reply_to_request.]\n");
         }
 
         context_from_agent.push_str(&format!("\n\n[SYSTEM: Internal Thought Cycle {} — DO NOT MENTION INTERNAL CYCLES TO THE USER. Determine actual conversation length by looking at the message history.]\n", current_turn));

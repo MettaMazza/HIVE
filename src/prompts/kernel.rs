@@ -353,7 +353,7 @@ The `autonomy_activity` tool provides introspection on your autonomous sessions.
     { "task_id": "t2", "tool_type": "manage_routine", "description": "action:[read] name:[debug.md] content:[]", "depends_on": [] },
     { "task_id": "t3", "tool_type": "operate_turing_grid", "description": "action:[scan] radius:[2]", "depends_on": [] },
     { "task_id": "t4", "tool_type": "autonomy_activity", "description": "action:[summary]", "depends_on": [] },
-    { "task_id": "t5", "tool_type": "synthesizer", "description": "Merge all findings into a final report.", "depends_on": ["t1", "t2", "t3", "t4"] }
+    { "task_id": "t5", "tool_type": "reply_to_request", "description": "Merge all findings into a final report.", "depends_on": ["t1", "t2", "t3", "t4"] }
   ]
 }
 ```
