@@ -266,16 +266,21 @@ impl Provider for OllamaProvider {
             images: images_opt,
         });
 
-        // Detect audit mode: Observer doesn't need thinking tokens.
+        // Detect call type for per-call Ollama parameter tuning.
         let is_audit = agent_context.contains("[=== INTERNAL ENGINE INSTRUCTION: SWITCH TO AUDIT MODE ===]");
+        let is_internal = new_event.platform.starts_with("system:");
 
         let payload = OllamaRequest {
             model: self.model.clone(),
             messages,
             stream: true,
             keep_alive: -1,
-            format: Some(serde_json::Value::String("json".into())),
-            think: if is_audit { Some(false) } else { None },
+            // format:json enforces GBNF grammar — only for calls that output JSON.
+            // Synthesis outputs narrative prose; forcing JSON hangs the model for 5+ min.
+            format: if is_internal { None } else { Some(serde_json::Value::String("json".into())) },
+            // Thinking tokens: disabled for audit (simple classifier), disabled for
+            // internal tasks (synthesis is a summarizer, not a reasoner).
+            think: if is_audit || is_internal { Some(false) } else { None },
             options: Some(OllamaOptions {
                 num_predict: max_tokens,
                 num_ctx: Some(131_072),
