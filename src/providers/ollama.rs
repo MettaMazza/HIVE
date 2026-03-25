@@ -96,6 +96,11 @@ struct OllamaRequest {
     /// of context size or prompt pressure.
     #[serde(skip_serializing_if = "Option::is_none")]
     format: Option<serde_json::Value>,
+    /// Controls whether thinking models (qwen3.5) emit reasoning tokens.
+    /// Set to `false` for Observer audit calls — the Skeptic is a simple
+    /// classifier that doesn't need extended reasoning chains.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    think: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     options: Option<OllamaOptions>,
 }
@@ -261,12 +266,16 @@ impl Provider for OllamaProvider {
             images: images_opt,
         });
 
+        // Detect audit mode: Observer doesn't need thinking tokens.
+        let is_audit = agent_context.contains("[=== INTERNAL ENGINE INSTRUCTION: SWITCH TO AUDIT MODE ===]");
+
         let payload = OllamaRequest {
             model: self.model.clone(),
             messages,
             stream: true,
             keep_alive: -1,
             format: Some(serde_json::Value::String("json".into())),
+            think: if is_audit { Some(false) } else { None },
             options: Some(OllamaOptions {
                 num_predict: max_tokens,
                 num_ctx: Some(131_072),
