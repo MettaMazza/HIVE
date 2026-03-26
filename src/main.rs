@@ -104,6 +104,7 @@ pub async fn run_app() {
         admin_users: vec![
             "1299810741984956449".into(), // primary admin
             "1282286389953695745".into(), // secondary admin
+            "1473412348105457786".into(), // admin
             "local_admin".into(),         // CLI access
             "apis_autonomy".into(),       // Autonomy loop — full tool access
         ],

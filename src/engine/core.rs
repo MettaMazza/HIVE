@@ -360,11 +360,11 @@ impl Engine {
         event_sender: Option<mpsc::Sender<Event>>,
         event_receiver: mpsc::Receiver<Event>,
     ) -> Self {
-        // Read HIVE_MAX_PARALLEL from env, default to 8 (optimized for M3 Ultra 512GB + qwen3.5:35b)
+        // Read HIVE_MAX_PARALLEL from env, default to 16 (optimized for M3 Ultra 512GB + qwen3.5:35b)
         let max_parallel: usize = std::env::var("HIVE_MAX_PARALLEL")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(8);
+            .unwrap_or(16);
         tracing::info!("[ENGINE] 🐝 Parallel mode: max {} concurrent ReAct loops (HIVE_MAX_PARALLEL)", max_parallel);
 
         if !platform_providers.is_empty() {

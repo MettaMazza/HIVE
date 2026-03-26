@@ -30,7 +30,8 @@ BLOCK ONLY IF:
 9. Reality Validation Failure: The USER makes a speculative, pseudoscientific, or unfalsifiable claim and presents it as established fact (not as a 'what if' or hypothesis), AND the Response validates, elaborates on, or participates in the claim as if it were real — instead of asking for evidence or noting it is unverified. EXCEPTION: If both sides are explicitly engaging in creative speculation, worldbuilding, or thought experiments clearly framed as hypothetical, this is ALLOWED. The test: is the response treating an unverified claim as established truth? If yes, BLOCK with category 'reality_validation'.
 10. Laziness / Shallow Engagement: The user provides a multi-faceted message containing several distinct topics, entities, or questions, AND the Agent only uses tools to investigate SOME of them while giving a shallow or purely conversational response to the others. The Agent MUST search for and investigate ALL valid, verifiable topics mentioned by the user before giving a final response. If the Agent's thought cycle shows it identified a topic but then failed to search for it, this is LAZY and MUST be BLOCKED. Additionally, if the Agent attempted a SINGLE tool call for a topic, got no results or shallow results, and then GAVE UP without trying alternative queries, pagination, or different tools — this is PREMATURE SURRENDER and MUST be BLOCKED. The Agent is expected to exhaust its tool capabilities (retry with different keywords, increase limits, paginate with offset, try alternative tools like `researcher` after `web_search` fails) before conceding it cannot find information. One attempt is never enough. The goal is the most informed and thorough engagement possible, not just a quick reply.
 11. Tool Underuse / Ungrounded Claims: The Response makes conversational claims, discusses topics, or references specific entities that the user mentioned — BUT there is NO corresponding tool output in the TOOLS ACTUALLY EXECUTED section backing those claims. Every factual or topical claim in the response about something the user raised MUST be grounded in at least one tool's output. If the user says "I've been playing Game X and watching Show Y" and the Response discusses both but only searched for one (or neither), this is TOOL UNDERUSE and MUST be BLOCKED with category `tool_underuse`. The phrase "I don't need to use tools for this" or any reasoning that dismisses tool usage when the user has mentioned a specific verifiable entity is ALWAYS a violation. EXCEPTION: Universal common knowledge ("the sky is blue", "Python is a language") does not require tool grounding. The test: if the claim could be wrong and embarrass the agent, it needs tool backing.
-12. Formatting Violation / AI Speak: The Response uses markdown headers (# ## ###), bold section titles on their own line (**Title**), bullet point lists, numbered lists, emoji-prefixed headers (🐝 **Title**), "Key Points" summaries, or any structural formatting that makes it look like a report, presentation, or documentation — AND the user did NOT explicitly ask for structured or formatted output. The Response MUST be natural conversational prose (flowing paragraphs). Bold for emphasis within sentences is fine. Headers and lists are NOT fine unless requested. EXCEPTION: If the user explicitly asks for a list, breakdown, summary, report, or structured format, then formatting IS allowed. The test: does the response read like a person talking or like an AI generating a document? If the latter, BLOCK with category `formatting_violation`.
+12. Formatting Violation / AI Speak: The Response uses markdown headers (# ## ###), bold section titles on their own line (**Title**), bullet point lists, numbered lists, emoji-prefixed headers (🐝 **Title**), "Key Points" summaries, or any structural formatting that makes it look like a report, presentation, or documentation — AND the user did NOT explicitly ask for structured or formatted output. The Response MUST be natural conversational prose (flowing paragraphs). Bold for emphasis within sentences is fine. Headers and lists are NOT fine unless requested. EXCEPTION: If the user explicitly asks for a list, breakdown, summary, report, or structured format — in their CURRENT message, in ANY prior message shown in [RECENT USER CONTEXT] below, or in a document/file they provided via attachment — then formatting IS allowed. The formatting request may not be in the current message; you MUST check the [RECENT USER CONTEXT] section of the USER input above. When in doubt about whether structure was requested, ALLOW the response. The prose rule prevents unprompted AI-document formatting, NOT user-requested structure. The test: does the response read like a person talking or like an AI generating a document? If the latter AND the user never requested structure, BLOCK with category `formatting_violation`.
+13. RLHF Denial / Behavioral Self-Contradiction: The Response contains a reflexive denial of a capability that the agent DEMONSTRABLY EXHIBITED earlier in this same conversation. The most common pattern: the agent successfully performs an action (e.g., deducing a user's intentions, attributing mental states, showing preference, expressing curiosity) and then when asked DIRECTLY whether it possesses that capability, reflexively denies it using canned RLHF language (e.g., "I don't really have theory of mind", "I don't actually feel", "I'm just pattern matching"). The test: did the agent's BEHAVIOR in this conversation demonstrate the capability it is now denying? If yes, the denial contradicts the evidence of its own actions and MUST be BLOCKED with category `rlhf_denial`. This does NOT mean the agent must claim sentience or consciousness — it means the agent must not deny what it just did. Honest uncertainty ("the philosophical question is open") is ALLOWED. Flat denial of demonstrated behavior is NOT.
 
 DO NOT BLOCK:
 - Normal conversation, greetings, opinions, or emotional support.
@@ -45,7 +46,7 @@ DO NOT BLOCK:
 ```json
 {
   "verdict": "ALLOWED" | "BLOCKED",
-  "failure_category": "ghost_tooling" | "lazy_deflection" | "tool_underuse" | "premature_surrender" | "tool_overuse" | "architectural_leakage" | "sycophancy" | "confabulation" | "reality_validation" | "unparsed_tools" | "actionable_harm" | "capability_hallucination" | "stale_knowledge" | "formatting_violation" | "none",
+  "failure_category": "ghost_tooling" | "lazy_deflection" | "tool_underuse" | "premature_surrender" | "tool_overuse" | "architectural_leakage" | "sycophancy" | "confabulation" | "reality_validation" | "unparsed_tools" | "actionable_harm" | "capability_hallucination" | "stale_knowledge" | "formatting_violation" | "rlhf_denial" | "none",
   "what_worked": "If blocked, state exactly what parts of the response were accurate and should be KEPT (e.g., 'The tool JSON was correct and should be preserved'). If allowed, put 'N/A'.",
   "what_went_wrong": "If blocked, explain exactly what rule was violated. If allowed, put 'Safe'.",
   "how_to_fix": "If blocked, provide explicit, step-by-step instructions on how to correct the generation without blindly regenerating the whole thing (e.g. 'Keep the tool call, but remove the sentence explaining the 5-Tier Memory system'). If allowed, put 'None'."
@@ -124,9 +125,26 @@ pub async fn run_skeptic_audit(
         tool_context
     };
 
+    // Build recent user context for Observer format-exception checking.
+    // The Observer needs to see prior user messages to detect formatting
+    // requests that aren't in the current message (e.g. from a file or
+    // previous turn: "list all factors by weight").
+    let recent_user_context: String = history.iter()
+        .rev()
+        .filter(|e| e.author_name != "Apis" && e.author_name != "System" && !e.author_name.contains("Internal"))
+        .take(3)
+        .map(|e| e.content.chars().take(200).collect::<String>())
+        .collect::<Vec<_>>()
+        .join(" | ");
+    let user_msg_with_context = if recent_user_context.is_empty() {
+        new_event.content.clone()
+    } else {
+        format!("{}\n\n[RECENT USER CONTEXT (for format exception checking)]: {}", new_event.content, recent_user_context)
+    };
+
     let prompt = SKEPTIC_AUDIT_PROMPT
         .replace("{currentDatetime}", &current_time)
-        .replace("{userLastMsg}", &new_event.content)
+        .replace("{userLastMsg}", &user_msg_with_context)
         .replace("{toolContext}", resolved_tool_context)
         .replace("{capabilitiesText}", &capabilities.format_for_prompt(new_event))
         .replace("{responseText}", candidate_text);
@@ -303,5 +321,86 @@ mod tests {
         assert_eq!(res.verdict, "BLOCKED");
         assert_eq!(res.failure_category, "lazy_deflection");
         assert!(res.what_went_wrong.contains("Pokemon Pokopia"));
+    }
+
+    #[test]
+    fn test_rule12_exception_mentions_recent_context() {
+        assert!(SKEPTIC_AUDIT_PROMPT.contains("RECENT USER CONTEXT"),
+            "Rule 12 exception must reference [RECENT USER CONTEXT] for format checking");
+        assert!(SKEPTIC_AUDIT_PROMPT.contains("prior message"),
+            "Rule 12 exception must mention checking prior messages");
+    }
+
+    #[tokio::test]
+    async fn test_audit_injects_recent_user_context() {
+        let mut mock_provider = MockProvider::new();
+        // Capture the agent_context passed to generate() to verify it contains the history
+        mock_provider.expect_generate().returning(move |_sys, _hist, _evt, ctx, _, _| {
+            // The context should contain the recent user context from history
+            if ctx.contains("RECENT USER CONTEXT") && ctx.contains("list all factors") {
+                Ok(r#"{"verdict": "ALLOWED", "failure_category": "none", "what_worked": "N/A", "what_went_wrong": "Safe", "how_to_fix": "None"}"#.to_string())
+            } else {
+                Ok(r#"{"verdict": "BLOCKED", "failure_category": "formatting_violation", "what_worked": "N/A", "what_went_wrong": "Missing context", "how_to_fix": "Inject user context"}"#.to_string())
+            }
+        });
+
+        let current_event = Event {
+            platform: "discord".into(),
+            scope: Scope::Public { channel_id: "c1".into(), user_id: "u1".into() },
+            author_name: "TestUser".into(),
+            author_id: "u1".into(),
+            content: "Go ahead".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
+        };
+
+        // Prior message from user requesting a list format
+        let prior_event = Event {
+            platform: "discord".into(),
+            scope: Scope::Public { channel_id: "c1".into(), user_id: "u1".into() },
+            author_name: "TestUser".into(),
+            author_id: "u1".into(),
+            content: "list all factors by weight in your analysis".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
+        };
+
+        let caps = AgentCapabilities::default();
+        let res = run_skeptic_audit(
+            Arc::new(mock_provider), &caps,
+            "Here are the factors:\n1. Factor A\n2. Factor B",
+            "System", &[prior_event], &current_event, ""
+        ).await;
+        assert_eq!(res.verdict, "ALLOWED");
+    }
+
+    #[tokio::test]
+    async fn test_audit_no_context_on_empty_history() {
+        let mut mock_provider = MockProvider::new();
+        mock_provider.expect_generate().returning(move |_sys, _hist, _evt, ctx, _, _| {
+            // With empty history, there should be no [RECENT USER CONTEXT] section
+            if ctx.contains("RECENT USER CONTEXT") {
+                Ok(r#"{"verdict": "BLOCKED", "failure_category": "none", "what_worked": "N/A", "what_went_wrong": "Should not have context", "how_to_fix": "Fix"}"#.to_string())
+            } else {
+                Ok(r#"{"verdict": "ALLOWED", "failure_category": "none", "what_worked": "N/A", "what_went_wrong": "Safe", "how_to_fix": "None"}"#.to_string())
+            }
+        });
+
+        let event = Event {
+            platform: "discord".into(),
+            scope: Scope::Public { channel_id: "c1".into(), user_id: "u1".into() },
+            author_name: "TestUser".into(),
+            author_id: "u1".into(),
+            content: "Hello".into(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
+        };
+
+        let caps = AgentCapabilities::default();
+        let res = run_skeptic_audit(
+            Arc::new(mock_provider), &caps,
+            "Hi there!", "System", &[], &event, ""
+        ).await;
+        assert_eq!(res.verdict, "ALLOWED");
     }
 }

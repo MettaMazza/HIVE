@@ -130,9 +130,6 @@ impl OllamaProvider {
             model: model.to_string(),
         }
     }
-    fn map_chunk_err(e: reqwest::Error) -> ProviderError {
-        ProviderError::ConnectionError(e.to_string())
-    }
 }
 
 #[async_trait]
@@ -308,7 +305,27 @@ impl Provider for OllamaProvider {
         let prompt_bytes: usize = payload.messages.iter().map(|m| m.content.len()).sum();
         let start_time = tokio::time::Instant::now();
 
-        while let Some(chunk) = res.chunk().await.map_err(Self::map_chunk_err)? {
+        let mut chunk_retries: u8 = 0;
+        loop {
+            let chunk_result = res.chunk().await;
+            let chunk = match chunk_result {
+                Ok(Some(c)) => c,
+                Ok(None) => break, // Stream ended normally
+                Err(e) => {
+                    chunk_retries += 1;
+                    if chunk_retries >= 3 {
+                        if !full_response.is_empty() {
+                            tracing::warn!("[PROVIDER] Returning partial response ({} chars) after {} chunk errors: {}", full_response.len(), chunk_retries, e);
+                            break;
+                        }
+                        return Err(ProviderError::ConnectionError(format!("Chunk read failed after {} retries: {}", chunk_retries, e)));
+                    }
+                    tracing::warn!("[PROVIDER] Chunk read error (retry {}/3): {}", chunk_retries, e);
+                    tokio::time::sleep(tokio::time::Duration::from_millis(500 * chunk_retries as u64)).await;
+                    continue;
+                }
+            };
+
             let chunk_str = String::from_utf8_lossy(&chunk);
             raw_buffer.push_str(&chunk_str);
 

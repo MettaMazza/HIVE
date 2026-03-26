@@ -24,7 +24,7 @@ pub async fn execute_outreach(
     outbound_tx: Option<mpsc::Sender<crate::models::message::Response>>,
     invoker_uid: String,
     is_admin: bool,
-    goal_store: Option<Arc<crate::engine::goals::GoalStore>>,
+    _goal_store: Option<Arc<crate::engine::goals::GoalStore>>,
 ) -> ToolResult {
     if let Some(ref tx) = telemetry_tx {
         let _ = tx.send("📨 Outreach Agent Tool executing...\n".to_string()).await;
@@ -125,18 +125,18 @@ pub async fn execute_outreach(
                 return ToolResult { task_id, output: format!("🚫 Outreach blocked: {}", reason), tokens_used: 0, status: ToolStatus::Failed("outreach_blocked".to_string()) };
             }
 
-            if let Some(gs) = &goal_store {
-                let scope = crate::models::scope::Scope::Public { user_id: invoker_uid.clone(), channel_id: "system".to_string() };
-                let roots = gs.get_tree(&scope).await.get_active_roots().await;
-                let mut comms_active = false;
-                for root in roots {
-                    if root.tags.contains(&"communications".to_string()) || root.tags.contains(&"outreach".to_string()) {
-                        comms_active = true;
-                        break;
-                    }
-                }
-                if !comms_active {
-                    return ToolResult { task_id, output: "🚫 SECURITY VIOLATION: Cannot send outreach. Goal graph MUST contain an Active root node with 'communications' or 'outreach' tag. Create an outreach Goal to proceed.".to_string(), tokens_used: 0, status: ToolStatus::Failed("spam_block".to_string()) };
+            // Drive-based outreach gating: only allow when social_connection is healthy.
+            // Replaces the old goal-tag check which required an 'outreach' or 'communications'
+            // tagged goal that was never autonomously created, permanently blocking all outreach.
+            if let Some(ref ds) = drives {
+                let state = ds.get_state().await;
+                if state.social_connection < 20.0 {
+                    return ToolResult {
+                        task_id,
+                        output: format!("🚫 Outreach blocked: social_connection drive is critically low ({:.0}%). Engage with users first before reaching out to new people.", state.social_connection),
+                        tokens_used: 0,
+                        status: ToolStatus::Failed("low_social".to_string()),
+                    };
                 }
             }
 

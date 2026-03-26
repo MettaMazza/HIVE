@@ -7,5 +7,14 @@ cp HIVE_next target/release/HIVE
 rm HIVE_next
 
 echo "[UPGRADE_DAEMON] Rewiring active bounds natively and reviving HIVE..."
-nohup target/release/HIVE > logs/nohup_hive.log 2>&1 &
-echo "[UPGRADE_DAEMON] Done. The Engine has ascended."
+
+# Open a NEW visible Terminal window so the operator has full visibility
+HIVE_DIR="$(cd "$(dirname "$0")" && pwd)"
+osascript -e "
+tell application \"Terminal\"
+    activate
+    do script \"cd '$HIVE_DIR' && echo '[UPGRADE_DAEMON] ✅ HIVE restarted in visible terminal.' && exec ./target/release/HIVE 2>&1 | tee -a logs/hive_terminal.log\"
+end tell
+"
+
+echo "[UPGRADE_DAEMON] Done. A new Terminal window has been opened with HIVE running."

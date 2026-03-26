@@ -201,9 +201,23 @@ impl GoalTree {
                 if status == GoalStatus::Completed {
                     node.progress = 1.0;
                 }
-                node.status = status;
+                node.status = status.clone();
                 node.updated_at = now_ts();
-                (node.parent_id.clone(), true)
+                let pid = node.parent_id.clone();
+                let child_ids = node.children.clone();
+                // Cascade: when a node completes, mark all Pending children as Completed too
+                if status == GoalStatus::Completed {
+                    for cid in &child_ids {
+                        if let Some(child) = data.nodes.iter_mut().find(|n| n.id == *cid) {
+                            if child.status == GoalStatus::Pending {
+                                child.status = GoalStatus::Completed;
+                                child.progress = 1.0;
+                                child.updated_at = now_ts();
+                            }
+                        }
+                    }
+                }
+                (pid, true)
             } else {
                 (None, false)
             }
@@ -238,8 +252,22 @@ impl GoalTree {
                 node.updated_at = now_ts();
                 if node.progress >= 1.0 {
                     node.status = GoalStatus::Completed;
+                    // Cascade: mark Pending children as Completed when parent completes via evidence
+                    let child_ids = node.children.clone();
+                    let parent_id = node.parent_id.clone();
+                    for cid in &child_ids {
+                        if let Some(child) = data.nodes.iter_mut().find(|n| n.id == *cid) {
+                            if child.status == GoalStatus::Pending {
+                                child.status = GoalStatus::Completed;
+                                child.progress = 1.0;
+                                child.updated_at = now_ts();
+                            }
+                        }
+                    }
+                    parent_id
+                } else {
+                    node.parent_id.clone()
                 }
-                node.parent_id.clone()
             } else {
                 return false;
             }
@@ -332,10 +360,11 @@ impl GoalTree {
                 else if root.priority >= 0.5 { "MED" }
                 else { "LOW" };
             out.push_str(&format!(
-                "🎯 [{}] {} (progress: {:.0}%)\n",
+                "🎯 [{}] {} (progress: {:.0}%, id: {})\n",
                 priority_label,
                 root.title,
-                root.progress * 100.0
+                root.progress * 100.0,
+                root.id
             ));
             Self::format_children(&data, &root.id, &mut out, 1);
         }
@@ -359,7 +388,7 @@ impl GoalTree {
                 GoalStatus::Pending => "⬜",
             };
             let progress_str = format!(", {:.0}%", child.progress * 100.0);
-            out.push_str(&format!("{}└─ {} {} ({}{})\n", prefix, icon, child.title, 
+            out.push_str(&format!("{}└─ {} {} ({}{}, id: {})\n", prefix, icon, child.title, 
                 match child.status {
                     GoalStatus::Completed => "DONE",
                     GoalStatus::Active => "IN PROGRESS",
@@ -367,7 +396,8 @@ impl GoalTree {
                     GoalStatus::Blocked => "BLOCKED",
                     GoalStatus::Pending => "PENDING",
                 },
-                progress_str
+                progress_str,
+                child.id
             ));
             Self::format_children(data, &child.id, out, indent + 1);
         }
@@ -615,5 +645,70 @@ mod tests {
         let actionable = tree.get_actionable().await;
         assert_eq!(actionable.len(), 1);
         assert_eq!(actionable[0].id, sub_id);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_goal_uuid_in_format() {
+        let _ = std::fs::remove_file("/tmp/hive_test_goals/memory/core/goals/test_uuid_fmt.json");
+        let tree = GoalTree::new("/tmp/hive_test_goals", "test_uuid_fmt");
+
+        let root_id = tree.add_root_goal(
+            "UUID Test".into(), "".into(), 0.9, GoalSource::User, vec![],
+        ).await;
+        let sub_id = tree.add_subgoal(&root_id, "Sub UUID".into(), "".into(), 0.5, vec![]).await.unwrap();
+
+        let prompt = tree.format_for_prompt().await;
+        // Both root and child IDs must appear in the formatted output
+        assert!(prompt.contains(&root_id), "Root UUID not in format_for_prompt output");
+        assert!(prompt.contains(&sub_id), "Sub-goal UUID not in format_for_prompt output");
+        assert!(prompt.contains("id:"), "ID label not in output");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_status_cascade_on_completion() {
+        let _ = std::fs::remove_file("/tmp/hive_test_goals/memory/core/goals/test_cascade.json");
+        let tree = GoalTree::new("/tmp/hive_test_goals", "test_cascade");
+
+        let root_id = tree.add_root_goal(
+            "Parent".into(), "".into(), 0.9, GoalSource::User, vec![],
+        ).await;
+        let sub1_id = tree.add_subgoal(&root_id, "Child A".into(), "".into(), 0.5, vec![]).await.unwrap();
+        let sub2_id = tree.add_subgoal(&root_id, "Child B".into(), "".into(), 0.5, vec![]).await.unwrap();
+
+        // Children start as Pending
+        assert_eq!(tree.get_goal(&sub1_id).await.unwrap().status, GoalStatus::Pending);
+        assert_eq!(tree.get_goal(&sub2_id).await.unwrap().status, GoalStatus::Pending);
+
+        // Complete the parent directly
+        tree.update_status(&root_id, GoalStatus::Completed).await;
+
+        // Pending children should cascade to Completed
+        let child_a = tree.get_goal(&sub1_id).await.unwrap();
+        let child_b = tree.get_goal(&sub2_id).await.unwrap();
+        assert_eq!(child_a.status, GoalStatus::Completed);
+        assert_eq!(child_b.status, GoalStatus::Completed);
+        assert!((child_a.progress - 1.0).abs() < 0.01);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_evidence_cascade_on_completion() {
+        let _ = std::fs::remove_file("/tmp/hive_test_goals/memory/core/goals/test_ev_cascade.json");
+        let tree = GoalTree::new("/tmp/hive_test_goals", "test_ev_cascade");
+
+        let root_id = tree.add_root_goal(
+            "Evidence Parent".into(), "".into(), 0.5, GoalSource::User, vec![],
+        ).await;
+        let sub_id = tree.add_subgoal(&root_id, "Evidence Child".into(), "".into(), 0.5, vec![]).await.unwrap();
+
+        // Add enough evidence to complete the parent
+        tree.add_evidence(&root_id, "Done everything".into(), 1.0).await;
+
+        let parent = tree.get_goal(&root_id).await.unwrap();
+        assert_eq!(parent.status, GoalStatus::Completed);
+
+        // Pending child should cascade to Completed
+        let child = tree.get_goal(&sub_id).await.unwrap();
+        assert_eq!(child.status, GoalStatus::Completed);
+        assert!((child.progress - 1.0).abs() < 0.01);
     }
 }

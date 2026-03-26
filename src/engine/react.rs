@@ -29,6 +29,24 @@ pub async fn execute_react_loop(
     
     // Update and inject homeostatic drive state as ambient context
     drives.update().await;
+
+    // Boost social_connection on incoming human engagement — scaled by message
+    // length (depth of thought) and conversation history (sustained engagement).
+    // Without this, social_connection only decays and never recovers from user interaction.
+    if !is_autonomy && event.author_id != "system_resume" {
+        let msg_len = event.content.len();
+        let base_boost = if msg_len > 500 {
+            20.0  // Substantial engagement (long message, attachments, deep conversation)
+        } else if msg_len > 100 {
+            12.0  // Normal conversation
+        } else {
+            5.0   // Quick reply / emoji / short message
+        };
+        let engagement_multiplier = if history.len() > 10 { 1.5 } else if history.len() > 5 { 1.2 } else { 1.0 };
+        let final_boost = base_boost * engagement_multiplier;
+        drives.modify_drive("social_connection", final_boost).await;
+    }
+
     let drive_hud = drives.format_for_prompt().await;
     
     // Inject active goals summary
@@ -482,14 +500,21 @@ pub async fn execute_react_loop(
                 }
             }
 
-            // OUTPUT FORWARDING — Phase 2: Automatic injection safety net.
-            // ONLY for verbatim-forwarding tools (read_attachment, download).
-            // ONLY injects when the verbatim tool is the ONLY substantive tool
-            // in this turn — meaning the user asked to read/download something,
-            // not when the attachment was instructions being processed alongside
-            // other tools. This prevents injecting gauntlet-style instruction
-            // files when the model is executing commands, not reading back content.
-            if reply.source.is_none() && candidate_answer.len() < 2000 {
+            // OUTPUT FORWARDING — Phase 2: Intent-based verbatim injection.
+            // ONLY injects raw tool output when the user EXPLICITLY requests
+            // verbatim readback (e.g., "read it back", "paste the full content").
+            // Previously used a size-based heuristic (reply < 2000 chars) which
+            // incorrectly fired on any attachment, causing infinite Skeptic loops.
+            let user_requests_verbatim = {
+                let msg = event.content.to_lowercase();
+                msg.contains("read it back") || msg.contains("read this back")
+                    || msg.contains("read that back") || msg.contains("show me the full")
+                    || msg.contains("paste the") || msg.contains("give me the full")
+                    || msg.contains("verbatim") || msg.contains("word for word")
+                    || msg.contains("copy the contents") || msg.contains("print the file")
+                    || msg.contains("output the file") || msg.contains("dump the")
+            };
+            if reply.source.is_none() && candidate_answer.len() < 2000 && user_requests_verbatim {
                 let verbatim_tools = ["read_attachment", "download"];
                 let non_cosmetic_tools = ["emoji_react"]; // ignore these when counting
                 

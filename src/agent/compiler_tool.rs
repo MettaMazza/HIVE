@@ -23,6 +23,38 @@ pub async fn execute_compiler(
         telemetry!(telemetry_tx, "  ⚙️ Initiating native self-compilation array via `cargo build --release`...\n".into());
         telemetry!(telemetry_tx, "  🕒 Expected duration: 1-5 minutes depending on hardware limits.\n".into());
 
+        // Log what's about to be compiled — human-readable change tracker
+        {
+            let diff = tokio::process::Command::new("git")
+                .args(["diff", "--stat", "HEAD"])
+                .output().await;
+            let log = tokio::process::Command::new("git")
+                .args(["log", "--oneline", "-5"])
+                .output().await;
+
+            let diff_text = diff.map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
+            let log_text = log.map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
+
+            let explanation = if diff_text.trim().is_empty() {
+                "The system rebuilt itself from unchanged source code (verification test).".to_string()
+            } else {
+                format!("The system rebuilt itself after detecting code changes. {} file(s) modified.", diff_text.lines().count().saturating_sub(1))
+            };
+
+            let entry = format!(
+                "\n## Recompile — {}\n\n**Code changes since last commit:**\n{}\n\n**Recent commits:**\n{}\n\n**What this means:** {}\n\n---\n",
+                chrono::Utc::now().format("%Y-%m-%d %H:%M UTC"),
+                if diff_text.trim().is_empty() { "None — recompiling identical code.".into() } else { diff_text },
+                log_text.trim(),
+                explanation,
+            );
+
+            let log_path = std::path::PathBuf::from("memory/core/recompile_log.md");
+            let existing = tokio::fs::read_to_string(&log_path).await.unwrap_or_else(|_| "# Self-Recompilation Log\n".to_string());
+            let _ = tokio::fs::write(&log_path, format!("{}{}", existing, entry)).await;
+            tracing::info!("[UPGRADE_DAEMON] Recompile changelog written to memory/core/recompile_log.md");
+        }
+
         match tokio::process::Command::new("cargo")
             .arg("build")
             .arg("--release")

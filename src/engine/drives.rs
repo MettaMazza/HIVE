@@ -193,4 +193,34 @@ mod tests {
         assert!(s.contains("System Health"));
         assert!(s.contains("outreach"));
     }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_social_boost_scaling() {
+        let ds = DriveSystem::new("/tmp/hive_test_drives5");
+        // Set social_connection to a known low value
+        {
+            let mut s = ds.state.lock().await;
+            s.social_connection = 10.0;
+        }
+
+        // Small boost (short message: 5.0)
+        ds.modify_drive("social_connection", 5.0).await;
+        let s1 = ds.state.lock().await.clone();
+        assert!((s1.social_connection - 15.0).abs() < 0.01, "Small boost failed: {}", s1.social_connection);
+
+        // Medium boost (normal message: 12.0)
+        ds.modify_drive("social_connection", 12.0).await;
+        let s2 = ds.state.lock().await.clone();
+        assert!((s2.social_connection - 27.0).abs() < 0.01, "Medium boost failed: {}", s2.social_connection);
+
+        // Large boost (substantial engagement: 20.0)
+        ds.modify_drive("social_connection", 20.0).await;
+        let s3 = ds.state.lock().await.clone();
+        assert!((s3.social_connection - 47.0).abs() < 0.01, "Large boost failed: {}", s3.social_connection);
+
+        // Engagement multiplier: 20.0 * 1.5 = 30.0
+        ds.modify_drive("social_connection", 30.0).await;
+        let s4 = ds.state.lock().await.clone();
+        assert!((s4.social_connection - 77.0).abs() < 0.01, "Multiplied boost failed: {}", s4.social_connection);
+    }
 }
