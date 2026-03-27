@@ -20,6 +20,41 @@ pub async fn execute_compiler(
     }
 
     if action == "system_recompile" {
+        // ── SAFETY GATE: Run test suite BEFORE building ──────────────────
+        // This catches logic bugs that compile but break behavior (e.g.
+        // blocking .await on infinite tasks, incorrect concurrency, etc.)
+        telemetry!(telemetry_tx, "  🧪 Running test suite before compilation (safety gate)...\n".into());
+
+        match tokio::process::Command::new("cargo")
+            .arg("test")
+            .output()
+            .await
+        {
+            Ok(test_output) => {
+                if !test_output.status.success() {
+                    let stderr = String::from_utf8_lossy(&test_output.stderr);
+                    let stdout = String::from_utf8_lossy(&test_output.stdout);
+                    telemetry!(telemetry_tx, "  ❌ Test suite FAILED — recompile ABORTED.\n".into());
+                    return ToolResult {
+                        task_id,
+                        output: format!("RECOMPILE ABORTED: Test suite failed. Fix these failures before retrying.\n\nTest output:\n{}\n{}", stdout.chars().take(3000).collect::<String>(), stderr.chars().take(3000).collect::<String>()),
+                        tokens_used: 0,
+                        status: ToolStatus::Failed("Tests Failed".into()),
+                    };
+                }
+                telemetry!(telemetry_tx, "  ✅ All tests passed. Proceeding to compilation.\n".into());
+            }
+            Err(e) => {
+                telemetry!(telemetry_tx, "  ❌ Failed to run test suite — recompile ABORTED.\n".into());
+                return ToolResult {
+                    task_id,
+                    output: format!("RECOMPILE ABORTED: Could not run cargo test: {}", e),
+                    tokens_used: 0,
+                    status: ToolStatus::Failed("Test Runner Failure".into()),
+                };
+            }
+        }
+
         telemetry!(telemetry_tx, "  ⚙️ Initiating native self-compilation array via `cargo build --release`...\n".into());
         telemetry!(telemetry_tx, "  🕒 Expected duration: 1-5 minutes depending on hardware limits.\n".into());
 

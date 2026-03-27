@@ -18,8 +18,9 @@ struct ServerState {
 }
 
 pub async fn spawn_visualizer_server(memory: Arc<MemoryStore>) {
-    // We launch this inside a detached Tokio thread
-    tokio::spawn(async move {
+    // Fire-and-forget spawn — this task runs forever (axum::serve).
+    // NEVER .await the JoinHandle here, it would block startup.
+    let handle = tokio::spawn(async move {
         tracing::info!("[PANOPTICON] 👁️  Visualizer Server starting on http://127.0.0.1:3030");
         
         let state = ServerState { memory };
@@ -43,9 +44,19 @@ pub async fn spawn_visualizer_server(memory: Arc<MemoryStore>) {
             .with_state(state);
 
         let listener = TcpListener::bind("127.0.0.1:3030").await.expect("Failed to bind Visualizer port 3030");
+        tracing::info!("[PANOPTICON] 👁️  Visualizer Server bound successfully");
         axum::serve(listener, app).await.expect("Failed to start Visualizer server");
     });
+
+    // Non-blocking panic monitor — logs if the spawn dies without blocking startup
+    tokio::spawn(async move {
+        match handle.await {
+            Ok(_) => tracing::warn!("[PANOPTICON] Visualizer server task exited unexpectedly"),
+            Err(e) => tracing::error!("[PANOPTICON] ❌ Visualizer spawn PANICKED: {:?}", e),
+        }
+    });
 }
+
 
 // ─── ENDPOINTS ──────────────────────────────────────────────────────────
 
