@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 use crate::models::message::Event;
@@ -23,6 +24,7 @@ pub async fn execute_react_loop(
     drives: Arc<DriveSystem>,
     capabilities: Arc<AgentCapabilities>,
     teacher: Arc<Teacher>,
+    stop_flag: Arc<AtomicBool>,
 ) -> (String, usize, Vec<(String, String)>) {
     let is_autonomy = event.author_id == "apis_autonomy";
     let tool_list = agent.get_available_tools_text_for_platform(&event.platform, is_autonomy);
@@ -106,6 +108,21 @@ pub async fn execute_react_loop(
     // The inner ReAct loop
     loop {
         current_turn += 1;
+
+        // Check stop flag — /stop command was issued
+        if stop_flag.load(Ordering::SeqCst) {
+            tracing::warn!("[REACT] 🛑 Stop flag detected at turn {}. Breaking loop.", current_turn);
+            if final_response_text.is_empty() {
+                // Try to use the last rejection as the response
+                if let Some((last_candidate, _, _)) = all_rejections.last() {
+                    final_response_text = last_candidate.clone();
+                } else {
+                    final_response_text = "*Processing was interrupted by /stop. Let me know if you'd like me to try again.*".to_string();
+                }
+            }
+            break;
+        }
+
         tracing::debug!("[REACT] === Turn {} === (observer_attempts={}, completed_tools={})",
             current_turn, observer_attempts, completed_tools.len());
 
@@ -545,9 +562,17 @@ pub async fn execute_react_loop(
             }
 
             // ── SKEPTIC OBSERVER AUDIT (SYNCHRONOUS) ──
-            // With the KV-cache optimization in observer.rs, this audit now
-            // inherently evaluates in 0.5s instead of 35s, allowing us to
-            // comfortably leave it on the critical path without lagging delivery.
+            // CRITICAL FIX: Build a CLEAN context for the observer that strips all
+            // previous [SKEPTIC AUDIT FAIL] blocks. Without this, each rejection's
+            // feedback gets passed back to the observer on retry via context_from_agent,
+            // causing a self-reinforcing loop where accumulated "formatting_violation"
+            // messages prime the observer to repeat the same verdict indefinitely.
+            let clean_observer_context: String = context_from_agent
+                .split("Cycle ")
+                .filter(|chunk| !chunk.contains("[SKEPTIC AUDIT FAIL"))
+                .collect::<Vec<_>>()
+                .join("Cycle ");
+            
             tracing::info!("[AGENT LOOP] 🕵️ Running Skeptic Audit on Turn {}...", current_turn);
             let audit_result = crate::prompts::observer::run_skeptic_audit(
                 provider.clone(),
@@ -556,7 +581,7 @@ pub async fn execute_react_loop(
                 &base_system_prompt,
                 history,
                 event,
-                &context_from_agent
+                &clean_observer_context
             ).await;
 
             if audit_result.is_allowed() {

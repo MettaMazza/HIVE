@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::{mpsc, Semaphore, Mutex, RwLock};
 
 use crate::engine::drives;
@@ -359,6 +360,8 @@ pub struct Engine {
     pub mesh: Option<Arc<crate::network::HiveMesh>>,
     /// Human P2P mesh — None if HIVE_HUMAN_MESH=false.
     pub human_mesh: Option<Arc<crate::network::human_mesh::HumanMesh>>,
+    /// Stop flag — set by /stop command to interrupt a stuck react loop.
+    pub stop_flag: Arc<AtomicBool>,
 }
 
 impl Engine {
@@ -421,6 +424,7 @@ impl Engine {
             scope_locks: Arc::new(RwLock::new(HashMap::new())),
             mesh: None,
             human_mesh: None,
+            stop_flag: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -638,6 +642,38 @@ impl Engine {
                 continue;
             }
 
+            if event.content.trim() == "/stop" {
+                if self.capabilities.admin_users.contains(&event.author_id) || event.author_id == "apis_autonomy" {
+                    self.stop_flag.store(true, Ordering::SeqCst);
+                    let response = Response {
+                        platform: event.platform.clone(),
+                        target_scope: event.scope.clone(),
+                        text: "🛑 **Stop signal sent.** Current react loop will terminate and deliver its best response.".to_string(),
+                        is_telemetry: false,
+                    };
+                    if let Some(platform) = self.platforms.get(response.platform.split(':').next().unwrap_or("")) {
+                        let _ = platform.send(response).await;
+                    }
+                    // Reset the flag after a short delay so it doesn't stick
+                    let flag = self.stop_flag.clone();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                        flag.store(false, Ordering::SeqCst);
+                    });
+                } else {
+                    let response = Response {
+                        platform: event.platform.clone(),
+                        target_scope: event.scope.clone(),
+                        text: "🚫 **Permission Denied.** Only configured HIVE Administrators can use /stop.".to_string(),
+                        is_telemetry: false,
+                    };
+                    if let Some(platform) = self.platforms.get(response.platform.split(':').next().unwrap_or("")) {
+                        let _ = platform.send(response).await;
+                    }
+                }
+                continue;
+            }
+
             // ─── SELF-MODERATION GATE ────────────────────────────────────────
             // Check if Apis has muted or rate-limited this user. Enforcement is
             // at the engine level so the LLM never even sees the event.
@@ -715,6 +751,8 @@ impl Engine {
                 let autonomy_handle_bg = autonomy_handle.clone();
                 let semaphore_bg = self.concurrency_semaphore.clone();
 
+                    let stop_flag_bg = self.stop_flag.clone();
+
                 active_autonomy_task = Some(tokio::spawn(async move {
                     // Acquire concurrency permit — waits if all slots are busy
                     let _permit = semaphore_bg.acquire().await.expect("Semaphore closed");
@@ -736,6 +774,7 @@ impl Engine {
                         drives_bg,
                         capabilities_bg,
                         teacher_bg,
+                        stop_flag_bg,
                     ).await;
 
                     let response = Response {
@@ -868,6 +907,8 @@ impl Engine {
                     event.author_name, event.scope.to_key(),
                     available, self.concurrency_semaphore.available_permits());
 
+                let stop_flag_bg = self.stop_flag.clone();
+
                 tokio::spawn(async move {
                     // 1. Acquire per-scope lock — serializes events within the same channel/DM
                     let scope_key = event.scope.to_key();
@@ -897,6 +938,7 @@ impl Engine {
                         drives_bg,
                         capabilities_bg,
                         teacher_bg.clone(),
+                        stop_flag_bg,
                     ).await;
 
                     let response = Response {
