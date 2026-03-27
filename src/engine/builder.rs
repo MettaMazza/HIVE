@@ -87,7 +87,8 @@ impl EngineBuilder {
         let inbox = Arc::new(inbox::InboxManager::new(&self.project_root));
         let goal_store = Arc::new(goals::GoalStore::new(&self.project_root));
         let tool_forge = Arc::new(crate::agent::tool_forge::ToolForge::new(&self.project_root));
-        tracing::debug!("[ENGINE:Builder] Subsystems initialized: DriveSystem, OutreachGate, InboxManager, GoalStore, ToolForge");
+        let opencode_bridge = Arc::new(crate::agent::opencode::OpenCodeBridge::new(&self.project_root));
+        tracing::debug!("[ENGINE:Builder] Subsystems initialized: DriveSystem, OutreachGate, InboxManager, GoalStore, ToolForge, OpenCodeBridge");
         
         let agent = match self.agent {
             Some(s) => {
@@ -99,7 +100,8 @@ impl EngineBuilder {
                 let mut agent = AgentManager::new(provider.clone(), memory.clone())
                     .with_outreach(drives.clone(), outreach_gate.clone(), inbox.clone())
                     .with_goals(goal_store.clone())
-                    .with_forge(tool_forge.clone());
+                    .with_forge(tool_forge.clone())
+                    .with_opencode(opencode_bridge);
                 agent.load_forged_tools(&tool_forge);
                 Arc::new(agent)
             },

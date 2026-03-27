@@ -21,6 +21,7 @@ pub fn dispatch_native_tool(
     capabilities: Option<Arc<crate::models::capabilities::AgentCapabilities>>,
     goal_store: Option<Arc<crate::engine::goals::GoalStore>>,
     tool_forge: Option<Arc<crate::agent::tool_forge::ToolForge>>,
+    opencode_bridge: Option<Arc<crate::agent::opencode::OpenCodeBridge>>,
     outbound_tx: Option<tokio::sync::mpsc::Sender<crate::models::message::Response>>,
 ) -> Option<tokio::task::JoinHandle<ToolResult>> {
     let task_id = task.task_id.clone();
@@ -439,6 +440,20 @@ pub fn dispatch_native_tool(
             return Some(handle);
         }
     } 
+
+    if tool_type == "opencode" {
+        if let Some(bridge) = opencode_bridge.clone() {
+            let handle = tokio::spawn(async move {
+                crate::agent::opencode::execute_opencode_tool(task_id, desc, bridge, tx_clone).await
+            });
+            return Some(handle);
+        } else {
+            let handle = tokio::spawn(async move {
+                ToolResult { task_id, output: "OpenCode bridge not initialized.".into(), tokens_used: 0, status: ToolStatus::Failed("No OpenCodeBridge".into()) }
+            });
+            return Some(handle);
+        }
+    }
     
     if tool_type == "manage_lessons" {
         let mem_clone = memory.clone();
@@ -741,6 +756,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             );
             
             assert!(handle.is_some(), "Tool {} should return a handle", t);
@@ -770,6 +786,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
         assert!(dup_handle.is_some());
         
@@ -788,6 +805,7 @@ mod tests {
             None,
             mem.clone(),
             provider.clone(),
+            None,
             None,
             None,
             None,

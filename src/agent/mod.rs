@@ -48,6 +48,7 @@ pub mod smarthome_tool;
 pub mod compiler_tool;
 pub mod contributors_tool;
 pub mod contacts_tool;
+pub mod opencode;
 
 pub struct AgentManager {
     registry: HashMap<String, ToolTemplate>,
@@ -60,6 +61,7 @@ pub struct AgentManager {
     pub inbox: Option<Arc<crate::engine::inbox::InboxManager>>,
     pub goal_store: Option<Arc<crate::engine::goals::GoalStore>>,
     pub tool_forge: Option<Arc<crate::agent::tool_forge::ToolForge>>,
+    pub opencode_bridge: Option<Arc<crate::agent::opencode::OpenCodeBridge>>,
 }
 
 impl AgentManager {
@@ -310,6 +312,21 @@ impl AgentManager {
             tools: vec![],
         };
 
+        let opencode_ide = ToolTemplate {
+            name: "opencode".into(),
+            system_prompt: "The OpenCode IDE — a full-featured coding agent you control. \
+                LIFECYCLE: 'action:[launch] project:[name]' — start OpenCode for a project (auto-creates if needed). \
+                'action:[shutdown]' — stop the server. 'action:[status]' — check if running. \
+                SESSIONS: 'action:[create_session] title:[My Task] project:[name]' — start a coding session. \
+                'action:[prompt] session:[id] message:[Build a React landing page] model:[qwen3.5:35b]' — send a coding prompt. \
+                'action:[messages] session:[id]' — read session history. 'action:[abort] session:[id]' — cancel. \
+                'action:[list_sessions]' — view all sessions. \
+                PROJECTS: 'action:[create] project:[name]' — create new coding project. \
+                'action:[list]' — view all projects. 'action:[zip] project:[name]' — package for delivery. \
+                Models available: qwen3.5:35b, qwen3:32b, qwen3:14b, qwen3:8b, llama3.1:8b.".into(),
+            tools: vec![],
+        };
+
         let project_contributors = ToolTemplate {
             name: "project_contributors".into(),
             system_prompt: "Returns information about the HIVE project creator and all contributors. Uses git history to determine development timeline and contributor list. \
@@ -326,6 +343,7 @@ impl AgentManager {
         registry.insert(smart_home.name.clone(), smart_home);
         registry.insert(system_recompile.name.clone(), system_recompile);
         registry.insert(project_contributors.name.clone(), project_contributors);
+        registry.insert(opencode_ide.name.clone(), opencode_ide);
         registry.insert(codebase_list.name.clone(), codebase_list);
         registry.insert(codebase_read.name.clone(), codebase_read);
         registry.insert(web_search.name.clone(), web_search);
@@ -452,6 +470,7 @@ impl AgentManager {
             inbox: None,
             goal_store: None,
             tool_forge: None,
+            opencode_bridge: None,
         }
     }
 
@@ -475,6 +494,11 @@ impl AgentManager {
 
     pub fn with_forge(mut self, forge: Arc<crate::agent::tool_forge::ToolForge>) -> Self {
         self.tool_forge = Some(forge);
+        self
+    }
+
+    pub fn with_opencode(mut self, bridge: Arc<crate::agent::opencode::OpenCodeBridge>) -> Self {
+        self.opencode_bridge = Some(bridge);
         self
     }
 
@@ -667,6 +691,7 @@ impl AgentManager {
             swarm_caps.clone(),
             self.goal_store.clone(),
             self.tool_forge.clone(),
+            self.opencode_bridge.clone(),
             outbound_tx.clone(),
         ) {
             return handle;
