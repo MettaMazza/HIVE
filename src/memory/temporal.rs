@@ -85,6 +85,19 @@ impl TemporalTracker {
         self.save_state();
     }
 
+    /// Periodically save current uptime without resetting the session. 
+    /// Prevents uptime loss on crashes, kills, or process::exit calls.
+    pub fn save_uptime_checkpoint(&mut self) {
+        let now = Utc::now();
+        let session_seconds = (now - self.uptime_start).num_seconds() as f64;
+        // Temporarily update total, save, then restore — so record_shutdown doesn't double-count
+        let original = self.state.total_uptime_seconds;
+        self.state.total_uptime_seconds = original + session_seconds;
+        self.save_state();
+        self.state.total_uptime_seconds = original;
+        tracing::debug!("[MEMORY:Temporal] Uptime checkpoint saved (session={:.0}s, total={:.0}s)", session_seconds, original + session_seconds);
+    }
+
     fn save_state(&self) {
         let state_file = self.base_path.join("temporal_state.json");
         if let Some(parent) = state_file.parent() {

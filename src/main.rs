@@ -257,6 +257,19 @@ pub async fn run_app() {
         crate::engine::chronos::spawn_chronos(memory_store.clone()).await;
     }
 
+    // 10. Spawn periodic uptime checkpoint (saves every 5 min to prevent uptime loss on crashes/kills)
+    {
+        let mem = memory_store.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(300));
+            interval.tick().await; // skip first immediate tick
+            loop {
+                interval.tick().await;
+                mem.temporal.write().await.save_uptime_checkpoint();
+            }
+        });
+    }
+
     // Run the engine indefinitely
     tokio::select! {
         _ = engine.run() => {
