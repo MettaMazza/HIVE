@@ -161,6 +161,28 @@ pub async fn execute_react_loop(
             break;
         }
 
+        // Check stop flag AFTER inference returns — this is the critical check.
+        // The flag could have been set during the minutes-long provider.generate() call.
+        if stop_flag.load(Ordering::SeqCst) {
+            tracing::warn!("[REACT] 🛑 Stop flag detected after inference at turn {}. Delivering current candidate.", current_turn);
+            // Try to extract a reply from the just-generated candidate
+            let cleaned = crate::engine::repair::repair_planner_json(&candidate_text);
+            if let Ok(plan) = serde_json::from_str::<crate::agent::planner::AgentPlan>(&cleaned) {
+                // Look for a reply_to_request task
+                if let Some(reply_task) = plan.tasks.iter().find(|t| t.tool_type == "reply_to_request") {
+                    final_response_text = reply_task.description.clone();
+                } else if !plan.thought.is_empty() {
+                    final_response_text = plan.thought.join(" ");
+                } else {
+                    final_response_text = "*Processing interrupted by /stop.*".to_string();
+                }
+            } else {
+                // Raw text fallback
+                final_response_text = "*Processing interrupted by /stop.*".to_string();
+            }
+            break;
+        }
+
         let cleaned_json = crate::engine::repair::repair_planner_json(&candidate_text);
         tracing::trace!("[REACT] Turn {} candidate_text len={}, cleaned_json len={}", current_turn, candidate_text.len(), cleaned_json.len());
         
@@ -695,6 +717,9 @@ pub async fn execute_react_loop(
         };
         memory.add_event(internal_event).await;
     }
+
+    // Reset the stop flag so it doesn't persist and kill the next request
+    stop_flag.store(false, Ordering::SeqCst);
 
     (final_response_text, current_turn, completed_tools)
 }

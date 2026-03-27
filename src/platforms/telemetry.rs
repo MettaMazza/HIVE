@@ -37,7 +37,14 @@ pub fn spawn_telemetry_loop(
                     let edit_builder = serenity::builder::EditMessage::new().embed(embed);
                     match channel_id.edit_message(&http, MessageId::new(msg_id), edit_builder).await {
                         Ok(_) => tracing::trace!("[TELEMETRY:LOOP] ✏️ Embed updated for msg_id={}", msg_id),
-                        Err(e) => tracing::warn!("[TELEMETRY:LOOP] ❌ Embed edit failed for msg_id={}: {}", msg_id, e),
+                        Err(e) => {
+                            let err_str = e.to_string();
+                            if err_str.contains("Unknown Message") {
+                                tracing::warn!("[TELEMETRY:LOOP] 🗑️ Message {} was deleted — exiting loop", msg_id);
+                                break;
+                            }
+                            tracing::warn!("[TELEMETRY:LOOP] ❌ Embed edit failed for msg_id={}: {}", msg_id, e);
+                        }
                     }
                     
                     if is_complete {

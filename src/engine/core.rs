@@ -643,34 +643,9 @@ impl Engine {
             }
 
             if event.content.trim() == "/stop" {
-                if self.capabilities.admin_users.contains(&event.author_id) || event.author_id == "apis_autonomy" {
-                    self.stop_flag.store(true, Ordering::SeqCst);
-                    let response = Response {
-                        platform: event.platform.clone(),
-                        target_scope: event.scope.clone(),
-                        text: "🛑 **Stop signal sent.** Current react loop will terminate and deliver its best response.".to_string(),
-                        is_telemetry: false,
-                    };
-                    if let Some(platform) = self.platforms.get(response.platform.split(':').next().unwrap_or("")) {
-                        let _ = platform.send(response).await;
-                    }
-                    // Reset the flag after a short delay so it doesn't stick
-                    let flag = self.stop_flag.clone();
-                    tokio::spawn(async move {
-                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                        flag.store(false, Ordering::SeqCst);
-                    });
-                } else {
-                    let response = Response {
-                        platform: event.platform.clone(),
-                        target_scope: event.scope.clone(),
-                        text: "🚫 **Permission Denied.** Only configured HIVE Administrators can use /stop.".to_string(),
-                        is_telemetry: false,
-                    };
-                    if let Some(platform) = self.platforms.get(response.platform.split(':').next().unwrap_or("")) {
-                        let _ = platform.send(response).await;
-                    }
-                }
+                self.stop_flag.store(true, Ordering::SeqCst);
+                tracing::info!("[ENGINE] 🛑 /stop issued by {} — flag set", event.author_name);
+                // No ack message — the react loop's exit response is the only user-facing message.
                 continue;
             }
 
