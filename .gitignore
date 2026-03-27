@@ -52,3 +52,4 @@ android/.gradle/
 # Persistent glasses links (contains Discord IDs)
 memory/glasses_links.json
 android/app/src/main/assets/qwen35_08b.bin
+gauntlet_daemon.log
