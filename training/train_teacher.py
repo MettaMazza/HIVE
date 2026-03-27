@@ -84,7 +84,7 @@ def format_golden_for_sft(examples: list) -> list:
     """Convert golden examples to Qwen3.5 chat format for SFT."""
     formatted = []
     for ex in examples:
-        system_content = ex.get("system_prompt", "")
+        system_content = strip_system_prompt(ex.get("system_prompt", ""))
         swarm_ctx = ex.get("swarm_ctx", "")
         user_msg = ex.get("user_msg", "")
         if swarm_ctx:
@@ -98,6 +98,47 @@ def format_golden_for_sft(examples: list) -> list:
             ]
         })
     return formatted
+
+
+def strip_system_prompt(prompt: str, max_chars: int = 2000) -> str:
+    """Extract the identity/persona section from the full kernel prompt.
+    
+    The full prompt is ~110K chars: HUD + kernel laws + tool defs + identity.
+    For training, we only want the identity block so the model learns
+    HOW Apis communicates, not the system architecture.
+    
+    Extracts from 'You are Apis' to the next '###' heading.
+    """
+    # Find the identity section
+    start = prompt.find("You are Apis")
+    if start == -1:
+        # Fallback: try other identity markers
+        for marker in ["# Identity", "## Identity", "# Persona"]:
+            start = prompt.find(marker)
+            if start != -1:
+                break
+    
+    if start == -1:
+        return "You are Apis, the intelligent core of the HIVE Engine."
+    
+    # Find the end: next section header after identity starts
+    remainder = prompt[start:]
+    end_markers = ["### Self-Supervised", "### Capabilities and Limits",
+                   "### Available Tools", "## Tool Definitions"]
+    
+    end = len(remainder)
+    for marker in end_markers:
+        idx = remainder.find(marker)
+        if idx > 0 and idx < end:
+            end = idx
+    
+    identity = remainder[:end].rstrip()
+    
+    # Hard cap
+    if len(identity) > max_chars:
+        identity = identity[:max_chars].rstrip()
+    
+    return identity
 
 
 def format_pairs_for_orpo(pairs: list) -> list:
@@ -227,7 +268,7 @@ def main():
 
     # 4. Write training datasets
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    sft_path = OUTPUT_DIR / "sft_train.jsonl"
+    sft_path = OUTPUT_DIR / "train.jsonl"
     orpo_path = OUTPUT_DIR / "orpo_train.jsonl"
 
     with open(sft_path, "w") as f:
@@ -271,56 +312,48 @@ def main():
             print(f"[TEACHER] SFT training failed with exit code {exit_code}")
             sys.exit(1)
 
-    # 6. Export to GGUF
-    gguf_path = OUTPUT_DIR / f"{new_version}.gguf"
-    export_cmd = (
-        f"python3.12 -m mlx_lm.convert "
-        f"--hf-path {parent} "
-        f"--adapter-path {OUTPUT_DIR}/adapters "
-        f"--mlx-path {OUTPUT_DIR}/merged "
-        f"--quantize --q-bits 8"
-    )
-    print(f"[TEACHER] Exporting GGUF: {export_cmd}")
-    exit_code = os.system(export_cmd)
-    if exit_code != 0:
-        print(f"[TEACHER] GGUF export failed with exit code {exit_code}")
-        sys.exit(1)
+    # 6. Version the adapter for cumulative stacking
+    # Qwen 3.5 MoE (hybrid SSM/attention) can't be converted to GGUF via any
+    # available tool. Instead, we version adapters and use --resume-adapter-file
+    # for cumulative stacking. The Ollama base model stays the same, while
+    # the adapters compound over sleep cycles.
+    versioned_adapter_dir = OUTPUT_DIR / "adapters" / new_version
+    versioned_adapter_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Copy current adapter to versioned location
+    import shutil
+    for f_name in ["adapters.safetensors", "adapter_config.json"]:
+        src = OUTPUT_DIR / "adapters" / f_name
+        if src.exists():
+            shutil.copy2(str(src), str(versioned_adapter_dir / f_name))
+    
+    print(f"[TEACHER] 💾 Adapter saved: {versioned_adapter_dir}")
 
-    # 7. Register with Ollama
-    modelfile_content = f"FROM {gguf_path}\nPARAMETER temperature 0.7\nPARAMETER num_ctx 32768\n"
-    modelfile_path = OUTPUT_DIR / "Modelfile"
-    with open(modelfile_path, "w") as f:
-        f.write(modelfile_content)
-
-    ollama_cmd = f"ollama create {new_version} -f {modelfile_path}"
-    print(f"[TEACHER] Registering: {ollama_cmd}")
-    exit_code = os.system(ollama_cmd)
-    if exit_code != 0:
-        print(f"[TEACHER] Ollama registration failed with exit code {exit_code}")
-        sys.exit(1)
-
-    # 8. Update manifest
+    # 7. Update manifest (track adapter path, not Ollama model)
     manifest["history"].append({
         "version": new_version,
         "date": datetime.now().isoformat(),
         "golden_count": len(golden),
         "pair_count": len(pairs),
         "parent": parent,
+        "adapter_path": str(versioned_adapter_dir),
     })
     manifest["current"] = new_version
+    manifest["latest_adapter"] = str(OUTPUT_DIR / "adapters")
     save_manifest(manifest)
 
-    # 9. Archive processed data
+    # 8. Archive processed data
     archive_processed(len(golden), len(pairs))
 
-    # 10. Cleanup old models (keep last N)
+    # 9. Cleanup old adapters (keep last N)
     retention = manifest.get("retention", 5)
     if len(manifest["history"]) > retention:
         old_versions = manifest["history"][:-retention]
         for old in old_versions:
-            old_name = old["version"]
-            os.system(f"ollama rm {old_name} 2>/dev/null")
-            print(f"[TEACHER] Pruned old model: {old_name}")
+            old_adapter = Path(old.get("adapter_path", ""))
+            if old_adapter.exists():
+                shutil.rmtree(str(old_adapter), ignore_errors=True)
+                print(f"[TEACHER] Pruned old adapter: {old_adapter}")
         manifest["history"] = manifest["history"][-retention:]
         save_manifest(manifest)
 
