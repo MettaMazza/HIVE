@@ -212,7 +212,7 @@ impl SleepCycle {
         let manifest = self.teacher.load_manifest();
         let parent = manifest.current.clone();
 
-        let output = tokio::process::Command::new("python3")
+        let output = tokio::process::Command::new("python3.12")
             .arg("training/train_teacher.py")
             .arg("--micro")
             .arg("--stack")

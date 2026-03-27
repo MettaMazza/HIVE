@@ -254,7 +254,7 @@ def main():
     # MLX LoRA SFT training
     if sft_data:
         sft_cmd = (
-            f"python3 -m mlx_lm.lora "
+            f"python3.12 -m mlx_lm.lora "
             f"--model {train_from} "
             f"--data {OUTPUT_DIR} "
             f"--train "
@@ -274,7 +274,7 @@ def main():
     # 6. Export to GGUF
     gguf_path = OUTPUT_DIR / f"{new_version}.gguf"
     export_cmd = (
-        f"python3 -m mlx_lm.convert "
+        f"python3.12 -m mlx_lm.convert "
         f"--hf-path {parent} "
         f"--adapter-path {OUTPUT_DIR}/adapters "
         f"--mlx-path {OUTPUT_DIR}/merged "
