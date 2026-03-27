@@ -22,7 +22,7 @@ from collections import Counter
 
 # ─── Configuration ───────────────────────────────────────────────────────────
 
-BASE_MODEL = "qwen3.5:35b"
+BASE_MODEL = "mlx-community/Qwen3.5-35B-A3B-4bit"
 MAX_SEQ_LEN = 16384
 LORA_R = 8
 LORA_ALPHA = 8
