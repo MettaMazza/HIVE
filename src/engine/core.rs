@@ -601,6 +601,42 @@ impl Engine {
                 continue;
             }
 
+            if event.content.trim() == "/sleep" {
+                if self.capabilities.admin_users.contains(&event.author_id) || event.author_id == "apis_autonomy" {
+                    let response = Response {
+                        platform: event.platform.clone(),
+                        target_scope: event.scope.clone(),
+                        text: "💤 **Entering sleep cycle...** Training on accumulated golden examples and preference pairs.".to_string(),
+                        is_telemetry: false,
+                    };
+                    if let Some(platform) = self.platforms.get(response.platform.split(':').next().unwrap_or("")) {
+                        let _ = platform.send(response).await;
+                    }
+                    let sleep_cycle = self.sleep_cycle.clone();
+                    tokio::spawn(async move {
+                        match sleep_cycle.enter_sleep().await {
+                            Ok(report) => {
+                                tracing::info!("[SLEEP] ✅ Sleep cycle complete: {}", report);
+                            }
+                            Err(e) => {
+                                tracing::error!("[SLEEP] ❌ Sleep cycle failed: {}", e);
+                            }
+                        }
+                    });
+                } else {
+                    let response = Response {
+                        platform: event.platform.clone(),
+                        target_scope: event.scope.clone(),
+                        text: "🚫 **Permission Denied.** Only configured HIVE Administrators can trigger sleep training.".to_string(),
+                        is_telemetry: false,
+                    };
+                    if let Some(platform) = self.platforms.get(response.platform.split(':').next().unwrap_or("")) {
+                        let _ = platform.send(response).await;
+                    }
+                }
+                continue;
+            }
+
             // ─── SELF-MODERATION GATE ────────────────────────────────────────
             // Check if Apis has muted or rate-limited this user. Enforcement is
             // at the engine level so the LLM never even sees the event.
