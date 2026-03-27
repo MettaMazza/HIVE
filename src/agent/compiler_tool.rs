@@ -122,6 +122,32 @@ pub async fn execute_compiler(
                         .arg("upgrade.sh")
                         .spawn();
                     
+                    // ── PRE-LOG RECOMPILE TO AUTONOMY ACTIVITY ──────────────
+                    // The normal session logger in core.rs runs AFTER the ReAct
+                    // loop returns, but process::exit kills us before that.
+                    // Write synchronously (std::fs) since the async runtime won't
+                    // survive the exit call.
+                    {
+                        let recompile_entry = serde_json::json!({
+                            "timestamp": chrono::Utc::now().to_rfc3339(),
+                            "turn_count": 1,
+                            "tools_used": ["system_recompile"],
+                            "summary": "[SELF-RECOMPILE] Successfully compiled and hot-swapped binary. Tests passed. The system_recompile tool is confirmed working — do not test it again unless deploying new code changes."
+                        });
+                        let dir = std::path::Path::new("memory/autonomy");
+                        let _ = std::fs::create_dir_all(dir);
+                        let path = dir.join("activity.jsonl");
+                        if let Ok(mut f) = std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(&path)
+                        {
+                            use std::io::Write;
+                            let _ = writeln!(f, "{}", recompile_entry);
+                        }
+                        tracing::info!("[UPGRADE_DAEMON] Pre-logged recompile to autonomy activity.jsonl");
+                    }
+
                     // Allow any pending replies, telemetry, and disk flushes to complete
                     // before killing the process. Without this, concurrent tasks like
                     // reply_to_request get killed mid-flight.

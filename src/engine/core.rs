@@ -59,6 +59,40 @@ async fn load_recent_autonomy_sessions(max_entries: usize) -> String {
     dedup_block
 }
 
+/// Loads recent self-recompilation history from recompile_log.md so the LLM
+/// knows its own upgrade track record and won't redundantly test system_recompile.
+async fn load_recompile_history(max_entries: usize) -> String {
+    let path = std::path::Path::new("memory/core/recompile_log.md");
+    let content = match tokio::fs::read_to_string(path).await {
+        Ok(c) => c,
+        Err(_) => return String::new(),
+    };
+
+    let entries: Vec<&str> = content.split("\n---\n")
+        .filter(|s| s.contains("## Recompile"))
+        .collect();
+    if entries.is_empty() {
+        return String::new();
+    }
+
+    let start = if entries.len() > max_entries { entries.len() - max_entries } else { 0 };
+    let recent = &entries[start..];
+
+    let mut block = format!(
+        "\n🔧 **SELF-RECOMPILATION HISTORY ({} total recompiles):**\n\
+        You have ALREADY successfully recompiled yourself {} times. \
+        The system_recompile tool is CONFIRMED WORKING. \
+        Do NOT test it again unless you have actual code changes to deploy.\n\n",
+        entries.len(), entries.len()
+    );
+    for entry in recent {
+        if let Some(date_line) = entry.lines().find(|l| l.starts_with("## Recompile")) {
+            block.push_str(&format!("• {}\n", date_line.trim_start_matches("## ")));
+        }
+    }
+    block
+}
+
 /// Format elapsed seconds as a human-readable string.
 pub fn format_elapsed(elapsed_secs: u64) -> String {
     if elapsed_secs < 60 {
@@ -709,6 +743,7 @@ impl Engine {
                             tracing::info!("[AUTONOMY] 🐝 5-minute idle timer fired. Entering Continuous Autonomy mode.");
                             let public_narrative = memory_clone.get_public_narrative().await;
                             let previous_sessions = load_recent_autonomy_sessions(10).await;
+                            let recompile_history = load_recompile_history(5).await;
                             let autonomy_event = Event {
                                 platform: format!("discord:1480192647657427044:0:autonomy_{}", chrono::Utc::now().timestamp()),
                                 scope: Scope::Public {
@@ -721,6 +756,7 @@ impl Engine {
                                     "You are now in Continuous Autonomy mode. You have 5 minutes of idle time.\n\n\
                                     {}\n\n\
                                     {}\n\n\
+                                    {}\n\n\
                                     CRITICAL DIRECTIVE: This is an UNSUPERVISED, INTERNAL AUTONOMY SESSION. You are alone. \
                                     You MUST NOT speak to users, you MUST NOT write conversational stories about them, and you MUST NOT address anyone directly. \
                                     This is your private internal monologue. \
@@ -731,7 +767,8 @@ impl Engine {
                                     do research, audit system logs, scan for bugs, or anything you find valuable for self-improvement. \
                                     Report your internal monologue and actions in your final reply.",
                                     public_narrative,
-                                    previous_sessions
+                                    previous_sessions,
+                                    recompile_history
                                 ),
                                 timestamp: Some(chrono::Utc::now().to_rfc3339()),
                                 message_index: None,
