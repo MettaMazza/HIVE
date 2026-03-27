@@ -19,6 +19,9 @@ models/
 # Environment
 .env
 
+# Creator private key (NEVER public)
+.hive/
+
 # Logs (rotated daily, don't track)
 logs/*.log
 logs/*.log.*
@@ -55,7 +58,6 @@ android/app/src/main/assets/qwen35_08b.bin
 gauntlet_daemon.log
 
 # NeuroLease sealed binary (NEVER public)
-src/network/
 lib/sealed/
 scripts/generate_creator_key.sh
 ATTESTATION.json
