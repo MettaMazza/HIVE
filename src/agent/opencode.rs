@@ -95,7 +95,7 @@ impl OpenCodeBridge {
             .unwrap_or(false)
     }
 
-    /// Launch OpenCode server in the given project directory.
+    /// Launch OpenCode TUI in its own Terminal.app window.
     pub async fn launch(&self, project_dir: &Path) -> Result<String, String> {
         if self.is_running().await {
             let state = self.state.read().await;
@@ -115,13 +115,34 @@ impl OpenCodeBridge {
                 .map_err(|e| format!("Failed to write opencode.json: {}", e))?;
         }
 
-        // Launch OpenCode TUI (visual mode — pops up on screen)
-        let child = tokio::process::Command::new("opencode")
-            .current_dir(project_dir)
-            .spawn()
-            .map_err(|e| format!("Failed to spawn opencode: {}", e))?;
+        // Launch OpenCode in its OWN Terminal.app window via osascript
+        let escaped_dir = project_dir.display().to_string().replace("\"", "\\\"");
+        let applescript = format!(
+            r#"tell application "Terminal"
+    activate
+    do script "cd \"{}\" && opencode"
+end tell"#,
+            escaped_dir
+        );
 
-        let pid = child.id();
+        let _ = tokio::process::Command::new("osascript")
+            .args(["-e", &applescript])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| format!("Failed to launch Terminal: {}", e))?;
+
+        // Wait for opencode to start, then find its PID
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+        let pid = tokio::process::Command::new("pgrep")
+            .args(["-n", "opencode"])
+            .output()
+            .await
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .and_then(|s| s.trim().parse::<u32>().ok());
 
         let mut state = self.state.write().await;
         state.child_pid = pid;
@@ -129,27 +150,32 @@ impl OpenCodeBridge {
         state.last_activity = std::time::Instant::now();
         drop(state);
 
-        // Give TUI a moment to render
-        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-        tracing::info!("[OPENCODE] TUI launched for {:?}", project_dir);
-        return Ok(format!("✅ OpenCode TUI launched for project: {}", project_dir.display()));
+        tracing::info!("[OPENCODE] TUI launched in new Terminal window for {:?} (pid: {:?})", project_dir, pid);
+        Ok(format!("✅ OpenCode launched in new Terminal window for: {}", project_dir.display()))
     }
 
     /// Shut down the OpenCode server.
     pub async fn shutdown(&self) -> Result<String, String> {
         let mut state = self.state.write().await;
+
+        // Kill by tracked PID first
         if let Some(pid) = state.child_pid.take() {
-            // Kill the process
             let _ = tokio::process::Command::new("kill")
                 .arg(pid.to_string())
                 .output()
                 .await;
-            state.project_dir = None;
-            tracing::info!("[OPENCODE] Server shut down (pid {})", pid);
-            Ok(format!("✅ OpenCode server shut down (pid {})", pid))
-        } else {
-            Ok("OpenCode server was not running.".into())
+            tracing::info!("[OPENCODE] Killed tracked process (pid {})", pid);
         }
+
+        // Also kill any remaining opencode processes (belt + suspenders)
+        let _ = tokio::process::Command::new("pkill")
+            .args(["-f", "opencode"])
+            .output()
+            .await;
+
+        state.project_dir = None;
+        tracing::info!("[OPENCODE] Server shut down");
+        Ok("✅ OpenCode shut down.".into())
     }
 
     /// Get server status.
@@ -347,6 +373,25 @@ impl OpenCodeBridge {
             return Err(format!("Project '{}' not found.", name));
         }
         self.launch(&project_dir).await
+    }
+}
+
+/// Cleanup: kill OpenCode when HIVE exits so it doesn't orphan a Terminal window.
+impl Drop for OpenCodeBridge {
+    fn drop(&mut self) {
+        // Synchronous kill — Drop can't be async
+        if let Ok(state) = self.state.try_read() {
+            if let Some(pid) = state.child_pid {
+                let _ = std::process::Command::new("kill")
+                    .arg(pid.to_string())
+                    .output();
+            }
+        }
+        // Belt + suspenders: pkill any remaining opencode processes
+        let _ = std::process::Command::new("pkill")
+            .args(["-f", "opencode"])
+            .output();
+        tracing::info!("[OPENCODE] Cleaned up on HIVE exit");
     }
 }
 
