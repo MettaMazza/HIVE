@@ -3,6 +3,12 @@ use chrono::{DateTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BootEntry {
+    pub boot_start: String,
+    pub boot_end: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TemporalState {
     pub birthdate: Option<String>,
     pub last_shutdown: Option<String>,
@@ -10,6 +16,8 @@ pub struct TemporalState {
     pub last_boot: Option<String>,
     pub total_boots: u32,
     pub total_uptime_seconds: f64,
+    #[serde(default)]
+    pub boot_log: Vec<BootEntry>,
 }
 
 impl Default for TemporalState {
@@ -21,6 +29,7 @@ impl Default for TemporalState {
             last_boot: None,
             total_boots: 0,
             total_uptime_seconds: 0.0,
+            boot_log: Vec::new(),
         }
     }
 }
@@ -68,20 +77,32 @@ impl TemporalTracker {
                 tracing::debug!("[MEMORY:Temporal] Downtime since last shutdown: {:.0}s", self.state.last_downtime_seconds);
             }
 
-        self.state.last_boot = Some(now_iso);
+        self.state.last_boot = Some(now_iso.clone());
         self.state.total_boots += 1;
-        tracing::info!("[MEMORY:Temporal] Boot #{} registered", self.state.total_boots);
+
+        // Add boot entry to the log
+        self.state.boot_log.push(BootEntry {
+            boot_start: now_iso,
+            boot_end: None,
+        });
+
+        tracing::info!("[MEMORY:Temporal] Boot #{} registered (boot_log: {} entries)", self.state.total_boots, self.state.boot_log.len());
+        self.recompute_uptime();
         self.save_state();
     }
 
     pub fn record_shutdown(&mut self) {
         let now = Utc::now();
-        self.state.last_shutdown = Some(now.to_rfc3339());
+        let now_iso = now.to_rfc3339();
+        self.state.last_shutdown = Some(now_iso.clone());
         
-        let session_seconds = (now - self.uptime_start).num_seconds() as f64;
-        self.state.total_uptime_seconds += session_seconds;
-        tracing::info!("[MEMORY:Temporal] Shutdown recorded (session={:.0}s, total_uptime={:.0}s)", session_seconds, self.state.total_uptime_seconds);
-        
+        // Update current boot entry's end time
+        if let Some(entry) = self.state.boot_log.last_mut() {
+            entry.boot_end = Some(now_iso);
+        }
+
+        self.recompute_uptime();
+        tracing::info!("[MEMORY:Temporal] Shutdown recorded (total_uptime={:.0}s from {} boot entries)", self.state.total_uptime_seconds, self.state.boot_log.len());
         self.save_state();
     }
 
@@ -89,13 +110,32 @@ impl TemporalTracker {
     /// Prevents uptime loss on crashes, kills, or process::exit calls.
     pub fn save_uptime_checkpoint(&mut self) {
         let now = Utc::now();
-        let session_seconds = (now - self.uptime_start).num_seconds() as f64;
-        // Temporarily update total, save, then restore — so record_shutdown doesn't double-count
-        let original = self.state.total_uptime_seconds;
-        self.state.total_uptime_seconds = original + session_seconds;
+        
+        // Update current boot entry's end time
+        if let Some(entry) = self.state.boot_log.last_mut() {
+            entry.boot_end = Some(now.to_rfc3339());
+        }
+
+        self.recompute_uptime();
         self.save_state();
-        self.state.total_uptime_seconds = original;
-        tracing::debug!("[MEMORY:Temporal] Uptime checkpoint saved (session={:.0}s, total={:.0}s)", session_seconds, original + session_seconds);
+        tracing::debug!("[MEMORY:Temporal] Uptime checkpoint saved (total={:.0}s from {} boots)", self.state.total_uptime_seconds, self.state.boot_log.len());
+    }
+
+    /// Recompute total_uptime_seconds from boot_log entries.
+    fn recompute_uptime(&mut self) {
+        let now = Utc::now();
+        let mut total: f64 = 0.0;
+        for entry in &self.state.boot_log {
+            if let Ok(start) = DateTime::parse_from_rfc3339(&entry.boot_start) {
+                let start = start.with_timezone(&Utc);
+                let end = entry.boot_end.as_ref()
+                    .and_then(|e| DateTime::parse_from_rfc3339(e).ok())
+                    .map(|e| e.with_timezone(&Utc))
+                    .unwrap_or(now); // Current boot has no end yet — use now
+                total += (end - start).num_seconds().max(0) as f64;
+            }
+        }
+        self.state.total_uptime_seconds = total;
     }
 
     fn save_state(&self) {
