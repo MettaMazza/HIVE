@@ -303,7 +303,7 @@ impl EventHandler for Handler {
         }
         
         let is_dm = msg.guild_id.is_none();
-        let target_channel: u64 = std::env::var("HIVE_TARGET_CHANNEL")
+        let target_channel: u64 = std::env::var("HIVE_CHAT_CHANNEL")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);

@@ -95,11 +95,11 @@ pub fn decode_message(msg: &Message, bot_user_id: Option<serenity::model::id::Us
         return MessageAction::TendingBusy;
     }
 
-    let target_channel: u64 = std::env::var("HIVE_TARGET_CHANNEL")
+    let chat_channel: u64 = std::env::var("HIVE_CHAT_CHANNEL")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
-    let is_target_channel = msg.channel_id.get() == target_channel;
+    let is_target_channel = msg.channel_id.get() == chat_channel;
     
     let is_mentioned = if let Some(bot_id) = bot_user_id {
         msg.mentions_user_id(bot_id)
@@ -324,7 +324,7 @@ pub async fn handle_message(handler: &super::Handler, ctx: Context, msg: Message
             let _ = msg.reply(&ctx.http, "Sorry I'm away right now doing testing but we develop publicly so you can watch in the public channel, I'll be back soon!").await;
         }
         MessageAction::DmRestricted => {
-            let target_ch = std::env::var("HIVE_TARGET_CHANNEL").ok().and_then(|v| v.parse::<u64>().ok());
+            let target_ch = std::env::var("HIVE_CHAT_CHANNEL").ok().and_then(|v| v.parse::<u64>().ok());
             let channel_msg = if let Some(ch) = target_ch {
                 format!("\n\nHowever, you are more than welcome to interact with me in my public channel: <#{}>!", ch)
             } else {
