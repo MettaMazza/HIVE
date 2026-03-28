@@ -4,10 +4,11 @@
 
 <p align="center">
   <a href="https://discord.gg/KhjYX3U3AW"><img src="https://img.shields.io/badge/🐝_Talk_to_Apis-Join_Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" /></a>
-  <img src="https://img.shields.io/badge/lang-Rust-F46623?style=for-the-badge&logo=rust&logoColor=white" />
+  <img src="https://img.shields.io/badge/lang-Pure_Rust-F46623?style=for-the-badge&logo=rust&logoColor=white" />
   <img src="https://img.shields.io/badge/LLM-Ollama_Local-0969DA?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/lines-15K+-FFB800?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/tests-200+_passing-00C853?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/lines-35K+-FFB800?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/tests-463_passing-00C853?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/modules-131-A855F7?style=for-the-badge" />
 </p>
 
 <h1 align="center">🐝 HIVE Engine</h1>
@@ -29,13 +30,16 @@
 
 HIVE is a **fully autonomous AI agent engine** that runs entirely on your hardware. It powers **Apis** — an AI persona that doesn't just answer questions, but *thinks*, *acts*, *remembers*, and *evolves*.
 
-Unlike wrapper bots that relay messages to cloud APIs, HIVE is a **real engine**:
+Unlike wrapper bots that relay messages to cloud APIs, HIVE is a **purpose-built cognitive runtime**:
 
-- 🧠 **Multi-turn ReAct Loop** — Apis reasons, selects tools, observes results, and iterates autonomously across multiple turns before responding.
-- 🔒 **Memory-Level Security** — Per-user data isolation is enforced at the architecture layer, not the prompt layer. Private data is *invisible* to other scopes by design.
-- 🛠️ **21 Native Tool Drones** — Web search, code execution, file I/O, image generation, TTS, PDF composition, process management, and more — all running locally.
-- 📡 **Live Inference HUD** — Watch Apis think in real-time via streaming Discord embeds that display reasoning tokens as they generate.
-- 🎓 **Self-Supervised Learning** — An integrated Teacher module captures preference pairs and golden examples to continuously improve the agent.
+- 🧠 **Multi-turn ReAct Loop** — Apis reasons, selects tools, observes results, and iterates autonomously. It decides when to stop, not the user.
+- 🔒 **Memory-Level Security** — Per-user data isolation enforced at the architecture layer. Private data is *invisible* to other scopes — not by prompting, by design.
+- 🛠️ **34 Native Tool Drones** — Web search, code execution, file I/O, image generation, TTS, PDF composition, process management, smart home control, email, calendar, and more — all running locally.
+- 📡 **Live Inference HUD** — Watch Apis think in real-time via streaming Discord embeds with reasoning tokens, tool activity, and performance telemetry.
+- 🎓 **Self-Supervised Learning** — An integrated Teacher module captures preference pairs and golden examples for continuous improvement.
+- 🕸️ **NeuroLease Mesh Network** — Decentralized peer-to-peer weight sharing, binary attestation, and trust-based propagation between HIVE instances.
+- 🔄 **Anti-Spiral Recovery** — Automatic detection and recovery from reasoning loops, with interruptible inference and thought-level safeguards.
+- 👁️ **Observer Audit Module** — Every response is audited for confabulation, logical inconsistency, and lazy deflection before delivery.
 
 > **Want to see it in action?** Apis is live right now. [**Join the Discord**](https://discord.gg/KhjYX3U3AW) and talk to it for free.
 
@@ -44,42 +48,50 @@ Unlike wrapper bots that relay messages to cloud APIs, HIVE is a **real engine**
 ## 🏗️ Architecture
 
 ```
-                          ┌──────────────────────────────────────┐
-                          │          🐝 HIVE ENGINE              │
-                          │                                      │
-   ┌──────────┐           │  ┌────────────┐    ┌──────────────┐  │
-   │ Discord  │◄─Events──►│  │  ReAct     │◄──►│   Provider   │  │
-   │ Platform │           │  │  Loop      │    │  (Ollama)    │  │
-   └──────────┘           │  │            │    └──────────────┘  │
-                          │  │  Think →   │                      │
-   ┌──────────┐           │  │  Act →     │    ┌──────────────┐  │
-   │   CLI    │◄─Events──►│  │  Observe → │◄──►│   Memory     │  │
-   │ Platform │           │  │  Repeat    │    │   Store      │  │
-   └──────────┘           │  └────────────┘    │  (5-Tier)    │  │
-                          │        │           └──────────────┘  │
-                          │        ▼                             │
-                          │  ┌────────────┐    ┌──────────────┐  │
-                          │  │  21 Tool   │    │   Teacher    │  │
-                          │  │  Drones    │    │  (Self-Sup)  │  │
-                          │  └────────────┘    └──────────────┘  │
-                          └──────────────────────────────────────┘
+                          ┌──────────────────────────────────────────────────┐
+                          │               🐝 HIVE ENGINE                    │
+                          │                                                  │
+   ┌──────────┐          │  ┌────────────┐   ┌──────────────┐              │
+   │ Discord  │◄─Events─►│  │  ReAct     │◄─►│   Provider   │              │
+   │ Platform │          │  │  Loop      │   │  (Ollama)    │              │
+   └──────────┘          │  │            │   └──────────────┘              │
+                          │  │  Think →   │                                 │
+   ┌──────────┐          │  │  Act →     │   ┌──────────────┐              │
+   │   CLI    │◄─Events─►│  │  Observe → │◄─►│   Memory     │              │
+   │ Platform │          │  │  Repeat    │   │   Store      │              │
+   └──────────┘          │  └────────────┘   │  (5-Tier)    │              │
+                          │        │          └──────────────┘              │
+   ┌──────────┐          │        ▼                                        │
+   │ Glasses  │◄─Events─►│  ┌────────────┐   ┌──────────────┐             │
+   │ Platform │          │  │  34 Tool   │   │  Observer    │             │
+   └──────────┘          │  │  Drones    │   │  (Audit)     │             │
+                          │  └────────────┘   └──────────────┘             │
+   ┌──────────┐          │        │                                        │
+   │ Telemetry│◄─Events─►│        ▼           ┌──────────────┐             │
+   │ Platform │          │  ┌────────────┐   │  NeuroLease  │             │
+   └──────────┘          │  │  Teacher   │   │  Mesh Net    │             │
+                          │  │ (Self-Sup) │   │  (P2P Sync)  │             │
+                          │  └────────────┘   └──────────────┘             │
+                          └──────────────────────────────────────────────────┘
 ```
 
 ### The Stack
 
 | Layer | What It Does |
 |-------|-------------|
-| **Platforms** | Trait-based I/O abstraction. Discord and CLI ship out of the box. Adding Telegram or Slack = one `impl Platform`. |
-| **ReAct Loop** | Autonomous multi-turn reasoning engine. Apis selects tools, reads observations, and decides its own next action. |
-| **Tool Drones** | 21 native capabilities: `web_search`, `researcher`, `codebase_read`, `operate_turing_grid`, `file_writer`, `process_manager`, `image_generator`, `kokoro_tts`, and more. |
-| **Memory Store** | 5-tier persistence: Working Memory → Scratchpad → Timeline → Synaptic Graph → Lessons. All scope-isolated. |
-| **Provider** | Local LLM integration via Ollama with streaming token extraction and `<think>` tag parsing. |
-| **Teacher** | Captures reasoning traces, evaluates response quality, and generates preference pairs for RLHF-style improvement. |
-| **Kernel** | Core laws, identity protocols, and the Zero Assumption Protocol that governs Apis's behavior. |
+| **Platforms** | Trait-based I/O abstraction. Discord, CLI, Glasses, and Telemetry ship out of the box. Adding Telegram or Slack = one `impl Platform`. |
+| **ReAct Loop** | Autonomous multi-turn reasoning engine with anti-spiral detection. Apis selects tools, reads observations, recovers from reasoning loops, and decides its own next action. |
+| **Tool Drones** | 34 native capabilities spanning information retrieval, code execution, multi-modal generation, memory management, and system automation. |
+| **Memory Store** | 5-tier persistence: Working Memory → Scratchpad → Timeline → Synaptic Graph → Lessons. All scope-isolated with compile-time access gates. |
+| **Provider** | Local LLM integration via Ollama with streaming token extraction, `<think>` tag parsing, vision support, and interruptible inference. |
+| **Observer** | Post-generation audit module that catches confabulation, lazy deflection, logical inconsistency, and architectural leakage before delivery. |
+| **Teacher** | Captures reasoning traces, evaluates response quality, and generates preference pairs for RLHF-style continuous improvement. |
+| **NeuroLease** | Decentralized mesh network for weight sharing, trust propagation, binary attestation, and integrity verification between HIVE instances. |
+| **Kernel** | Core identity protocols: Zero Assumption Protocol, Anti-Gaslighting, Contradiction Resolution, Continuity Recovery, and the full governance constitution. |
 
 ---
 
-## 🛠️ The 21 Tool Drones
+## 🛠️ The 34 Tool Drones
 
 Apis has access to a full arsenal of native capabilities, all running **locally on your machine**:
 
@@ -87,13 +99,14 @@ Apis has access to a full arsenal of native capabilities, all running **locally 
 <tr>
 <td width="50%">
 
-**🌐 Information**
+**🌐 Information & Research**
 - `web_search` — Brave-powered web search
 - `researcher` — Deep analysis of search results
 - `codebase_list` / `codebase_read` — Project introspection
 - `read_attachment` — Discord CDN file ingestion
 - `channel_reader` — Pull conversation history
 - `read_logs` — System log inspection
+- `download_tool` — Direct URL downloads
 
 </td>
 <td width="50%">
@@ -102,8 +115,10 @@ Apis has access to a full arsenal of native capabilities, all running **locally 
 - `manage_user_preferences` — Per-user preference tracking
 - `store_lesson` — Permanent knowledge retention
 - `manage_scratchpad` — Session working memory
+- `core_memory` — Persistent identity state
 - `operate_synaptic_graph` — Associative knowledge links
 - `review_reasoning` — Introspect own reasoning traces
+- `timeline_tool` — Temporal event management
 
 </td>
 </tr>
@@ -116,15 +131,23 @@ Apis has access to a full arsenal of native capabilities, all running **locally 
 - `process_manager` — Background daemon orchestration
 - `file_system_operator` — Native filesystem I/O
 - `file_writer` — PDF/document composition with themes
+- `compiler_tool` — Compile and verify code
+- `opencode` — Sub-agent IDE orchestration
+- `tool_forge` — Dynamic tool creation at runtime
 
 </td>
 <td>
 
-**🎨 Multi-Modal**
-- `image_generator` — Local Flux image generation
+**🎨 Multi-Modal & Automation**
+- `image_generator` — Local Flux image generation with vision cache
 - `kokoro_tts` — Neural text-to-speech (🔊 Speak button on Discord)
 - `synthesizer` — Multi-source fan-in compilation
 - `manage_routine` / `manage_skill` — Automation & script management
+- `email_tool` — SMTP email composition
+- `calendar_tool` — Event scheduling
+- `contacts_tool` — Contact management
+- `smarthome_tool` — IoT device control
+- `goal_planner` — Hierarchical goal decomposition
 - `emoji_react` — Discord native reactions
 
 </td>
@@ -153,6 +176,19 @@ Every memory query passes through `Scope::can_read()` — a compile-time enforce
 
 ---
 
+## 🕸️ NeuroLease Mesh Network
+
+HIVE instances can discover, authenticate, and synchronize with each other via the **NeuroLease** peer-to-peer protocol:
+
+- **Binary Attestation** — Each peer proves integrity through cryptographic verification of its compiled binary
+- **Creator Key Authentication** — Network participation requires valid creator key signatures
+- **Trust Propagation** — Peers establish trust through challenge-response verification
+- **Weight Synchronization** — Learned weights and preference data propagate across the mesh
+- **Integrity Watchdog** — Continuous self-destruct monitoring for tampered instances
+- **Adversarial Hardening** — Built-in tests for common mesh attack vectors
+
+---
+
 ## 📡 Live Inference HUD
 
 When Apis processes your message, you can watch it think in real-time:
@@ -178,12 +214,27 @@ When Apis processes your message, you can watch it think in real-time:
 
 ---
 
+## 👁️ Observer & Kernel Governance
+
+HIVE doesn't just generate — it **audits itself** before every response:
+
+| Protocol | What It Does |
+|----------|-------------|
+| **Observer Module** | Post-generation audit that catches confabulation, lazy deflection, and logical inconsistency before delivery |
+| **Zero Assumption Protocol** | Never assume — verify every claim via tools before stating it as fact |
+| **Anti-Gaslighting** | Refuse to accept blame that evidence doesn't support, regardless of user pressure |
+| **Anti-Spiral Recovery** | Detect and break circular reasoning loops automatically, re-prompting with recovery context |
+| **Continuity Recovery** | Resume interrupted sessions with full state restoration from persistent memory |
+| **Contradiction Resolution** | When encountering circular dependencies, act immediately rather than re-analyzing |
+
+---
+
 ## 🚀 Quick Start
 
 ### Prerequisites
 
 - [Rust](https://rustup.rs/) (stable)
-- [Ollama](https://ollama.ai/) with a model pulled (default: `qwen3:32b`)
+- [Ollama](https://ollama.ai/) with a model pulled (default: `qwen3.5:35b`)
 - A [Discord bot token](https://discord.com/developers/applications) (optional — CLI mode works without one)
 
 ### Run It
@@ -194,11 +245,11 @@ git clone https://github.com/MettaMazza/HIVE.git
 cd HIVE
 
 # Configure
-echo 'DISCORD_TOKEN="your_token"' > .env
-echo 'BRAVE_SEARCH_API_KEY="your_brave_key"' >> .env  # Optional: enables web search
+cp .env.example .env
+# Edit .env with your tokens
 
 # Pull the model
-ollama pull qwen3:32b
+ollama pull qwen3.5:35b
 
 # Launch
 ./start_hive.sh
@@ -222,22 +273,14 @@ cargo run --release
 | Metric | Value |
 |--------|-------|
 | **Language** | 100% Rust |
-| **Source Files** | 80 modules |
-| **Lines of Code** | 15,044 |
-| **Unit Tests** | 200+ (all passing) |
+| **Source Modules** | 131 |
+| **Lines of Code** | 35,405 |
+| **Unit Tests** | 463 (all passing) |
 | **Compiler Warnings** | 0 |
 | **External AI APIs** | 0 (fully local via Ollama) |
 | **Frameworks Used** | 0 (pure trait-based architecture) |
-
----
-
-## 🧪 Testing
-
-```bash
-cargo test --all
-```
-
-Every subsystem is independently tested: memory isolation, scope filtering, provider streaming, JSON repair, tool execution, platform routing, and more.
+| **Platforms** | Discord · CLI · Glasses · Telemetry |
+| **Memory Tiers** | Working → Scratchpad → Timeline → Synaptic → Lessons |
 
 ---
 
@@ -247,18 +290,35 @@ Every subsystem is independently tested: memory isolation, scope filtering, prov
 |----------|----------|-------------|
 | `DISCORD_TOKEN` | For Discord | Bot token from Developer Portal |
 | `BRAVE_SEARCH_API_KEY` | No | Enables `web_search` tool |
+| `HIVE_MODEL` | No | Specify Ollama model (default: `qwen3.5:35b`) |
+| `OLLAMA_BASE_URL` | No | Ollama endpoint (default: `http://localhost:11434`) |
+| `HIVE_AUTONOMY_CHANNEL` | No | Discord channel ID for autonomous operation |
 | `RUST_LOG` | No | Log verbosity (default: `info`, try `RUST_LOG=debug`) |
 | `HIVE_PYTHON_BIN` | No | Path to Python for image generation |
 
 ---
 
+## 🧪 Testing
+
+```bash
+cargo test --all
+```
+
+463 tests covering: memory isolation, scope filtering, provider streaming, JSON repair, tool execution, platform routing, adversarial mesh attacks, moderation, prompt integrity, and more.
+
+---
+
 ## 🗺️ Roadmap
 
+- [x] ~~Multi-agent swarm orchestration~~ → Sub-agent spawning system
+- [x] ~~NeuroLease mesh networking~~ → P2P weight sharing with attestation
+- [x] ~~Observer audit module~~ → Pre-delivery confabulation detection
+- [x] ~~Anti-spiral recovery~~ → Thought loop detection and re-prompting
 - [ ] Telegram platform adapter
 - [ ] WebSocket API for custom frontends
-- [ ] Multi-agent swarm orchestration
 - [ ] Fine-tuning pipeline from Teacher preference pairs
 - [ ] Plugin system for community tool drones
+- [ ] Mobile companion app
 
 ---
 
