@@ -62,10 +62,8 @@ lib/sealed/
 scripts/generate_creator_key.sh
 ATTESTATION.json
 
-# Training model outputs (large weights)
-training/output/adapters/
-training/output/merged/
-training/output/peft_adapter/
+# Training outputs (weights, adapters, and training data)
+training/output/
 training/__pycache__/
 
 # Runtime workspace
