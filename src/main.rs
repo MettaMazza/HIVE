@@ -102,13 +102,22 @@ pub async fn run_app() {
 
     // 3. Inject Dynamic Tool Tooling into Capabilities 
     let capabilities = AgentCapabilities {
-        admin_users: vec![
-            "1299810741984956449".into(), // primary admin
-            "1282286389953695745".into(), // secondary admin
-            "1473412348105457786".into(), // admin
-            "local_admin".into(),         // CLI access
-            "apis_autonomy".into(),       // Autonomy loop — full tool access
-        ],
+        admin_users: {
+            let mut admins: Vec<String> = std::env::var("HIVE_ADMIN_USERS")
+                .unwrap_or_default()
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            // System-level users: always present regardless of env config
+            if !admins.contains(&"local_admin".to_string()) {
+                admins.push("local_admin".into());
+            }
+            if !admins.contains(&"apis_autonomy".to_string()) {
+                admins.push("apis_autonomy".into());
+            }
+            admins
+        },
         has_terminal_access: true,
         has_internet_access: true,
         admin_tools: vec![

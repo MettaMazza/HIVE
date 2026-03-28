@@ -69,8 +69,8 @@ impl EventHandler for Handler {
 
                 let _ = self.event_sender.send(ev).await;
             } else if command.data.name.as_str() == "sweep" {
-                // Admin-only command
-                if command.user.id.get() != 1299810741984956449 {
+                let admin_list: Vec<String> = std::env::var("HIVE_ADMIN_USERS").unwrap_or_default().split(',').map(|s| s.trim().to_string()).collect();
+                if !admin_list.contains(&command.user.id.get().to_string()) {
                     let data = CreateInteractionResponseMessage::new()
                         .content("❌ You do not have permission to use this command.")
                         .ephemeral(true);
@@ -254,7 +254,8 @@ impl EventHandler for Handler {
         // Intercept text-based /sweep command (since slash commands take an hour to sync)
         if msg.content.trim() == "/sweep" {
             // Admin-only command
-            if msg.author.id.get() == 1299810741984956449 {
+            let sweep_admins: Vec<String> = std::env::var("HIVE_ADMIN_USERS").unwrap_or_default().split(',').map(|s| s.trim().to_string()).collect();
+            if sweep_admins.contains(&msg.author.id.get().to_string()) {
                 let _ = msg.react(&ctx.http, serenity::model::channel::ReactionType::Unicode("🧹".to_string())).await;
                 
                 let channel_id = msg.channel_id;
@@ -302,7 +303,10 @@ impl EventHandler for Handler {
         }
         
         let is_dm = msg.guild_id.is_none();
-        let target_channel: u64 = 1479744132904915125;
+        let target_channel: u64 = std::env::var("HIVE_TARGET_CHANNEL")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
         let is_target_channel = msg.channel_id.get() == target_channel;
         
         // Determine if we should listen.

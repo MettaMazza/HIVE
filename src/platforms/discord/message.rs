@@ -95,7 +95,10 @@ pub fn decode_message(msg: &Message, bot_user_id: Option<serenity::model::id::Us
         return MessageAction::TendingBusy;
     }
 
-    let target_channel: u64 = 1479744132904915125;
+    let target_channel: u64 = std::env::var("HIVE_TARGET_CHANNEL")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
     let is_target_channel = msg.channel_id.get() == target_channel;
     
     let is_mentioned = if let Some(bot_id) = bot_user_id {
@@ -321,7 +324,16 @@ pub async fn handle_message(handler: &super::Handler, ctx: Context, msg: Message
             let _ = msg.reply(&ctx.http, "Sorry I'm away right now doing testing but we develop publicly so you can watch in the public channel, I'll be back soon!").await;
         }
         MessageAction::DmRestricted => {
-            let response = "🐝 **Access Restricted** 🌼\n\nGreetings! I've noticed you're attempting to establish a private uplink. My direct neural pathways are currently reserved for administrative overrides only.\n\nHowever, you are more than welcome to interact with me in my public habitat: <#1479744132904915125>! There, you can explore my capabilities and see the HIVE in action for free.\n\nPrefer total sovereignty? You can download my entire program and run your own independent HIVE on your own hardware with zero restrictions: https://github.com/MettaMazza/HIVE";
+            let target_ch = std::env::var("HIVE_TARGET_CHANNEL").ok().and_then(|v| v.parse::<u64>().ok());
+            let channel_msg = if let Some(ch) = target_ch {
+                format!("\n\nHowever, you are more than welcome to interact with me in my public channel: <#{}>!", ch)
+            } else {
+                String::new()
+            };
+            let response = format!(
+                "🐝 **Access Restricted** 🌼\n\nGreetings! I've noticed you're attempting to establish a private uplink. My direct neural pathways are currently reserved for administrative overrides only.{}\n\nPrefer total sovereignty? You can download my entire program and run your own independent HIVE on your own hardware with zero restrictions: https://github.com/MettaMazza/HIVE",
+                channel_msg
+            );
             let _ = msg.reply(&ctx.http, response).await;
         }
         MessageAction::Event { author_name, author_id, channel_id, message_id, guild_id } => {
