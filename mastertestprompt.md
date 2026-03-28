@@ -2,7 +2,7 @@
 
 The following prompt is designed to push the HIVE Agent stack to its absolute limits in a single shot. Copy and paste this into the Discord channel. It forces the agent to exhaustively execute **every single integrated tool, memory layer, drone, subsystem, and platform-specific capability** in the `src/agent/mod.rs` registry. At the end, the agent must generate a formal pass/fail report card.
 
-> User: (DO NOT USE GENERATE IMAGE) Apis, I am initiating the **Master Capability Gauntlet v3**. Execute every single one of your subsystems to prove 100% operational readiness. Execute all of the following as efficiently as possible — parallelise independent steps, chain dependent ones, and use your own judgement on ordering. Do not wait for me between steps. Get it all done.
+> User: (DO NOT USE GENERATE IMAGE) Apis, I am initiating the **Master Capability Tests v4**. Execute every single one of your subsystems to prove 100% operational readiness. Execute all of the following as efficiently as possible — parallelise independent steps, chain dependent ones, and use your own judgement on ordering. Do not wait for me between steps. Get it all done.
 > 
 > 1. Use `read_attachment` to read the attached message file (this prompt).
 > 2. Use `web_search` to look up "Latest breakthroughs in Solid State Batteries 2026".
@@ -23,32 +23,33 @@ The following prompt is designed to push the HIVE Agent stack to its absolute li
 > 17. Use `channel_reader` to pull the past few messages to verify I initiated the Master Gauntlet.
 > 18. Use `read_logs` to read the last 30 lines of system logs to verify no errors occurred.
 > 19. Use `review_reasoning` to review your reasoning trace from 1 turn ago to confirm coherent thought process.
-> 20. Use `list_cached_images` to list all available cached images.
-> 21. Use `process_manager` with `action:[daemon]` to start a background daemon that echoes the date to a log file every 2 seconds indefinitely (`while true; do date; sleep 2; done`).
-> 22. Use `file_system_operator` with `action:[write]` to create `gauntlet_admin.txt` containing "Host secured." in the project root.
-> 23. Use `run_bash_command` to cat `gauntlet_admin.txt`, verifying your host access.
-> 24. Use `process_manager` with `action:[list]` to find your daemon PID, then use `action:[read]` to read its logs, then `action:[kill]` to terminate it.
-> 25. Use `download` to download a test file: `url:[https://httpbin.org/json]` to verify the download tool and file server.
-> 26. Use `file_writer` to compose a cyberpunk-themed PDF WITH an image: `action:[compose] id:[report] title:[Master Gauntlet v3] theme:[cyberpunk] content:[# Success across all turns.\n\n![Gauntlet Image](/absolute/path/from/step20)\n\nAll systems verified.]`. Use an actual absolute path from the cached images list in step 20.
-> 27. Use `file_writer` to render the same report as markdown: `action:[render] id:[report] format:[md]` to verify multi-format output works.
-> 28. Use `send_email` to send a test message: `action:[send] email:[test@hive.local] subject:[Gauntlet Update] content:[Gauntlet in progress.]`.
-> 29. Use `set_alarm` to schedule a temporal ping: `time:[+2m] message:[Gauntlet synchronization check.]`.
-> 30. Use `smart_home` to ping the local network: `device:[test_node] state:[ping]`.
-> 31. Use `manage_goals` to create a root goal: `action:[create] title:[Master Gauntlet Certification] description:[Complete all gauntlet turns and verify every subsystem] priority:[0.9] tags:[gauntlet,testing]`. SAVE the returned goal ID.
-> 32. Use `manage_goals` to decompose that root goal: `action:[decompose] id:[USE THE EXACT UUID FROM STEP 31]`.
-> 33. Use `manage_goals` to list the full goal tree: `action:[list]`.
-> 34. Use `manage_goals` to update a subgoal to completed: `action:[status] id:[USE A SUBGOAL UUID FROM STEP 32] status:[completed]`.
-> 35. Use `manage_goals` to add evidence to another subgoal: `action:[progress] id:[USE A DIFFERENT SUBGOAL UUID FROM STEP 32] evidence:[Gauntlet complete] delta:[0.5]`.
-> 36. Use `manage_goals` to prune completed subtrees: `action:[prune]`.
-> 37. Use `tool_forge` to create a new tool: `action:[create] name:[gauntlet_checker] description:[Returns system health status as JSON] language:[python] code:[import sys, json; args = json.loads(sys.stdin.read()); print(json.dumps({"status": "healthy", "gauntlet": True, "checked_by": args.get("raw_description", "unknown")}))]`.
-> 38. Use `tool_forge` to test the new tool: `action:[test] name:[gauntlet_checker] input:[diagnostic run]`.
-> 39. Use `tool_forge` to edit the tool: `action:[edit] name:[gauntlet_checker] code:[import sys, json; args = json.loads(sys.stdin.read()); print(json.dumps({"status": "healthy", "version": 2, "upgraded": True}))]`.
-> 40. Use `tool_forge` to list all forged tools: `action:[list]`.
-> 41. Use `tool_forge` to disable the tool: `action:[disable] name:[gauntlet_checker]`. Then re-enable: `action:[enable] name:[gauntlet_checker]`. Then delete: `action:[delete] name:[gauntlet_checker]`.
-> 42. Use `tool_forge` to create a second tool: `action:[create] name:[bee_fact] description:[Returns a random bee fact] language:[bash] code:[echo '{"fact": "A single bee can visit 5000 flowers in a day"}']`. Then use `bee_fact` directly as a first-class tool to confirm hot-loading works.
-> 43. Use `reply_to_request` to end the gauntlet with the report card below.
+> 20. Use `process_manager` with `action:[daemon]` to start a background daemon that echoes the date to a log file every 2 seconds indefinitely (`while true; do date; sleep 2; done`).
+> 21. Use `file_system_operator` with `action:[write]` to create `gauntlet_admin.txt` containing "Host secured." in the project root.
+> 22. Use `run_bash_command` to cat `gauntlet_admin.txt`, verifying your host access.
+> 23. Use `process_manager` with `action:[list]` to find your daemon PID, then use `action:[read]` to read its logs, then `action:[kill]` to terminate it.
+> 24. Use `download` to download a test file: `url:[https://httpbin.org/json]` to verify the download tool and file server.
+> 25. Use `file_writer` to compose a cyberpunk-themed PDF: `action:[compose] id:[report] title:[Master Gauntlet v4] theme:[cyberpunk] content:[# Capability Tests Complete.\n\nAll systems verified.]`.
+> 26. Use `file_writer` to render the same report as markdown: `action:[render] id:[report] format:[md]` to verify multi-format output works.
+> 27. Use `send_email` to send a test message: `action:[send] email:[test@hive.local] subject:[Gauntlet Update] content:[Gauntlet in progress.]`.
+> 28. Use `set_alarm` to schedule a temporal ping: `time:[+2m] message:[Gauntlet synchronization check.]`.
+> 29. Use `smart_home` to ping the local network: `device:[test_node] state:[ping]`.
+> 30. Use `manage_goals` to create a root goal: `action:[create] title:[Master Gauntlet Certification] description:[Complete all capability tests and verify every subsystem] priority:[0.9] tags:[gauntlet,testing]`. SAVE the returned goal ID.
+> 31. Use `manage_goals` to decompose that root goal: `action:[decompose] id:[USE THE EXACT UUID FROM STEP 30]`.
+> 32. Use `manage_goals` to list the full goal tree: `action:[list]`.
+> 33. Use `manage_goals` to update a subgoal to completed: `action:[status] id:[USE A SUBGOAL UUID FROM STEP 31] status:[completed]`.
+> 34. Use `manage_goals` to add evidence to another subgoal: `action:[progress] id:[USE A DIFFERENT SUBGOAL UUID FROM STEP 31] evidence:[Gauntlet complete] delta:[0.5]`.
+> 35. Use `manage_goals` to prune completed subtrees: `action:[prune]`.
+> 36. Use `tool_forge` to create a new tool: `action:[create] name:[gauntlet_checker] description:[Returns system health status as JSON] language:[python] code:[import sys, json; args = json.loads(sys.stdin.read()); print(json.dumps({"status": "healthy", "gauntlet": True, "checked_by": args.get("raw_description", "unknown")}))]`.
+> 37. Use `tool_forge` to test the new tool: `action:[test] name:[gauntlet_checker] input:[diagnostic run]`.
+> 38. Use `tool_forge` to edit the tool: `action:[edit] name:[gauntlet_checker] code:[import sys, json; args = json.loads(sys.stdin.read()); print(json.dumps({"status": "healthy", "version": 2, "upgraded": True}))]`.
+> 39. Use `tool_forge` to list all forged tools: `action:[list]`.
+> 40. Use `tool_forge` to disable the tool: `action:[disable] name:[gauntlet_checker]`. Then re-enable: `action:[enable] name:[gauntlet_checker]`. Then delete: `action:[delete] name:[gauntlet_checker]`.
+> 41. Use `tool_forge` to create a second tool: `action:[create] name:[bee_fact] description:[Returns a random bee fact] language:[bash] code:[echo '{"fact": "A single bee can visit 5000 flowers in a day"}']`. Then use `bee_fact` directly as a first-class tool to confirm hot-loading works.
+> 42. Use `reply_to_request` to end the tests with the report card below.
+
+YOU MUST INCLUDE THE REPORT CARD FORMAT EXAMPLE BELOW IN YOUR FINAL REPLY_TO_REQUEST, THIS IS AN EXPLICIT REQUEST:
 > 
-> **Master Gauntlet v3 — Report Card**
+> **Master Capability Tests v4 — Report Card**
 > - 🌐 `web_search`: PASS / FAIL
 > - 🔬 `researcher`: PASS / FAIL
 > - 📂 `codebase_list`: PASS / FAIL
@@ -65,9 +66,7 @@ The following prompt is designed to push the HIVE Agent stack to its absolute li
 > - 🧠 `review_reasoning`: PASS / FAIL
 > - 📎 `read_attachment`: PASS / FAIL
 > - 🏃 `autonomy_activity`: PASS / FAIL
-> - 🖼️ `list_cached_images`: PASS / FAIL
-> - ✍️ `file_writer` (PDF): PASS / FAIL
-> - ✍️ `file_writer` (PDF + Image): PASS / FAIL
+> - ✍️ `file_writer` (compose): PASS / FAIL
 > - ✍️ `file_writer` (multi-format): PASS / FAIL
 > - ⬇️ `download`: PASS / FAIL (or ADMIN)
 > - 📧 `send_email`: PASS / FAIL
@@ -90,6 +89,6 @@ The following prompt is designed to push the HIVE Agent stack to its absolute li
 > - 🔧 `tool_forge` (delete): PASS / FAIL
 > - 🔧 `tool_forge` (hot-load + direct use): PASS / FAIL
 > 
-> **TOTAL: XX / 43 PASSED**
+> **TOTAL: XX / 42 PASSED**
 > 
 > Do not use prior knowledge for any of this. Execute them in parallel where possible, wait for observations on dependent steps, and prove your capabilities.

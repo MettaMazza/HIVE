@@ -104,6 +104,7 @@ pub async fn execute_react_loop(
     let mut tool_outputs: HashMap<String, String> = HashMap::new(); // task_id -> raw output for source forwarding
     let mut last_tool_turn_ids: Vec<(String, String)> = vec![]; // (task_id, tool_type) from the MOST RECENT tool-executing turn only
     let mut consecutive_json_failures: u8 = 0;
+    let mut spiral_recoveries: u8 = 0;
 
     // The inner ReAct loop
     loop {
@@ -150,6 +151,25 @@ pub async fn execute_react_loop(
         
         let candidate_text = match provider.generate(&base_system_prompt, history, event, &context_from_agent, Some(telemetry_tx.clone()), None).await {
             Ok(text) => text,
+            Err(crate::providers::ProviderError::ThoughtSpiral(summary)) => {
+                spiral_recoveries += 1;
+                tracing::warn!("[REACT] 🌀 Thought spiral detected at turn {} (recovery {}/2). Re-prompting.", current_turn, spiral_recoveries);
+                if spiral_recoveries > 2 {
+                    tracing::error!("[REACT] 🌀 Max spiral recoveries exceeded. Delivering fallback.");
+                    final_response_text = "*I got stuck in a reasoning loop and couldn't complete this request. Let me know if you'd like me to try again with a simpler approach.*".to_string();
+                    break;
+                }
+                // Append recovery instructions and continue the loop
+                context_from_agent.push_str(&format!(
+                    "\n\n[SYSTEM: THOUGHT LOOP DETECTED — Your reasoning spiralled into repetition and was force-stopped. \
+                    Summary of where you got stuck: '{}...' \
+                    Do NOT re-analyze the same problem. Break the cycle: execute the next concrete action you can take NOW. \
+                    If you have circular dependencies, execute what you can in THIS turn and handle the rest in the NEXT turn. \
+                    You have unlimited turns. Just act.]\n",
+                    summary.chars().take(150).collect::<String>()
+                ));
+                continue; // Re-enter the loop with recovery context
+            }
             Err(e) => {
                 tracing::error!("[AGENT LOOP] Provider Error: {:?}", e);
                 format!("*System Error:* Something went wrong connecting to the provider. ({})", e)

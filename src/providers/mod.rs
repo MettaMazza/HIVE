@@ -15,6 +15,8 @@ pub enum ProviderError {
     ConnectionError(String),
     #[error("Failed to parse provider response: {0}")]
     ParseError(String),
+    #[error("Thought spiral detected — repetitive reasoning force-stopped")]
+    ThoughtSpiral(String),
 }
 
 /// The core trait for any LLM Provider powering the HIVE system persona (Apis).
