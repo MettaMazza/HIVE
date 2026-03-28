@@ -472,7 +472,7 @@ fn detect_thought_spiral(text: &str) -> bool {
     // Check from the end of the buffer — spirals are at the tail
     // Take the last 600 chars and look for a repeating pattern
     let start = if chars.len() > 600 { chars.len() - 600 } else { 0 };
-    let window: String = chars[start..].iter().collect();
+    let window = &chars[start..];
     
     // Try pattern lengths from 80 to 200
     for pat_len in (min_pattern_len..=200).step_by(20) {
@@ -480,9 +480,15 @@ fn detect_thought_spiral(text: &str) -> bool {
             continue;
         }
         let pattern = &window[..pat_len];
-        let count = window.matches(pattern).count();
-        if count >= 3 {
-            return true;
+        // Count how many times this pattern appears in the window
+        let mut count = 0;
+        for i in 0..=(window.len() - pat_len) {
+            if &window[i..i + pat_len] == pattern {
+                count += 1;
+                if count >= 3 {
+                    return true;
+                }
+            }
         }
     }
     false
