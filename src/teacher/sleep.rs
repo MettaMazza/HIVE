@@ -212,6 +212,42 @@ impl SleepCycle {
         let manifest = self.teacher.load_manifest();
         let parent = manifest.current.clone();
 
+        // Unload the Ollama model before training to free Metal/IOSurface handles.
+        // MLX LoRA training needs Metal buffers, and the system has a hard 1024
+        // IOSurface client limit. Keeping the 35B model loaded in Ollama while
+        // simultaneously running MLX training can exhaust this limit, especially
+        // when other apps (Chrome, etc.) have leaked IOSurface handles.
+        // The model reloads automatically on next inference call.
+        let ollama_host = std::env::var("OLLAMA_HOST")
+            .unwrap_or_else(|_| "http://localhost:11434".to_string());
+        let model_name = std::env::var("HIVE_MODEL")
+            .unwrap_or_else(|_| "qwen3.5:35b".to_string());
+
+        tracing::info!("💤 [SLEEP] Unloading Ollama model '{}' to free Metal resources for training...", model_name);
+        let unload_payload = serde_json::json!({
+            "model": model_name,
+            "keep_alive": 0
+        });
+        let unload_result = reqwest::Client::new()
+            .post(format!("{}/api/generate", ollama_host))
+            .json(&unload_payload)
+            .send()
+            .await;
+        match &unload_result {
+            Ok(resp) if resp.status().is_success() => {
+                tracing::info!("💤 [SLEEP] ✅ Ollama model unloaded — Metal resources freed");
+            }
+            Ok(resp) => {
+                tracing::warn!("💤 [SLEEP] Ollama unload returned {}, proceeding anyway", resp.status());
+            }
+            Err(e) => {
+                tracing::warn!("💤 [SLEEP] Could not unload Ollama model: {}, proceeding anyway", e);
+            }
+        }
+
+        // Brief pause to let the OS reclaim IOSurface handles
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
         let output = tokio::process::Command::new("python3.12")
             .arg("training/train_teacher.py")
             .arg("--micro")

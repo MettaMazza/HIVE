@@ -61,3 +61,22 @@ gauntlet_daemon.log
 lib/sealed/
 scripts/generate_creator_key.sh
 ATTESTATION.json
+
+# Training model outputs (large weights)
+training/output/adapters/
+training/output/merged/
+training/output/peft_adapter/
+training/__pycache__/
+
+# Runtime workspace
+workspace/
+
+# Forensic reports (generated, not source)
+forensic_report.md
+forensic_behavioural_report.md
+
+# Admin logs
+gauntlet_admin.log
+
+# Coverage output
+lcov.info
