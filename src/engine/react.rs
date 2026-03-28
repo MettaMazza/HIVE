@@ -205,8 +205,17 @@ pub async fn execute_react_loop(
                         || (candidate_text.trim().starts_with('{') || candidate_text.trim().starts_with("```json"));
                     
                     let auto_reply_text = if looks_like_json_plan {
-                        tracing::warn!("[AGENT LOOP] 🛡️ Blocked JSON tool plan from leaking to user after {} parse failures.", consecutive_json_failures);
-                        "*I tried to process your request but ran into a formatting issue. Let me try again — could you rephrase or simplify your request?*".to_string()
+                        tracing::error!(
+                            "[AGENT LOOP] 🛡️ JSON plan unparseable after {} attempts. Serde error: {}. Raw len={}",
+                            consecutive_json_failures, e, candidate_text.len()
+                        );
+                        format!(
+                            "*System Error:* My response plan failed to parse ({} attempts). \
+                            This is an internal error, not something you did wrong. \
+                            I'll try again on your next message. (serde: {})",
+                            consecutive_json_failures,
+                            e.to_string().chars().take(100).collect::<String>()
+                        )
                     } else {
                         // Genuinely conversational text — safe to forward
                         tracing::warn!("[AGENT LOOP] 🔧 Auto-wrapping plain text into reply_to_request after {} failures.", consecutive_json_failures);

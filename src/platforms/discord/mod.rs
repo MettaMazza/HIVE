@@ -232,7 +232,7 @@ impl Platform for DiscordPlatform {
                 } else {
                     tracing::warn!("[TELEMETRY:DISCORD] ⚠️ msg_id={} NOT FOUND in active_telemetry map (map_size={}, keys={:?})", effective_tid, map_size, map.keys().collect::<Vec<_>>());
                 }
-            } else if !response.platform.starts_with("discord:1480192647657427044") {
+            } else if !response.platform.contains("autonomy_") {
                 tracing::warn!("[TELEMETRY:DISCORD] ⚠️ thinking_msg_id=0 — cannot route telemetry (platform='{}')", response.platform);
             }
         } else {

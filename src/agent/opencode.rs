@@ -17,6 +17,8 @@ const _IDLE_TIMEOUT_SECS: u64 = 1800; // 30 minutes
 // ─── Config Generation ────────────────────────────────────────────────────
 
 fn generate_opencode_config(_project_dir: &Path) -> String {
+    let ollama_url = std::env::var("HIVE_OLLAMA_URL")
+        .unwrap_or_else(|_| "http://localhost:11434".to_string());
     serde_json::json!({
         "$schema": "https://opencode.ai/config.json",
         "provider": {
@@ -24,7 +26,7 @@ fn generate_opencode_config(_project_dir: &Path) -> String {
                 "npm": "@ai-sdk/openai-compatible",
                 "name": "Ollama (HIVE Local)",
                 "options": {
-                    "baseURL": "http://localhost:11434/v1"
+                    "baseURL": format!("{}/v1", ollama_url)
                 },
                 "models": {
                     "qwen3.5:35b": { "name": "Qwen3.5 35B (A3B MoE)" },

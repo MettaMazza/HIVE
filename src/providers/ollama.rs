@@ -116,19 +116,25 @@ impl OllamaProvider {
     /// Connects to a local Ollama instance.
     /// Model defaults to `qwen3.5:35b` but can be overridden via `HIVE_MODEL` env var.
     pub fn new() -> Self {
-        let model = std::env::var("HIVE_MODEL").unwrap_or_else(|_| "qwen3.5:35b".into());
+        let model = std::env::var("HIVE_MODEL")
+            .or_else(|_| std::env::var("OLLAMA_MODEL"))
+            .unwrap_or_else(|_| "qwen3.5:35b".into());
         Self::with_model(&model)
     }
 
     /// Creates an OllamaProvider targeting a specific model.
     /// Use this for platform-specific model routing (e.g., `qwen3.5:9b` for glasses).
     pub fn with_model(model: &str) -> Self {
+        let base_url = std::env::var("HIVE_OLLAMA_URL")
+            .unwrap_or_else(|_| "http://localhost:11434".to_string());
+        let endpoint = format!("{}/api/chat", base_url);
         Self {
             client: Client::builder()
-                .timeout(std::time::Duration::from_secs(300))
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .read_timeout(std::time::Duration::from_secs(120))
                 .build()
                 .unwrap_or_else(|_| Client::new()),
-            endpoint: "http://localhost:11434/api/chat".to_string(),
+            endpoint,
             model: model.to_string(),
         }
     }

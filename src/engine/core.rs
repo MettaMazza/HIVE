@@ -362,6 +362,8 @@ pub struct Engine {
     pub human_mesh: Option<Arc<crate::network::human_mesh::HumanMesh>>,
     /// Stop flag — set by /stop command to interrupt a stuck react loop.
     pub stop_flag: Arc<AtomicBool>,
+    /// Target channel for autonomy events — read from HIVE_TARGET_CHANNEL.
+    pub autonomy_channel: String,
 }
 
 impl Engine {
@@ -417,6 +419,15 @@ impl Engine {
 
         let sleep_cycle = Arc::new(SleepCycle::with_inference(teacher.clone(), provider.clone(), memory.clone(), None));
 
+        let autonomy_channel = std::env::var("HIVE_TARGET_CHANNEL")
+            .unwrap_or_else(|_| {
+                tracing::warn!("[ENGINE] HIVE_TARGET_CHANNEL not set — autonomy events will post to no channel");
+                String::new()
+            });
+        if !autonomy_channel.is_empty() {
+            tracing::info!("[ENGINE] 🐝 Autonomy channel: {} (from HIVE_TARGET_CHANNEL)", autonomy_channel);
+        }
+
         Self {
             platforms, provider, platform_providers: Arc::new(platform_providers),
             capabilities, memory, agent, teacher, sleep_cycle, drives, outreach_gate, inbox, event_sender, event_receiver,
@@ -425,6 +436,7 @@ impl Engine {
             mesh: None,
             human_mesh: None,
             stop_flag: Arc::new(AtomicBool::new(false)),
+            autonomy_channel,
         }
     }
 
@@ -725,7 +737,7 @@ impl Engine {
                 let autonomy_sender_bg = autonomy_sender.clone();
                 let autonomy_handle_bg = autonomy_handle.clone();
                 let semaphore_bg = self.concurrency_semaphore.clone();
-
+                let autonomy_ch = self.autonomy_channel.clone();
                     let stop_flag_bg = self.stop_flag.clone();
 
                 active_autonomy_task = Some(tokio::spawn(async move {
@@ -805,6 +817,7 @@ impl Engine {
 
                     // Restart autonomy timer after completion
                     if let Some(ref sender) = autonomy_sender_bg {
+                      if !autonomy_ch.is_empty() {
                         let sender_clone = sender.clone();
                         let memory_clone = memory_bg.clone();
                         let autonomy_handle_bg_inner = autonomy_handle_bg.clone();
@@ -815,9 +828,9 @@ impl Engine {
                             let previous_sessions = load_recent_autonomy_sessions(10).await;
                             let recompile_history = load_recompile_history(5).await;
                             let autonomy_event = Event {
-                                platform: format!("discord:1480192647657427044:0:autonomy_{}", chrono::Utc::now().timestamp()),
+                                platform: format!("discord:{}:0:autonomy_{}", autonomy_ch, chrono::Utc::now().timestamp()),
                                 scope: Scope::Public {
-                                    channel_id: "1480192647657427044".to_string(),
+                                    channel_id: autonomy_ch.clone(),
                                     user_id: "apis_autonomy".to_string(),
                                 },
                                 author_name: "Apis".to_string(),
@@ -847,6 +860,7 @@ impl Engine {
                         });
                         let mut guard = autonomy_handle_bg_inner.lock().await;
                         *guard = Some(handle);
+                      } // autonomy_ch guard
                     }
                 }));
 
@@ -883,6 +897,7 @@ impl Engine {
                     available, self.concurrency_semaphore.available_permits());
 
                 let stop_flag_bg = self.stop_flag.clone();
+                let autonomy_ch = self.autonomy_channel.clone();
 
                 tokio::spawn(async move {
                     // 1. Acquire per-scope lock — serializes events within the same channel/DM
@@ -983,6 +998,7 @@ impl Engine {
                     // 7.5. Spawn Continuous Autonomy timer (5 min)
                     if event.author_name != "Apis" {
                         if let Some(ref sender) = autonomy_sender_bg {
+                          if !autonomy_ch.is_empty() {
                             let sender_clone = sender.clone();
                             let memory_clone = memory_bg.clone();
                             let autonomy_handle_bg_inner = autonomy_handle_bg.clone();
@@ -994,9 +1010,9 @@ impl Engine {
                                 let previous_sessions = load_recent_autonomy_sessions(10).await;
                                 
                                 let autonomy_event = Event {
-                                    platform: format!("discord:1480192647657427044:0:autonomy_{}", chrono::Utc::now().timestamp()),
+                                    platform: format!("discord:{}:0:autonomy_{}", autonomy_ch, chrono::Utc::now().timestamp()),
                                     scope: Scope::Public {
-                                        channel_id: "1480192647657427044".to_string(),
+                                        channel_id: autonomy_ch.clone(),
                                         user_id: "apis_autonomy".to_string(),
                                     },
                                     author_name: "Apis".to_string(),
@@ -1024,6 +1040,7 @@ impl Engine {
                             });
                             let mut guard = autonomy_handle_bg_inner.lock().await;
                             *guard = Some(handle);
+                          } // autonomy_ch guard
                         }
                     }
 
