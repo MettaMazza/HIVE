@@ -73,6 +73,7 @@ pub async fn run_app() {
 
     // 1. Initialize Core Storage Systems First
     let memory_store = Arc::new(crate::memory::MemoryStore::default());
+    let stop_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let provider: Arc<dyn Provider> = match std::env::var("HIVE_PROVIDER").unwrap_or_else(|_| "ollama".into()).to_lowercase().as_str() {
         "openai" | "gpt" => {
             tracing::info!("[PROVIDER] Using OpenAI API provider");
@@ -92,7 +93,9 @@ pub async fn run_app() {
         }
         _ => {
             tracing::info!("[PROVIDER] Using local Ollama provider");
-            Arc::new(OllamaProvider::new())
+            let mut ollama = OllamaProvider::new();
+            ollama.set_stop_flag(stop_flag.clone());
+            Arc::new(ollama)
         }
     };
     
@@ -142,6 +145,9 @@ pub async fn run_app() {
         .with_capabilities(capabilities)
         .build()
         .expect("Failed to build Engine");
+
+    // Share the stop flag between engine and provider (so /stop aborts mid-stream)
+    engine.set_stop_flag(stop_flag);
 
     // 4b. Initialize NeuroLease mesh (if enabled)
     {

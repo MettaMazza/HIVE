@@ -445,6 +445,11 @@ impl Engine {
         self.mesh = Some(mesh);
     }
 
+    /// Inject a shared stop flag (shared with OllamaProvider for mid-stream abort).
+    pub fn set_stop_flag(&mut self, flag: Arc<AtomicBool>) {
+        self.stop_flag = flag;
+    }
+
     /// Inject the Human P2P mesh after engine construction.
     pub fn set_human_mesh(&mut self, mesh: Arc<crate::network::human_mesh::HumanMesh>) {
         self.human_mesh = Some(mesh);

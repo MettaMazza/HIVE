@@ -1,4 +1,5 @@
 #![allow(clippy::collapsible_if)]
+use std::sync::Arc;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use async_trait::async_trait;
@@ -110,6 +111,8 @@ pub struct OllamaProvider {
     client: Client,
     endpoint: String,
     model: String,
+    /// External stop flag — checked during streaming to abort long generations.
+    stop_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl OllamaProvider {
@@ -135,7 +138,13 @@ impl OllamaProvider {
                 .unwrap_or_else(|_| Client::new()),
             endpoint,
             model: model.to_string(),
+            stop_flag: None,
         }
+    }
+
+    /// Set the external stop flag. Checked during streaming to abort on /stop.
+    pub fn set_stop_flag(&mut self, flag: Arc<std::sync::atomic::AtomicBool>) {
+        self.stop_flag = Some(flag);
     }
 }
 
@@ -318,7 +327,16 @@ impl Provider for OllamaProvider {
         let mut total_chunks: u64 = 0;
 
         let mut chunk_retries: u8 = 0;
+        let mut thinking_buffer = String::new(); // Track thinking tokens for spiral detection
+        let mut spiral_detected = false;
         loop {
+            // Check stop flag every iteration
+            if let Some(ref flag) = self.stop_flag {
+                if flag.load(std::sync::atomic::Ordering::SeqCst) {
+                    tracing::warn!("[PROVIDER] 🛑 Stop flag detected during streaming at chunk {}. Aborting.", total_chunks);
+                    break;
+                }
+            }
             let chunk_result = res.chunk().await;
             let chunk = match chunk_result {
                 Ok(Some(c)) => {
@@ -380,6 +398,18 @@ impl Provider for OllamaProvider {
                                     let _ = tx.send(thinking.to_string()).await;
                                 }
                             }
+                            // Spiral detection: track thinking tokens
+                            if !thinking.is_empty() {
+                                thinking_buffer.push_str(thinking);
+                                // Check every 500 chars for repetition
+                                if thinking_buffer.len() > 500 {
+                                    if detect_thought_spiral(&thinking_buffer) {
+                                        tracing::warn!("[PROVIDER] 🌀 Thought spiral detected at {} thinking chars, {} chunks. Force-stopping.", thinking_buffer.len(), total_chunks);
+                                        spiral_detected = true;
+                                        break;
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -415,8 +445,47 @@ impl Provider for OllamaProvider {
             crate::engine::telemetry::log_latency(metrics).await;
         });
 
+        // If a thought spiral was detected, return the error with partial context
+        if spiral_detected {
+            let summary = if thinking_buffer.len() > 200 {
+                thinking_buffer.chars().take(200).collect::<String>()
+            } else {
+                thinking_buffer.clone()
+            };
+            return Err(ProviderError::ThoughtSpiral(summary));
+        }
+
         Ok(full_response.trim().to_string())
     }
+}
+
+/// Detect repetitive thought spirals in thinking token output.
+/// Returns true if any substring of 80+ chars appears 3+ times.
+fn detect_thought_spiral(text: &str) -> bool {
+    let chars: Vec<char> = text.chars().collect();
+    let min_pattern_len = 80;
+    
+    if chars.len() < min_pattern_len * 3 {
+        return false;
+    }
+
+    // Check from the end of the buffer — spirals are at the tail
+    // Take the last 600 chars and look for a repeating pattern
+    let start = if chars.len() > 600 { chars.len() - 600 } else { 0 };
+    let window: String = chars[start..].iter().collect();
+    
+    // Try pattern lengths from 80 to 200
+    for pat_len in (min_pattern_len..=200).step_by(20) {
+        if window.len() < pat_len * 3 {
+            continue;
+        }
+        let pattern = &window[..pat_len];
+        let count = window.matches(pattern).count();
+        if count >= 3 {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]
