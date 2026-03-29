@@ -12,7 +12,7 @@ services:
   hive:
     build:
       args:
-        RUNTIME_BASE: nvidia/cuda:12.9.0-runtime-ubuntu22.04
+        RUNTIME_BASE: nvidia/cuda:12.9.0-runtime-ubuntu24.04
 
     # Pass through NVIDIA GPU (requires nvidia-container-toolkit)
     deploy:

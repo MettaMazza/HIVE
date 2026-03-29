@@ -71,8 +71,9 @@ WORKDIR /app
 # Copy built binary
 COPY --from=builder /build/target/release/HIVE /app/hive
 
-# Copy any runtime assets HIVE needs (prompts, etc.)
+# Copy any runtime assets HIVE needs (prompts, training scripts, etc.)
 COPY --from=builder /build/src /app/src
+COPY training ./training
 
 # Directories that HIVE writes to — owned by the hive user
 RUN mkdir -p /app/data /app/logs \
