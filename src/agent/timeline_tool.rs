@@ -165,7 +165,8 @@ pub async fn execute_search_timeline(
                                     format!("[{} | Msg {}] {}", timestamp_str, msg_idx, author)
                                 };
                                 let truncated_content = if content.len() > 500 {
-                                    format!("{}... [truncated, {} total chars]", &content[..500], content.len())
+                                    let safe: String = content.chars().take(500).collect();
+                                    format!("{}... [truncated, {} total chars]", safe, content.len())
                                 } else {
                                     content.to_string()
                                 };
