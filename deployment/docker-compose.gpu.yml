@@ -1,0 +1,24 @@
+# GPU overlay — enables NVIDIA CUDA + GPU passthrough.
+#
+# CPU only:
+#   docker compose build --no-cache
+#   docker compose up -d
+#
+# GPU enabled:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml build --no-cache
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+
+services:
+  hive:
+    build:
+      args:
+        RUNTIME_BASE: nvidia/cuda:12.9.0-runtime-ubuntu22.04
+
+    # Pass through NVIDIA GPU (requires nvidia-container-toolkit)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

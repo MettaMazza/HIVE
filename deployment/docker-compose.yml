@@ -1,0 +1,97 @@
+services:
+  hive:
+    build:
+      context: ..         # path to your cloned HIVE repo
+      dockerfile: deployment/Dockerfile
+    container_name: hive
+
+    # ── Environment ──────────────────────────────────────────────────────────
+    env_file:
+      - .env             # DISCORD_TOKEN, BRAVE_SEARCH_API_KEY, etc.
+    environment:
+      HIVE_MODEL: ${HIVE_MODEL:-qwen3.5:9b} 
+      # Ollama parallelism — qwen35 doesn't support parallel requests, so set to 1.
+      # Higher values reserve GPU memory for slots that can never be used.
+      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_MAX_QUEUE: "32"
+      # KV cache quantization — reduces GPU memory usage (~1 GB savings on 6 GB cards).
+      # Options: f16 (default), q4_0, q4_1, q8_0, q5_0, q5_1
+      OLLAMA_KV_CACHE_TYPE: "q4_0"
+      # Flash attention is enabled by default in Ollama 0.1.17+
+      HIVE_MAX_PARALLEL: "2"
+      HIVE_PYTHON_BIN: /usr/bin/python3
+      RUST_LOG: info
+
+    # ── Volumes ───────────────────────────────────────────────────────────────
+    volumes:
+      # Model weights persist across container rebuilds
+      - ollama-models:/ollama-models
+      # HIVE memory / SQLite / logs persist
+      - hive-data:/app/data
+      - hive-logs:/app/logs
+
+    # ── Network ───────────────────────────────────────────────────────────────
+    networks:
+      - hive-net
+    # No ports exposed to host — HIVE talks outbound only (Discord API, web search)
+    # If you later want the Axum WebSocket API accessible on your host, uncomment:
+    # ports:
+    #   - "127.0.0.1:8080:8080"   # bind localhost only, never 0.0.0.0
+
+    # ── Resource limits ───────────────────────────────────────────────────────
+    # Tune these to your machine. qwen3:32b needs ~24GB RAM for Q4 quant.
+    deploy:
+      resources:
+        limits:
+          memory: 48g
+          cpus: "16"
+
+    # ── Security hardening ────────────────────────────────────────────────────
+    # Drop ALL Linux capabilities then add back only what's needed
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - CHOWN           # needed by entrypoint to fix volume ownership
+      - DAC_OVERRIDE    # needed to execute files
+      - SETUID          # needed by gosu to switch to hive user
+      - SETGID          # needed by gosu to switch to hive group
+
+    security_opt:
+      - no-new-privileges:true   # prevents sudo / setuid escalation
+
+    # Read-only root filesystem — HIVE writes go through named volumes only.
+    # Comment this out if the build fails (some Rust crates write to /tmp at runtime).
+    # read_only: true
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+
+    # ── Restart policy ────────────────────────────────────────────────────────
+    restart: unless-stopped
+
+    # ── Healthcheck ───────────────────────────────────────────────────────────
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      start_period: 180s   # model pull can take time on first boot
+      retries: 3
+
+# ── Named volumes ─────────────────────────────────────────────────────────────
+volumes:
+  ollama-models:
+    driver: local
+  hive-data:
+    driver: local
+  hive-logs:
+    driver: local
+
+# ── Network: internet-capable but LAN-isolated ────────────────────────────────
+networks:
+  hive-net:
+    driver: bridge
+    # Do NOT add `internal: true` — HIVE needs internet for Discord + web search.
+    # LAN isolation is handled at the OS firewall level (see README).
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

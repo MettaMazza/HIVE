@@ -1,0 +1,15 @@
+# Docker build context — exclude heavy dirs not needed inside the image
+# Keep deployment/ so runtime can COPY entrypoint.sh
+
+.git/
+target/
+HIVE/
+android/
+examples/
+scripts/
+memory_core_docs/
+memory/
+logs/
+*.md
+.env
+*.code-workspace
