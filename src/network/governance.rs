@@ -9,7 +9,6 @@
 ///
 /// SURVIVABILITY: All governance is peer-to-peer. No central authority.
 /// Decisions are made by mesh consensus. Works without internet.
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};

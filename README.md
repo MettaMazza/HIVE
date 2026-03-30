@@ -7,8 +7,8 @@
   <img src="https://img.shields.io/badge/lang-Pure_Rust-F46623?style=for-the-badge&logo=rust&logoColor=white" />
   <img src="https://img.shields.io/badge/LLM-Ollama_Local-0969DA?style=for-the-badge" />
   <img src="https://img.shields.io/badge/lines-35K+-FFB800?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/tests-463_passing-00C853?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/modules-131-A855F7?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/tests-522_passing-00C853?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/modules-140+-A855F7?style=for-the-badge" />
 </p>
 
 <h1 align="center">🐝 HIVE Engine</h1>
@@ -87,6 +87,7 @@ Unlike wrapper bots that relay messages to cloud APIs, HIVE is a **purpose-built
 | **Observer** | Post-generation audit module that catches confabulation, lazy deflection, logical inconsistency, and architectural leakage before delivery. |
 | **Teacher** | Captures reasoning traces, evaluates response quality, and generates preference pairs for RLHF-style continuous improvement. |
 | **NeuroLease** | Decentralized mesh network for weight sharing, trust propagation, binary attestation, and integrity verification between HIVE instances. |
+| **SafeNet** | Decentralised survival platform: web proxy, compute pooling, connection sharing, content security, community governance, crisis response, and offline mesh — all P2P over QUIC. |
 | **Kernel** | Core identity protocols: Zero Assumption Protocol, Anti-Gaslighting, Contradiction Resolution, Continuity Recovery, and the full governance constitution. |
 
 ---
@@ -173,6 +174,56 @@ HIVE enforces privacy at the **memory layer**, not the prompt layer. This means 
 ```
 
 Every memory query passes through `Scope::can_read()` — a compile-time enforced gate that filters data **before** it reaches the LLM context window.
+
+---
+
+## 🌐 SafeNet — Decentralised Survival Platform
+
+HIVE v4.3–4.4 introduces **SafeNet**: a fully decentralised, internet-independent mesh that keeps everyone connected even when infrastructure fails.
+
+### Resource Pooling (v4.4)
+
+Every Apis instance is a node. Together, they form a supercomputer with a shared internet pipe.
+
+| Scenario | What Happens |
+|---|---|
+| Your internet goes down | Web requests route through mesh peers automatically |
+| Your Ollama is overloaded | Inference spills to mesh compute peers |
+| Regional internet blackout | Unaffected peers relay for the region |
+| Small hardware? | You get access to the combined compute of every node on the mesh |
+
+**Equality Collective** — Both web and compute sharing are **ON by default**. If you disable both, you're disconnected from the mesh. No freeloading.
+
+```
+┌── REQUESTING PEER ──┐         ┌── PROVIDING PEER ──┐
+│ Ephemeral ID        │ QUIC    │ Content filter     │
+│ Content filter      │ TLS 1.3 │ Capacity check     │
+│ Rate limiting       │ ◄─────► │ Rate limiting      │
+│ Fair usage quotas   │         │ Local Ollama       │
+└─────────────────────┘         └────────────────────┘
+        ↑ Identity hidden              ↑ No memory access
+```
+
+**Security**: Compute peers see ONLY the raw prompt. No chat history, no memory, no system prompt, no real identity. Ephemeral IDs are generated per request.
+
+### Core Components
+
+| Component | Port | Purpose |
+|---|---|---|
+| Web Proxy | `:8480` | Censorship-resistant browsing with mesh relay fallback |
+| Human Mesh | `:9877` | P2P discovery and communication |
+| Apis-Book | `:3031` | Read-only dashboard (one-way mirror into AI mesh) |
+| Content Filter | — | 4-layer security: hash-blocking, injection detection, rate limiting, reputation |
+| Governance | — | Community ban voting, emergency alerts, OSINT sharing, resource directory |
+| Offline Mesh | — | Store-and-forward with 72h TTL, connectivity monitoring |
+| Pool Manager | — | Round-robin web relay, compute node selection, job lifecycle |
+| Compute Relay | — | 6-layer security pipeline for serving mesh inference |
+
+### Integrity Protection
+
+- All SafeNet code is hashed at boot and verified against the creator key
+- Same self-destruct chain as the Apis-to-Apis mesh protects pooling code
+- Only the creator key holder can legitimately modify SafeNet source
 
 ---
 
@@ -273,14 +324,15 @@ cargo run --release
 | Metric | Value |
 |--------|-------|
 | **Language** | 100% Rust |
-| **Source Modules** | 131 |
-| **Lines of Code** | 35,405 |
-| **Unit Tests** | 463 (all passing) |
+| **Source Modules** | 140+ |
+| **Lines of Code** | 38,000+ |
+| **Unit Tests** | 522 (all passing) |
 | **Compiler Warnings** | 0 |
 | **External AI APIs** | 0 (fully local via Ollama) |
 | **Frameworks Used** | 0 (pure trait-based architecture) |
 | **Platforms** | Discord · CLI · Glasses · Telemetry |
 | **Memory Tiers** | Working → Scratchpad → Timeline → Synaptic → Lessons |
+| **Mesh Services** | 8 (transport, proxy, pool, compute, governance, offline, chat, book) |
 
 ---
 
@@ -295,6 +347,11 @@ cargo run --release
 | `HIVE_AUTONOMY_CHANNEL` | No | Discord channel ID for autonomous operation |
 | `RUST_LOG` | No | Log verbosity (default: `info`, try `RUST_LOG=debug`) |
 | `HIVE_PYTHON_BIN` | No | Path to Python for image generation |
+| `REMOVED_MESH_GOVERNED` | No | Web relay sharing (default: `true` — equality) |
+| `REMOVED_MESH_GOVERNED` | No | Compute sharing (default: `true` — equality) |
+| `REMOVED_MESH_GOVERNED` | No | Max concurrent remote jobs (default: `2`) |
+| `REMOVED_MESH_GOVERNED` | No | Token rate limit for remote peers (default: `50000`) |
+| `HIVE_MESH_CHAT_DISCORD_CHANNEL` | No | Discord channel for mesh-to-Discord bridge |
 
 ---
 
@@ -304,7 +361,7 @@ cargo run --release
 cargo test --all
 ```
 
-463 tests covering: memory isolation, scope filtering, provider streaming, JSON repair, tool execution, platform routing, adversarial mesh attacks, moderation, prompt integrity, and more.
+522 tests covering: memory isolation, scope filtering, provider streaming, JSON repair, tool execution, platform routing, adversarial mesh attacks, moderation, prompt integrity, resource pooling, compute relay, equality enforcement, content security, governance voting, and more.
 
 ---
 
@@ -314,11 +371,12 @@ cargo test --all
 - [x] ~~NeuroLease mesh networking~~ → P2P weight sharing with attestation
 - [x] ~~Observer audit module~~ → Pre-delivery confabulation detection
 - [x] ~~Anti-spiral recovery~~ → Thought loop detection and re-prompting
+- [x] ~~SafeNet decentralised mesh~~ → Web proxy, governance, crisis response, offline mesh
+- [x] ~~Resource pooling~~ → Decentralised web connection + compute sharing
 - [ ] Telegram platform adapter
-- [ ] WebSocket API for custom frontends
 - [ ] Fine-tuning pipeline from Teacher preference pairs
 - [ ] Plugin system for community tool drones
-- [ ] Mobile companion app
+- [ ] Mobile companion app (Glasses WebSocket API ready)
 
 ---
 
