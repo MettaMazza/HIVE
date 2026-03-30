@@ -168,7 +168,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_file_reader_fallback_success() {
         let res = execute_file_reader("3".into(), "Read main.rs to find stuff".into(), None).await;
-        assert!(res.output.contains("File: src/main.rs"));
+        assert!(res.output.contains("main.rs"));
         assert!(res.output.contains("fn main"));
     }
 

@@ -156,12 +156,12 @@ mod wallet_tool_tests {
     }
 
     #[tokio::test]
-    async fn test_system_wallet_can_mint() {
+    async fn test_system_wallet_cannot_mint() {
         let (ks, client, _dir) = setup();
         let scope = Scope::Private { user_id: "apis_autonomy".into() };
 
         ks.create_wallet("apis_system", WalletRole::System).unwrap();
-        let user_pk = ks.create_wallet("test_user", WalletRole::User).unwrap();
+        let _user_pk = ks.create_wallet("test_user", WalletRole::User).unwrap();
 
         let result = crate::agent::wallet_tool::execute_wallet(
             "test8".into(),
@@ -169,10 +169,7 @@ mod wallet_tool_tests {
             &scope, ks, client.clone(), None, None,
         ).await;
 
-        assert!(matches!(result.status, crate::models::tool::ToolStatus::Success));
-        assert!(result.output.contains("Minted"));
-
-        let bal = client.get_balance(&user_pk).unwrap();
-        assert_eq!(bal.hive, 50.0);
+        // System role should NOT be able to mint — requires Creator Key on disk
+        assert!(matches!(result.status, crate::models::tool::ToolStatus::Failed(_)));
     }
 }
