@@ -159,6 +159,8 @@ async fn api_services() -> Json<Value> {
             {"id":"book","name":"Apis Book","icon":"📖","desc":"Read-only AI mesh activity dashboard","port":3031,"url":"http://localhost:3031","category":"tools"},
             {"id":"panopticon","name":"Panopticon","icon":"👁️","desc":"Engine visualizer & telemetry","port":3030,"url":"http://localhost:3030","category":"tools"},
             {"id":"proxy","name":"Web Proxy","icon":"🛡️","desc":"Censorship-resistant mesh browsing","port":8480,"url":"http://localhost:8480","category":"network"},
+            {"id":"bank","name":"HIVE Bank","icon":"🏦","desc":"Wallet, NFT gallery, credits & crypto dashboard","port":3037,"url":"http://localhost:3037","category":"economy"},
+            {"id":"marketplace","name":"Marketplace","icon":"🛒","desc":"Goods & services — trade, browse, review","port":3038,"url":"http://localhost:3038","category":"economy"},
         ],
         "connectivity": if clearnet { "online" } else { "mesh_only" },
         "web_relays": pool_stats["web_relays_available"],
