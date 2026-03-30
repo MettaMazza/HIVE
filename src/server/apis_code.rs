@@ -85,7 +85,7 @@ pub async fn spawn_apis_code_server() {
     };
 
     tokio::spawn(async move {
-        tracing::info!("[APIS CODE] 💻 IDE starting on http://127.0.0.1:{} (workspace: {})", port, workspace);
+        tracing::info!("[APIS CODE] 💻 IDE starting on http://0.0.0.0:{} (workspace: {})", port, workspace);
 
         let app = Router::new()
             .route("/api/files", get(api_files))
@@ -101,7 +101,7 @@ pub async fn spawn_apis_code_server() {
             .layer(CorsLayer::permissive())
             .with_state(state);
 
-        let addr = format!("127.0.0.1:{}", port);
+        let addr = format!("0.0.0.0:{}", port);
         match TcpListener::bind(&addr).await {
             Ok(listener) => {
                 tracing::info!("[APIS CODE] 💻 IDE bound on {}", addr);
@@ -568,7 +568,7 @@ async fn api_publish_site(State(state): State<CodeState>, Json(req): Json<Publis
         .ok().and_then(|v| v.parse().ok()).unwrap_or(3035);
 
     let client = reqwest::Client::new();
-    let result = client.post(format!("http://127.0.0.1:{}/api/sites", portal_port))
+    let result = client.post(format!("http://0.0.0.0:{}/api/sites", portal_port))
         .json(&serde_json::json!({
             "name": req.name,
             "description": req.description,

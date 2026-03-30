@@ -217,7 +217,7 @@ impl SleepCycle {
         let training_backend = std::env::var("HIVE_TRAINING_BACKEND")
             .unwrap_or_else(|_| "auto".to_string());
 
-        // Validate training script exists before spawning
+        // Validate training environment before spawning
         let script_path = std::path::Path::new("training/train_teacher.py");
         if !script_path.exists() {
             self.teacher.release_training_lock().await;

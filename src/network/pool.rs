@@ -399,12 +399,16 @@ impl PoolManager {
         let web = self.web_pool.read().await;
         let compute = self.compute_pool.read().await;
 
+        let local_web_relay = if self.web_share_enabled { 1 } else { 0 };
+        let local_compute_node = if self.compute_share_enabled { 1 } else { 0 };
+        let local_compute_slots = if self.compute_share_enabled { compute.max_concurrent_local as u32 } else { 0 };
+
         serde_json::json!({
             "web_share_enabled": self.web_share_enabled,
             "compute_share_enabled": self.compute_share_enabled,
-            "web_relays_available": web.relay_count(),
-            "compute_nodes_available": compute.node_count(),
-            "total_compute_slots": compute.total_slots(),
+            "web_relays_available": web.relay_count() + local_web_relay,
+            "compute_nodes_available": compute.node_count() + local_compute_node,
+            "total_compute_slots": compute.total_slots() + local_compute_slots,
             "active_compute_jobs": compute.active_jobs.len(),
             "local_peer": self.local_peer.0,
         })

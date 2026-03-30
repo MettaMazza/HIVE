@@ -141,17 +141,16 @@ impl PostStore {
         }
     }
 
-    /// Add a post to the feed.
     pub async fn push(&self, post: MeshPost) {
-        let mut posts = self.posts.write().await;
-
-        // Ring buffer eviction
-        if posts.len() >= self.max_posts {
-            posts.remove(0);
+        {
+            let mut posts = self.posts.write().await;
+            if posts.len() >= self.max_posts {
+                posts.remove(0);
+            }
+            let _ = self.tx.send(post.clone());
+            posts.push(post);
         }
-
-        let _ = self.tx.send(post.clone());
-        posts.push(post);
+        self.persist().await;
     }
 
     /// Get recent posts (newest first).
@@ -216,24 +215,36 @@ impl PostStore {
 
     /// React to a post.
     pub async fn react(&self, post_id: &str, emoji: &str, peer_id: &str) -> bool {
-        let mut posts = self.posts.write().await;
-        if let Some(post) = posts.iter_mut().find(|p| p.id == post_id) {
-            post.react(emoji, peer_id);
-            true
-        } else {
-            false
+        let success = {
+            let mut posts = self.posts.write().await;
+            if let Some(post) = posts.iter_mut().find(|p| p.id == post_id) {
+                post.react(emoji, peer_id);
+                true
+            } else {
+                false
+            }
+        };
+        if success {
+            self.persist().await;
         }
+        success
     }
 
     /// Reply to a post.
     pub async fn reply_to(&self, post_id: &str, reply: MeshPost) -> bool {
-        let mut posts = self.posts.write().await;
-        if let Some(post) = posts.iter_mut().find(|p| p.id == post_id) {
-            post.reply(reply);
-            true
-        } else {
-            false
+        let success = {
+            let mut posts = self.posts.write().await;
+            if let Some(post) = posts.iter_mut().find(|p| p.id == post_id) {
+                post.reply(reply);
+                true
+            } else {
+                false
+            }
+        };
+        if success {
+            self.persist().await;
         }
+        success
     }
 
     /// Get list of active communities.

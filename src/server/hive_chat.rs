@@ -75,6 +75,16 @@ pub struct MemberInfo {
     pub joined_at: String,
 }
 
+/// Serialisable snapshot of the entire chat state for disk persistence.
+#[derive(Serialize, Deserialize)]
+struct ChatSnapshot {
+    servers: Vec<ChatServer>,
+    channels: Vec<ChatChannel>,
+    messages: HashMap<String, Vec<ChatMessage>>,
+    dms: Vec<DirectMessage>,
+    members: HashMap<String, Vec<MemberInfo>>,
+}
+
 /// Chat store — all state for the Discord clone.
 pub struct ChatStore {
     servers: RwLock<Vec<ChatServer>>,
@@ -84,6 +94,7 @@ pub struct ChatStore {
     members: RwLock<HashMap<String, Vec<MemberInfo>>>, // server_id -> members
     tx: broadcast::Sender<Value>,
     max_messages: usize,
+    persist_path: String,
 }
 
 impl ChatStore {
@@ -91,13 +102,32 @@ impl ChatStore {
         let max = std::env::var("HIVE_CHAT_MAX_MESSAGES")
             .ok().and_then(|v| v.parse().ok()).unwrap_or(5000);
         let (tx, _) = broadcast::channel(256);
+        let persist_path = "memory/hive_chat.json".to_string();
 
+        // Try loading from disk first
+        if let Ok(data) = std::fs::read_to_string(&persist_path) {
+            if let Ok(snap) = serde_json::from_str::<ChatSnapshot>(&data) {
+                tracing::info!("[HIVECHAT] 📂 Loaded {} servers, {} channels, {} DMs from disk",
+                    snap.servers.len(), snap.channels.len(), snap.dms.len());
+                return Self {
+                    servers: RwLock::new(snap.servers),
+                    channels: RwLock::new(snap.channels),
+                    messages: RwLock::new(snap.messages),
+                    dms: RwLock::new(snap.dms),
+                    members: RwLock::new(snap.members),
+                    tx,
+                    max_messages: max,
+                    persist_path,
+                };
+            }
+        }
+
+        // No saved data — seed defaults
         let mut servers = vec![];
         let mut channels = vec![];
         let mut messages = HashMap::new();
         let mut members = HashMap::new();
 
-        // Seed with default HIVE server
         let default_server = ChatServer {
             id: "hive-main".to_string(),
             name: "🐝 HIVE".to_string(),
@@ -126,7 +156,6 @@ impl ChatStore {
             channels.push(ch);
         }
 
-        // Welcome message in general
         let welcome = ChatMessage {
             id: uuid::Uuid::new_v4().to_string(),
             channel_id: "hive-general".to_string(),
@@ -140,7 +169,6 @@ impl ChatStore {
         };
         messages.get_mut("hive-general").unwrap().push(welcome);
 
-        // Default member
         let local_name = std::env::var("HIVE_USER_NAME")
             .or_else(|_| std::env::var("USER"))
             .unwrap_or_else(|_| "Anonymous".to_string());
@@ -163,6 +191,26 @@ impl ChatStore {
             members: RwLock::new(members),
             tx,
             max_messages: max,
+            persist_path,
+        }
+    }
+
+    /// Flush entire chat state to disk.
+    async fn persist(&self) {
+        let snap = ChatSnapshot {
+            servers: self.servers.read().await.clone(),
+            channels: self.channels.read().await.clone(),
+            messages: self.messages.read().await.clone(),
+            dms: self.dms.read().await.clone(),
+            members: self.members.read().await.clone(),
+        };
+        if let Ok(json) = serde_json::to_string(&snap) {
+            if let Some(parent) = std::path::Path::new(&self.persist_path).parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Err(e) = std::fs::write(&self.persist_path, json) {
+                tracing::error!("[HIVECHAT] ❌ Failed to persist chat: {}", e);
+            }
         }
     }
 
@@ -175,7 +223,6 @@ impl ChatStore {
             created_at: chrono::Utc::now().to_rfc3339(),
         };
 
-        // Auto-create #general
         let general = ChatChannel {
             id: format!("{}-general", server.id),
             server_id: server.id.clone(),
@@ -188,6 +235,7 @@ impl ChatStore {
         self.channels.write().await.push(general);
         self.members.write().await.insert(server.id.clone(), vec![]);
         self.servers.write().await.push(server.clone());
+        self.persist().await;
         server
     }
 
@@ -206,52 +254,61 @@ impl ChatStore {
 
         self.messages.write().await.insert(channel.id.clone(), vec![]);
         self.channels.write().await.push(channel.clone());
+        self.persist().await;
         Some(channel)
     }
 
     pub async fn send_message(&self, channel_id: &str, author_id: &str, author_name: &str, content: &str, reply_to: Option<String>) -> Option<ChatMessage> {
-        let mut messages = self.messages.write().await;
-        let msgs = messages.get_mut(channel_id)?;
+        let msg = {
+            let mut messages = self.messages.write().await;
+            let msgs = messages.get_mut(channel_id)?;
 
-        let msg = ChatMessage {
-            id: uuid::Uuid::new_v4().to_string(),
-            channel_id: channel_id.to_string(),
-            author_id: author_id.to_string(),
-            author_name: author_name.to_string(),
-            content: content.to_string(),
-            timestamp: chrono::Utc::now().to_rfc3339(),
-            reactions: HashMap::new(),
-            reply_to,
-            edited: false,
+            let msg = ChatMessage {
+                id: uuid::Uuid::new_v4().to_string(),
+                channel_id: channel_id.to_string(),
+                author_id: author_id.to_string(),
+                author_name: author_name.to_string(),
+                content: content.to_string(),
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                reactions: HashMap::new(),
+                reply_to,
+                edited: false,
+            };
+
+            if msgs.len() >= self.max_messages {
+                msgs.remove(0);
+            }
+            msgs.push(msg.clone());
+
+            let _ = self.tx.send(json!({
+                "type": "message",
+                "channel_id": channel_id,
+                "message": serde_json::to_value(&msg).unwrap_or_default()
+            }));
+
+            msg
         };
-
-        // Ring buffer
-        if msgs.len() >= self.max_messages {
-            msgs.remove(0);
-        }
-        msgs.push(msg.clone());
-
-        let _ = self.tx.send(json!({
-            "type": "message",
-            "channel_id": channel_id,
-            "message": serde_json::to_value(&msg).unwrap_or_default()
-        }));
-
+        self.persist().await;
         Some(msg)
     }
 
     pub async fn react(&self, channel_id: &str, msg_id: &str, emoji: &str, peer_id: &str) -> bool {
-        let mut messages = self.messages.write().await;
-        if let Some(msgs) = messages.get_mut(channel_id) {
-            if let Some(msg) = msgs.iter_mut().find(|m| m.id == msg_id) {
-                let voters = msg.reactions.entry(emoji.to_string()).or_default();
-                if !voters.contains(&peer_id.to_string()) {
-                    voters.push(peer_id.to_string());
-                }
-                return true;
-            }
+        let success = {
+            let mut messages = self.messages.write().await;
+            if let Some(msgs) = messages.get_mut(channel_id) {
+                if let Some(msg) = msgs.iter_mut().find(|m| m.id == msg_id) {
+                    let voters = msg.reactions.entry(emoji.to_string()).or_default();
+                    if !voters.contains(&peer_id.to_string()) {
+                        voters.push(peer_id.to_string());
+                    }
+                    true
+                } else { false }
+            } else { false }
+        };
+        if success {
+            self.persist().await;
         }
-        false
+        success
     }
 
     pub async fn send_dm(&self, from_id: &str, from_name: &str, to_id: &str, content: &str) -> DirectMessage {
@@ -269,6 +326,7 @@ impl ChatStore {
             "type": "dm", "dm": serde_json::to_value(&dm).unwrap_or_default()
         }));
 
+        self.persist().await;
         dm
     }
 
@@ -283,7 +341,13 @@ impl ChatStore {
 struct HiveChatState {
     store: Arc<ChatStore>,
     local_peer_id: String,
-    local_display_name: String,
+}
+
+/// Read the current display name dynamically (reflects identity changes without restart).
+fn get_display_name() -> String {
+    std::env::var("HIVE_USER_NAME")
+        .or_else(|_| std::env::var("USER"))
+        .unwrap_or_else(|_| "Anonymous".to_string())
 }
 
 #[derive(Deserialize)]
@@ -308,15 +372,12 @@ pub async fn spawn_hive_chat_server() {
 
     let local_peer_id = std::env::var("HIVE_MESH_CHAT_NAME")
         .unwrap_or_else(|_| "local".to_string());
-    let local_display_name = std::env::var("HIVE_USER_NAME")
-        .or_else(|_| std::env::var("USER"))
-        .unwrap_or_else(|_| "Anonymous".to_string());
 
     let store = Arc::new(ChatStore::new());
-    let state = HiveChatState { store, local_peer_id, local_display_name };
+    let state = HiveChatState { store, local_peer_id };
 
     tokio::spawn(async move {
-        tracing::info!("[HIVECHAT] 💬 Starting on http://127.0.0.1:{}", port);
+        tracing::info!("[HIVECHAT] 💬 Starting on http://0.0.0.0:{}", port);
 
         let app = Router::new()
             .route("/api/servers", get(api_servers).post(api_create_server))
@@ -334,7 +395,7 @@ pub async fn spawn_hive_chat_server() {
             .layer(CorsLayer::permissive())
             .with_state(state);
 
-        let addr = format!("127.0.0.1:{}", port);
+        let addr = format!("0.0.0.0:{}", port);
         match TcpListener::bind(&addr).await {
             Ok(listener) => {
                 tracing::info!("[HIVECHAT] 💬 Bound on {}", addr);
@@ -394,7 +455,7 @@ async fn api_send_message(State(state): State<HiveChatState>, Path(channel_id): 
         return Json(json!({"error": "Message blocked by content filter", "reason": format!("{:?}", scan)}));
     }
 
-    match state.store.send_message(&channel_id, &state.local_peer_id, &state.local_display_name, &req.content, req.reply_to).await {
+    match state.store.send_message(&channel_id, &state.local_peer_id, &get_display_name(), &req.content, req.reply_to).await {
         Some(msg) => Json(json!({"ok": true, "message": msg})),
         None => Json(json!({"error": "Channel not found"})),
     }
@@ -419,7 +480,7 @@ async fn api_dms(State(state): State<HiveChatState>) -> Json<Value> {
 
 async fn api_send_dm(State(state): State<HiveChatState>, Json(req): Json<SendDmReq>) -> Json<Value> {
     if req.content.trim().is_empty() { return Json(json!({"error": "Message cannot be empty"})); }
-    let dm = state.store.send_dm(&state.local_peer_id, &state.local_display_name, &req.to_id, &req.content).await;
+    let dm = state.store.send_dm(&state.local_peer_id, &get_display_name(), &req.to_id, &req.content).await;
     Json(json!({"ok": true, "dm": dm}))
 }
 
@@ -459,7 +520,7 @@ async fn api_chat_status(State(state): State<HiveChatState>) -> Json<Value> {
     Json(json!({
         "servers": servers.len(), "channels": channels.len(),
         "total_messages": total_msgs, "peer_id": state.local_peer_id,
-        "display_name": state.local_display_name,
+        "display_name": get_display_name(),
     }))
 }
 

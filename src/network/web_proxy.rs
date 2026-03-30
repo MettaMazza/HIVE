@@ -131,7 +131,7 @@ pub async fn spawn_web_proxy(
     let health_state = state.clone();
 
     tokio::spawn(async move {
-        tracing::info!("[WEB PROXY] 🌐 Starting on http://127.0.0.1:{}", port);
+        tracing::info!("[WEB PROXY] 🌐 Starting on http://0.0.0.0:{}", port);
 
         let app = Router::new()
             .route("/", get(proxy_dashboard))
@@ -142,7 +142,7 @@ pub async fn spawn_web_proxy(
             .layer(CorsLayer::permissive())
             .with_state(state);
 
-        let addr = format!("127.0.0.1:{}", port);
+        let addr = format!("0.0.0.0:{}", port);
         match TcpListener::bind(&addr).await {
             Ok(listener) => {
                 tracing::info!("[WEB PROXY] 🌐 Bound on {}", addr);

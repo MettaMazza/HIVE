@@ -32,15 +32,32 @@ pub struct MeshSite {
 
 pub struct SiteRegistry {
     sites: RwLock<Vec<MeshSite>>,
+    persist_path: String,
 }
 
 impl SiteRegistry {
     pub fn new() -> Self {
-        Self { sites: RwLock::new(Vec::new()) }
+        let persist_path = "memory/portal_sites.json".to_string();
+        let mut initial_sites = Vec::new();
+
+        if let Ok(data) = std::fs::read_to_string(&persist_path) {
+            if let Ok(sites) = serde_json::from_str::<Vec<MeshSite>>(&data) {
+                tracing::info!("[PORTAL] 📂 Loaded {} mesh sites from disk", sites.len());
+                initial_sites = sites;
+            }
+        }
+
+        Self { 
+            sites: RwLock::new(initial_sites),
+            persist_path,
+        }
     }
 
     pub async fn register(&self, site: MeshSite) {
-        self.sites.write().await.push(site);
+        {
+            self.sites.write().await.push(site);
+        }
+        self.persist().await;
     }
 
     pub async fn list(&self) -> Vec<MeshSite> {
@@ -53,6 +70,18 @@ impl SiteRegistry {
             .filter(|s| s.name.to_lowercase().contains(&q) || s.description.to_lowercase().contains(&q))
             .cloned().collect()
     }
+
+    async fn persist(&self) {
+        let sites = self.sites.read().await;
+        if let Ok(json) = serde_json::to_string_pretty(&*sites) {
+            if let Some(parent) = std::path::Path::new(&self.persist_path).parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Err(e) = std::fs::write(&self.persist_path, json) {
+                tracing::error!("[PORTAL] ❌ Failed to persist sites: {}", e);
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -62,6 +91,9 @@ struct PortalState {
 
 #[derive(Deserialize)]
 struct SearchQuery { q: Option<String> }
+
+#[derive(Deserialize)]
+struct SetIdentity { name: String }
 
 #[derive(Deserialize)]
 struct RegisterSite {
@@ -80,18 +112,19 @@ pub async fn spawn_hive_portal_server(registry: Arc<SiteRegistry>) {
     let state = PortalState { registry };
 
     tokio::spawn(async move {
-        tracing::info!("[PORTAL] 🏠 HivePortal starting on http://127.0.0.1:{}", port);
+        tracing::info!("[PORTAL] 🏠 HivePortal starting on http://0.0.0.0:{}", port);
 
         let app = Router::new()
             .route("/api/services", get(api_services))
             .route("/api/sites", get(api_sites).post(api_register_site))
             .route("/api/search", get(api_search))
             .route("/api/status", get(api_portal_status))
+            .route("/api/identity", get(api_get_identity).post(api_set_identity))
             .fallback(get(serve_portal))
             .layer(CorsLayer::permissive())
             .with_state(state);
 
-        let addr = format!("127.0.0.1:{}", port);
+        let addr = format!("0.0.0.0:{}", port);
         match TcpListener::bind(&addr).await {
             Ok(listener) => {
                 tracing::info!("[PORTAL] 🏠 Bound on {}", addr);
@@ -173,6 +206,39 @@ async fn api_portal_status() -> Json<Value> {
     }))
 }
 
+async fn api_get_identity() -> Json<Value> {
+    let name = std::env::var("HIVE_USER_NAME").unwrap_or_default();
+    let is_anon = name.trim().is_empty() || name.to_lowercase() == "anonymous";
+    Json(json!({"name": if is_anon { "Anonymous".to_string() } else { name }, "is_anonymous": is_anon}))
+}
+
+async fn api_set_identity(Json(req): Json<SetIdentity>) -> Json<Value> {
+    let new_name = req.name.trim().to_string();
+    unsafe { std::env::set_var("HIVE_USER_NAME", &new_name); }
+
+    // Save to .env for persistence inside Docker
+    if let Ok(content) = std::fs::read_to_string(".env") {
+        let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+        let mut found = false;
+        for line in lines.iter_mut() {
+            if line.starts_with("HIVE_USER_NAME=") {
+                *line = format!("HIVE_USER_NAME={}", new_name);
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            if !lines.is_empty() { lines.push("".to_string()); }
+            lines.push(format!("HIVE_USER_NAME={}", new_name));
+        }
+        let _ = std::fs::write(".env", lines.join("\n"));
+    } else {
+        let _ = std::fs::write(".env", format!("HIVE_USER_NAME={}\n", new_name));
+    }
+    
+    Json(json!({"ok": true, "name": new_name}))
+}
+
 // ─── SPA Frontend ───────────────────────────────────────────────────────
 
 async fn serve_portal() -> Html<String> {
@@ -246,6 +312,10 @@ const PORTAL_HTML: &str = r##"<!DOCTYPE html>
 
         /* Footer */
         .footer{text-align:center;padding:30px;color:var(--text-muted);font-size:11px;border-top:1px solid var(--border);margin-top:40px}
+        
+        /* Modal */
+        .modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);backdrop-filter:blur(4px);z-index:9999;display:flex;align-items:center;justify-content:center}
+        .modal-card{background:var(--card);border:1px solid var(--amber);padding:30px;border-radius:24px;width:100%;max-width:400px;box-shadow:0 20px 60px rgba(255,193,7,0.15)}
     </style>
 </head>
 <body>
@@ -255,6 +325,7 @@ const PORTAL_HTML: &str = r##"<!DOCTYPE html>
             <h1>HIVE</h1>
         </div>
         <div class="topbar-right">
+            <div class="stat"><span id="user-display" onclick="document.getElementById('identity-modal').style.display='flex'" style="cursor:pointer" title="Change Identity">👤 ...</span></div>
             <div class="stat"><div class="dot" id="conn-dot"></div><span id="conn-text">checking...</span></div>
             <div class="stat">🖥️ <span id="compute-count">0</span> compute</div>
             <div class="stat">🌐 <span id="relay-count">0</span> relays</div>
@@ -295,6 +366,22 @@ const PORTAL_HTML: &str = r##"<!DOCTYPE html>
     <div class="footer">
         <p>🐝 HIVE v4.7 — The Human Internet Viable Ecosystem</p>
         <p>Everything here runs peer-to-peer. You are the internet.</p>
+    </div>
+
+    <!-- Identity Modal -->
+    <div id="identity-modal" class="modal-overlay" style="display:none">
+        <div class="modal-card">
+            <h2 style="margin-bottom:10px;text-align:center;color:var(--amber)">Who are you?</h2>
+            <p style="font-size:14px;color:var(--text-dim);margin-bottom:20px;text-align:center">Pick a display name for the mesh.</p>
+            <input type="text" id="identity-input" class="search-input" placeholder="e.g. Neo" style="margin-bottom:15px;text-align:center" onkeydown="if(event.key==='Enter')setIdentity()">
+            <div style="display:flex;gap:12px;justify-content:center">
+                <button class="cta-btn" onclick="setIdentity()" style="padding:10px 20px">Set Name</button>
+                <button class="cta-btn" style="padding:10px 20px;border-color:var(--border);color:var(--text-muted);" onclick="goAnonymous()">Stay Anon</button>
+            </div>
+            <div style="text-align:center;margin-top:15px">
+                <a href="#" onclick="document.getElementById('identity-modal').style.display='none'" style="color:var(--text-muted);font-size:12px;text-decoration:none">Close</a>
+            </div>
+        </div>
     </div>
 
 <script>
@@ -368,8 +455,41 @@ async function doSearch() {
 
 function esc(t){if(!t)return'';const d=document.createElement('div');d.textContent=t;return d.innerHTML}
 
+async function checkIdentity() {
+    try {
+        const res = await fetch('/api/identity');
+        const data = await res.json();
+        document.getElementById('user-display').innerHTML = `👤 ${esc(data.name)}`;
+        const hasPrompted = localStorage.getItem('hive_identity_prompted');
+        if (data.is_anonymous && !hasPrompted) {
+            document.getElementById('identity-modal').style.display = 'flex';
+        }
+    } catch(e) {}
+}
+
+async function updateIdentity(name) {
+    await fetch('/api/identity', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name: name})
+    });
+    localStorage.setItem('hive_identity_prompted', 'true');
+    document.getElementById('identity-modal').style.display = 'none';
+    checkIdentity();
+}
+
+function setIdentity() {
+    const val = document.getElementById('identity-input').value.trim();
+    if (val) updateIdentity(val);
+}
+
+function goAnonymous() {
+    updateIdentity("Anonymous");
+}
+
 loadServices();
 loadSites();
+checkIdentity();
 setInterval(loadServices, 30000);
 </script>
 </body>

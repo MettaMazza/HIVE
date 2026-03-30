@@ -14,7 +14,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: hive-mesh
-    restart: unless-stopped
+    restart: on-failure
 
     ports:
       - "3030:3030"   # Panopticon (Engine Visualizer)
@@ -27,6 +27,9 @@ services:
       - "8422:8422"   # Glasses WebSocket
       - "8480:8480"   # Web Proxy
 
+    env_file:
+      - .env
+
     volumes:
       - hive-memory:/home/hive/memory       # Persistent memory
       - hive-data:/home/hive/.hive           # Keys and config
@@ -34,8 +37,9 @@ services:
     environment:
       - HIVE_AUTO_OPEN=false
       # Connect to host's Ollama — host.docker.internal resolves to your machine
-      - OLLAMA_BASE_URL=http://host.docker.internal:11434
-      - HIVE_MODEL=qwen2.5:7b
+      - HIVE_OLLAMA_URL=http://host.docker.internal:11434
+      - HIVE_MODEL=qwen3.5:122b
+      - HIVE_PYTHON_BIN=python3
       - RUST_LOG=HIVE=info
 
     # Allow container to reach host services (Ollama)

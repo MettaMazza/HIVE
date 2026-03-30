@@ -46,7 +46,7 @@ pub async fn spawn_apis_book_server(book: Arc<ApisBook>) {
     }
 
     let handle = tokio::spawn(async move {
-        tracing::info!("[APIS-BOOK] 📖 Dashboard starting on http://127.0.0.1:{}", port);
+        tracing::info!("[APIS-BOOK] 📖 Dashboard starting on http://0.0.0.0:{}", port);
 
         let state = BookState { book };
 
@@ -59,7 +59,7 @@ pub async fn spawn_apis_book_server(book: Arc<ApisBook>) {
             .layer(CorsLayer::permissive())
             .with_state(state);
 
-        let addr = format!("127.0.0.1:{}", port);
+        let addr = format!("0.0.0.0:{}", port);
         let listener = TcpListener::bind(&addr).await
             .expect(&format!("Failed to bind Apis-Book port {}", port));
         tracing::info!("[APIS-BOOK] 📖 Dashboard bound on {}", addr);

@@ -292,8 +292,12 @@ impl Engine {
                         let _ = platform.send(response).await;
                     }
                     // Hard exit to prevent the platform from echoing this completion message back into a fresh timeline.
-                    tracing::info!("Memory wipe complete. HIVE Engine shutting down.");
+                    tracing::info!("Memory wipe complete. Clearing mesh persistence files...");
                     self.memory.temporal.write().await.reset();
+                    let _ = std::fs::remove_file("memory/mesh_posts.json");
+                    let _ = std::fs::remove_file("memory/portal_sites.json");
+                    let _ = std::fs::remove_file("memory/hive_chat.json");
+                    tracing::info!("Full factory reset complete. HIVE Engine shutting down.");
                     std::process::exit(0);
                 } else {
                     tracing::error!("[SECURITY INCIDENT] Unauthorized wipe attempt by UID: {}", event.author_id);

@@ -204,7 +204,7 @@ mod tests {
         let registry = PeerRegistry::new();
         let info = PeerInfo {
             peer_id: PeerId("test1".into()),
-            addr: "127.0.0.1:9473".into(),
+            addr: "0.0.0.0:9473".into(),
             last_seen: chrono::Utc::now().to_rfc3339(),
             version: "abc123".into(),
             binary_hash: "hash".into(),
@@ -222,7 +222,7 @@ mod tests {
         for i in 0..30 {
             let info = PeerInfo {
                 peer_id: PeerId(format!("peer_{}", i)),
-                addr: format!("127.0.0.1:{}", 9000 + i),
+                addr: format!("0.0.0.0:{}", 9000 + i),
                 last_seen: chrono::Utc::now().to_rfc3339(),
                 version: "v1".into(),
                 binary_hash: "hash".into(),

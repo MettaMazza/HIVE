@@ -15,3 +15,5 @@
 !README.md
 !persona.toml.example
 !build.rs
+!training/*.py
+!training/requirements*.txt

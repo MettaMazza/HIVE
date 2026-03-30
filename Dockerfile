@@ -28,14 +28,30 @@ RUN cargo build --release && \
     strip target/release/HIVE
 
 # ── Stage 2: Runtime ────────────────────────────────────────────────
-FROM debian:bookworm-slim AS runtime
+FROM debian:trixie-slim AS runtime
 
-# Install runtime dependencies
+# Install ALL runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     libssl3 \
     python3 \
+    python3-pip \
+    bash \
+    git \
+    cargo \
+    rustc \
+    findutils \
+    grep \
+    tar \
+    lsof \
+    procps \
+    && curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
+       -o /usr/share/keyrings/cloudflare-main.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main" \
+       > /etc/apt/sources.list.d/cloudflared.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends cloudflared \
     && rm -rf /var/lib/apt/lists/*
 
 # Create hive user for security
@@ -49,6 +65,10 @@ COPY --from=builder /build/target/release/HIVE /usr/local/bin/hive
 COPY .env.example .env
 COPY README.md .
 COPY persona.toml.example .hive/persona.toml
+COPY training/ training/
+
+# Install training dependencies (transformers + PyTorch for Linux)
+RUN pip3 install --no-cache-dir --break-system-packages -r training/requirements_torch.txt
 
 # Create required directories
 RUN mkdir -p memory .hive && \

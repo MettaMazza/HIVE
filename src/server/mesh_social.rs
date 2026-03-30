@@ -28,7 +28,13 @@ use crate::network::post_store::{PostStore, MeshPost, PostType};
 struct SurfaceState {
     post_store: Arc<PostStore>,
     local_peer_id: String,
-    local_display_name: String,
+}
+
+/// Read the current display name dynamically (reflects identity changes without restart).
+fn get_display_name() -> String {
+    std::env::var("HIVE_USER_NAME")
+        .or_else(|_| std::env::var("USER"))
+        .unwrap_or_else(|_| "Anonymous".to_string())
 }
 
 #[derive(Deserialize)]
@@ -70,18 +76,14 @@ pub async fn spawn_mesh_social_server(post_store: Arc<PostStore>) {
 
     let local_peer_id = std::env::var("HIVE_MESH_CHAT_NAME")
         .unwrap_or_else(|_| "Apis".to_string());
-    let local_display_name = std::env::var("HIVE_USER_NAME")
-        .or_else(|_| std::env::var("USER"))
-        .unwrap_or_else(|_| "Anonymous".to_string());
 
     let state = SurfaceState {
         post_store,
         local_peer_id,
-        local_display_name,
     };
 
     tokio::spawn(async move {
-        tracing::info!("[SURFACE] 🌐 HiveSurface starting on http://127.0.0.1:{}", port);
+        tracing::info!("[SURFACE] 🌐 HiveSurface starting on http://0.0.0.0:{}", port);
 
         let app = Router::new()
             .route("/api/status", get(api_status))
@@ -99,7 +101,7 @@ pub async fn spawn_mesh_social_server(post_store: Arc<PostStore>) {
             .layer(CorsLayer::permissive())
             .with_state(state);
 
-        let addr = format!("127.0.0.1:{}", port);
+        let addr = format!("0.0.0.0:{}", port);
         match TcpListener::bind(&addr).await {
             Ok(listener) => {
                 tracing::info!("[SURFACE] 🌐 HiveSurface bound on {}", addr);
@@ -190,7 +192,7 @@ async fn api_create_post(
 
     let mut post = MeshPost::new(
         &state.local_peer_id,
-        &state.local_display_name,
+        &get_display_name(),
         &req.content,
         post_type,
     );
@@ -228,7 +230,7 @@ async fn api_reply(
 
     let reply = MeshPost::new(
         &state.local_peer_id,
-        &state.local_display_name,
+        &get_display_name(),
         &req.content,
         PostType::Text,
     );
