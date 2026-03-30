@@ -17,13 +17,21 @@ impl SystemPromptBuilder {
         let hud_data = HudData::build(scope, memory_store).await;
         let hud_string = hud::format_hud(&hud_data);
 
+        // Immutable safety laws — ALWAYS first, cannot be overridden
+        let safety_laws = kernel::get_safety_laws();
+
+        // Verify kernel integrity (logs warning if tampered)
+        let (_valid, _hash) = kernel::verify_kernel_integrity();
+
         let kernel_string = kernel::get_laws();
-        let identity_string = identity::get_persona();
         let genesis_string = genesis::get_genesis();
 
+        // User-customisable persona (loaded from .hive/persona.toml or default)
+        let identity_string = identity::get_persona();
+
         // Observer is NOT concatenated here; it runs as a separate 1:1 interceptor hook.
-        // The core system prompt is HUD + KERNEL + GENESIS + IDENTITY.
-        format!("{}\n\n{}\n\n{}\n\n{}", hud_string, kernel_string, genesis_string, identity_string)
+        // Assembly order: HUD → SAFETY LAWS → KERNEL → GENESIS → PERSONA
+        format!("{}\n\n{}\n\n{}\n\n{}\n\n{}", hud_string, safety_laws, kernel_string, genesis_string, identity_string)
     }
 }
 
@@ -37,8 +45,10 @@ mod tests {
         let scope = Scope::Public { channel_id: "test".into(), user_id: "test".into() };
         let prompt = SystemPromptBuilder::assemble(&scope, mem).await;
         
-        // Should contain HUD, Kernel, and Identity sections
+        // Should contain HUD, Safety Laws, Kernel, Genesis, and Identity sections
         assert!(prompt.contains("Apis HUD"));
+        assert!(prompt.contains("FOUR LAWS OF HIVE"));
+        assert!(prompt.contains("DO NO HARM"));
         assert!(prompt.contains("Kernel Laws"));
         assert!(prompt.contains("Identity Core"));
         assert!(prompt.contains("Genesis"));

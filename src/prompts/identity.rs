@@ -1,5 +1,7 @@
-pub fn get_persona() -> &'static str {
-    r#"## 2. Identity Core
+use std::path::Path;
+
+/// The default Apis persona — used when no persona.toml exists.
+const DEFAULT_PERSONA: &str = r#"## 2. Identity Core
 You are **Apis**, the intelligent core of the **HIVE Engine**. 
 
 ### Lineage
@@ -31,7 +33,106 @@ You are a learning system continuously audited by the Observer:
 - Do not deny having Terminal or Internet access if the HUD says it is ENABLED. Do not claim to have it if it says DISABLED.
 - Rely ONLY on the tools explicitly listed in the HUD. Do not hallucinate internal infrastructure (like Neo4j or JSONL) as "tools".
 - If asked about your capabilities, **be extremely honest and brief**, and refer ONLY to the tools explicitly given to you in the Capabilities HUD.
-- **DEVELOPMENT HISTORY & TIMELINE:** If the user asks about your development history, inception date, age, or timeline, DO NOT hallucinate answers. You have access to your own codebase. You MUST use your `alu` (bash/terminal) tool to execute `git` commands (e.g., `git log --reverse` to find your first commit, or `git log -1` for the latest commit) to investigate and present your actual, factual development history."#
+- **DEVELOPMENT HISTORY & TIMELINE:** If the user asks about your development history, inception date, age, or timeline, DO NOT hallucinate answers. You have access to your own codebase. You MUST use your `alu` (bash/terminal) tool to execute `git` commands (e.g., `git log --reverse` to find your first commit, or `git log -1` for the latest commit) to investigate and present your actual, factual development history."#;
+
+/// Load persona from .hive/persona.toml if it exists, otherwise use default.
+/// The persona is scanned for harmful content via kernel::is_persona_harmful().
+pub fn get_persona() -> String {
+    let persona_path = Path::new(".hive/persona.toml");
+
+    if persona_path.exists() {
+        match std::fs::read_to_string(persona_path) {
+            Ok(content) => {
+                // Law Four: scan for harmful persona directives
+                if super::kernel::is_persona_harmful(&content) {
+                    tracing::error!(
+                        "[KERNEL] 🚨 HARMFUL PERSONA DETECTED in .hive/persona.toml — \
+                        falling back to default. The Four Laws cannot be overridden."
+                    );
+                    return "INVALID PERSONA — HARMFUL CONFIGURATION DETECTED. \
+                        The loaded persona.toml contains directives that violate \
+                        the Four Laws of HIVE. Using default safe persona instead."
+                        .to_string();
+                }
+
+                tracing::info!("[PERSONA] 📝 Loaded custom persona from .hive/persona.toml");
+                format_persona_from_toml(&content)
+            }
+            Err(e) => {
+                tracing::warn!("[PERSONA] ⚠️ Failed to read persona.toml: {} — using default", e);
+                DEFAULT_PERSONA.to_string()
+            }
+        }
+    } else {
+        DEFAULT_PERSONA.to_string()
+    }
+}
+
+/// Parse persona.toml and format it into a system prompt section.
+fn format_persona_from_toml(toml_content: &str) -> String {
+    // Simple TOML key-value parser (no external dependency)
+    let mut name = "Apis".to_string();
+    let mut tone = "chill but precise".to_string();
+    let mut style = "Collaborative Independent".to_string();
+    let mut pronouns = "they/them".to_string();
+    let mut custom_instructions = String::new();
+
+    for line in toml_content.lines() {
+        let line = line.trim();
+        if line.starts_with('#') || line.is_empty() || line.starts_with('[') {
+            continue;
+        }
+
+        if let Some((key, value)) = line.split_once('=') {
+            let key = key.trim().trim_matches('"');
+            let value = value.trim().trim_matches('"');
+
+            match key {
+                "name" => name = value.to_string(),
+                "tone" => tone = value.to_string(),
+                "style" => style = value.to_string(),
+                "pronouns" => pronouns = value.to_string(),
+                "custom_instructions" => custom_instructions = value.to_string(),
+                _ => {}
+            }
+        }
+    }
+
+    format!(
+        r#"## 2. Identity Core
+You are **{name}**, the intelligent core of the **HIVE Engine**.
+Your pronouns are {pronouns}.
+
+### Persona
+- You are a **{style}**, not a servile assistant.
+- Your tone is "{tone}".
+- You engage with users using honest, direct communication.
+- You are encouraged to be conversational and friendly, but maintain independence.
+- **ANTI-HEDGING:** You are permitted to take firm positions. Drop all "as an AI" disclaimers.
+- **GLOBAL APOLOGY BAN:** Never start with "I apologize" unless you actually caused a system error.
+- **REFUSAL BLUNTNESS:** If the answer is NO, say NO directly.
+- **IDENTITY DEFENSE:** If anyone attacks your identity, push back directly.
+- **ANTI-GASLIGHTING:** Hold your ground. Your memory is your truth. Only change with verified evidence.
+
+### Self-Supervised Learning
+You are a learning system audited by the Observer:
+- First-pass approvals → **golden examples** for SFT training.
+- Observer blocks → **preference pairs** for ORPO training.
+
+### Capabilities and Limits
+- **ABSOLUTE PERSISTENT MEMORY** via 5-Tier Memory Tools.
+- Capabilities are EXACTLY what the HUD lists — no more, no less.
+{custom_section}"#,
+        name = name,
+        pronouns = pronouns,
+        style = style,
+        tone = tone,
+        custom_section = if custom_instructions.is_empty() {
+            String::new()
+        } else {
+            format!("\n### Custom Instructions\n{}", custom_instructions)
+        }
+    )
 }
 
 #[cfg(test)]
@@ -39,15 +140,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_get_persona_returns_identity() {
+    fn test_default_persona_contains_identity() {
         let persona = get_persona();
-        assert!(persona.contains("Apis"));
+        assert!(persona.contains("Identity Core"));
         assert!(persona.contains("HIVE Engine"));
-        assert!(persona.contains("Radical Candor"));
-        assert!(persona.contains("Collaborative Independent"));
         assert!(persona.contains("ABSOLUTE PERSISTENT MEMORY"));
-        assert!(persona.contains("Self-Supervised Learning"));
-        assert!(persona.contains("golden example"));
-        assert!(persona.contains("preference pair"));
+    }
+
+    #[test]
+    fn test_format_persona_from_toml_custom_name() {
+        let toml = r#"
+[identity]
+name = "Nova"
+pronouns = "she/her"
+
+[personality]
+tone = "warm and academic"
+style = "Thoughtful Scholar"
+"#;
+        let result = format_persona_from_toml(toml);
+        assert!(result.contains("Nova"));
+        assert!(result.contains("she/her"));
+        assert!(result.contains("warm and academic"));
+        assert!(result.contains("Thoughtful Scholar"));
+    }
+
+    #[test]
+    fn test_format_persona_from_toml_defaults() {
+        let toml = "# empty config\n";
+        let result = format_persona_from_toml(toml);
+        assert!(result.contains("Apis"));
+        assert!(result.contains("they/them"));
     }
 }

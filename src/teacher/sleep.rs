@@ -448,7 +448,7 @@ impl SleepCycle {
         };
 
         let reflection = provider.generate(
-            identity_system,
+            &identity_system,
             &[],
             &reflection_event,
             "",
@@ -470,7 +470,7 @@ impl SleepCycle {
         // Write as a golden example to the training buffer
         let identity_example = GoldenExample {
             ts: Utc::now().to_rfc3339(),
-            system_prompt: identity_system.to_string(),
+            system_prompt: identity_system.clone(),
             user_msg: reflection_prompt,
             agent_ctx: String::new(),
             response: reflection,

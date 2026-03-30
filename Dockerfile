@@ -1,12 +1,12 @@
 # ══════════════════════════════════════════════════════════════════════
 #  🐝 HIVE — Multi-Stage Docker Build
 # ══════════════════════════════════════════════════════════════════════
-# This Dockerfile builds HIVE from source and packages it with Ollama
-# for a fully self-contained, zero-dependency deployment.
+# Uses your HOST's Ollama (not bundled) — Metal/GPU acceleration works
+# natively on your machine, not inside a container.
 #
 # Usage:
 #   docker build -t hive .
-#   docker run -p 3030-3035:3030-3035 -p 8421:8421 -p 8480:8480 hive
+#   docker run -p 3030-3035:3030-3035 hive
 #
 # Or just run: ./launch.sh
 # ══════════════════════════════════════════════════════════════════════
@@ -38,9 +38,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Ollama
-RUN curl -fsSL https://ollama.com/install.sh | sh
-
 # Create hive user for security
 RUN useradd -m -s /bin/bash hive
 WORKDIR /home/hive
@@ -52,6 +49,7 @@ COPY --from=builder /build/target/release/HIVE /usr/local/bin/hive
 COPY .env.example .env
 COPY prompts/ prompts/
 COPY README.md .
+COPY persona.toml.example .hive/persona.toml
 
 # Create required directories
 RUN mkdir -p memory .hive && \
@@ -67,18 +65,23 @@ echo "🐝  HIVE — Human Internet Viable Ecosystem"
 echo "🐝  Starting all services..."
 echo "🐝 ═══════════════════════════════════════════════════════"
 
-# Start Ollama in background
-echo "🤖 Starting Ollama inference engine..."
-ollama serve &
-OLLAMA_PID=$!
-sleep 3
+# Check Ollama connectivity (uses host Ollama via OLLAMA_BASE_URL)
+OLLAMA_URL="${OLLAMA_BASE_URL:-http://host.docker.internal:11434}"
+echo "🤖 Connecting to Ollama at ${OLLAMA_URL}..."
+for i in $(seq 1 10); do
+    if curl -sf "${OLLAMA_URL}/api/tags" >/dev/null 2>&1; then
+        echo "🤖 ✅ Ollama connected!"
+        break
+    fi
+    if [ "$i" -eq 10 ]; then
+        echo "⚠️  Could not reach Ollama at ${OLLAMA_URL}"
+        echo "    Make sure Ollama is running on your host machine."
+        echo "    HIVE will start anyway — AI features won't work until Ollama is available."
+    fi
+    sleep 1
+done
 
-# Pull default model if not present
-if ! ollama list 2>/dev/null | grep -q "qwen"; then
-    echo "📦 Pulling default AI model (this only happens once)..."
-    ollama pull qwen2.5:7b || echo "⚠️  Model pull failed — will retry on first use"
-fi
-
+echo ""
 echo "🌐 Starting HIVE mesh network..."
 echo ""
 echo "  📡 Panopticon    → http://localhost:3030"
@@ -92,6 +95,9 @@ echo "🐝 ═══════════════════════
 
 # Disable auto-open inside container (no browser)
 export HIVE_AUTO_OPEN=false
+
+# Point at host Ollama
+export OLLAMA_BASE_URL="${OLLAMA_URL}"
 
 # Run HIVE
 exec /usr/local/bin/hive

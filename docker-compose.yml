@@ -1,6 +1,9 @@
 # ══════════════════════════════════════════════════════════════════════
 #  🐝 HIVE — Docker Compose (One-Click Launch)
 # ══════════════════════════════════════════════════════════════════════
+# Uses your HOST's Ollama — Docker doesn't have GPU access on macOS.
+# Make sure Ollama is running before starting HIVE.
+#
 # Usage: docker compose up
 # Or just run: ./launch.sh
 # ══════════════════════════════════════════════════════════════════════
@@ -27,15 +30,19 @@ services:
     volumes:
       - hive-memory:/home/hive/memory       # Persistent memory
       - hive-data:/home/hive/.hive           # Keys and config
-      - ollama-models:/root/.ollama          # AI models (cached)
 
     environment:
-      - HIVE_AUTO_OPEN=false                 # No browser inside container
-      - OLLAMA_BASE_URL=http://127.0.0.1:11434
+      - HIVE_AUTO_OPEN=false
+      # Connect to host's Ollama — host.docker.internal resolves to your machine
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
       - HIVE_MODEL=qwen2.5:7b
       - RUST_LOG=HIVE=info
 
-    # GPU support (optional — uncomment for NVIDIA GPUs)
+    # Allow container to reach host services (Ollama)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    # GPU support (Linux only — macOS Docker doesn't support GPU passthrough)
     # deploy:
     #   resources:
     #     reservations:
@@ -49,5 +56,3 @@ volumes:
     name: hive-memory
   hive-data:
     name: hive-data
-  ollama-models:
-    name: hive-ollama-models
