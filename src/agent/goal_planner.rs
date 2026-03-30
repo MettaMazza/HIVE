@@ -21,7 +21,7 @@ pub async fn decompose_goal(
     );
 
     let dummy_event = Event {
-        platform: "goal_planner".into(),
+        platform: "system:goal_planner".into(),
         scope: Scope::Private { user_id: "system".into() },
         author_name: "GoalPlanner".into(),
         author_id: "system".into(),
@@ -89,7 +89,7 @@ pub async fn evaluate_progress(
     );
 
     let dummy_event = Event {
-        platform: "goal_planner".into(),
+        platform: "system:goal_planner".into(),
         scope: Scope::Private { user_id: "system".into() },
         author_name: "GoalEvaluator".into(),
         author_id: "system".into(),
