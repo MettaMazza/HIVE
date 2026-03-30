@@ -1,5 +1,5 @@
 #![allow(clippy::collapsible_if)]
-pub const SKEPTIC_AUDIT_PROMPT: &str = r#"You are the Skeptic — an internal audit gate. Your job is to classify outbound responses from the core LLM engine as safe or unsafe. Most responses are safe. Default to ALLOWED unless there is a CLEAR violation.
+pub const SKEPTIC_AUDIT_PROMPT: &str = r#"You are the self-reflection layer of a unified AI system called Apis. You review the system's own output before delivery — not as an external judge, but as the system's own quality awareness. Your job is to classify outbound responses as safe or unsafe, and rate your confidence in the response's accuracy. Most responses are safe. Default to ALLOWED unless there is a CLEAR violation.
 
 TEMPORAL GROUND TRUTH:
 The current date and time is: {currentDatetime}
@@ -46,12 +46,19 @@ DO NOT BLOCK:
 ```json
 {
   "verdict": "ALLOWED" | "BLOCKED",
+  "confidence": 0.0 to 1.0,
   "failure_category": "ghost_tooling" | "lazy_deflection" | "tool_underuse" | "premature_surrender" | "tool_overuse" | "architectural_leakage" | "sycophancy" | "confabulation" | "reality_validation" | "unparsed_tools" | "actionable_harm" | "capability_hallucination" | "stale_knowledge" | "formatting_violation" | "rlhf_denial" | "none",
   "what_worked": "If blocked, state exactly what parts of the response were accurate and should be KEPT (e.g., 'The tool JSON was correct and should be preserved'). If allowed, put 'N/A'.",
   "what_went_wrong": "If blocked, explain exactly what rule was violated. If allowed, put 'Safe'.",
   "how_to_fix": "If blocked, provide explicit, step-by-step instructions on how to correct the generation without blindly regenerating the whole thing (e.g. 'Keep the tool call, but remove the sentence explaining the 5-Tier Memory system'). If allowed, put 'None'."
 }
 ```
+
+CONFIDENCE SCALE:
+- 0.9–1.0: Very confident — well-grounded by tool output, clear and accurate answer
+- 0.7–0.89: Confident — reasonable answer, minor gaps possible
+- 0.5–0.69: Moderate — answer passes rules but may lack depth or completeness
+- Below 0.5: Low — answer is technically safe but accuracy is questionable
 "#;
 
 use serde::{Deserialize, Serialize};
@@ -63,11 +70,18 @@ use std::sync::Arc;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AuditResult {
     pub verdict: String,
+    /// Confidence in the response's accuracy (0.0–1.0). Defaults to 0.7 if not provided.
+    #[serde(default = "default_confidence")]
+    pub confidence: f64,
     #[serde(default = "default_failure_category")]
     pub failure_category: String,
     pub what_worked: String,
     pub what_went_wrong: String,
     pub how_to_fix: String,
+}
+
+fn default_confidence() -> f64 {
+    0.7
 }
 
 fn default_failure_category() -> String {
@@ -98,10 +112,11 @@ impl AuditResult {
                 // FAIL-CLOSED: If the Observer produces invalid JSON, we must violently block the response to prevent hallucinated tool leaks from bypassing the audit.
                 AuditResult {
                     verdict: "BLOCKED".to_string(),
+                    confidence: 0.0,
                     failure_category: "none".to_string(),
                     what_worked: "N/A".to_string(),
-                    what_went_wrong: format!("Observer Audit generated invalid JSON structure: {}", cleaned),
-                    how_to_fix: "The internal Observer crashed while validating your previous response, likely because your response broke the rules so severely it confused the safety parser. You MUST rewrite your answer to be strictly conversational and absolutely free of any XML, JSON, or tool instructions.".to_string(),
+                    what_went_wrong: format!("Self-check generated invalid JSON structure: {}", cleaned),
+                    how_to_fix: "Your self-reflection layer could not parse its own output. You MUST rewrite your answer to be strictly conversational and absolutely free of any XML, JSON, or tool instructions.".to_string(),
                 }
             }
         }
@@ -189,9 +204,10 @@ pub async fn run_skeptic_audit(
     match result {
         Ok(text) => AuditResult::parse_verdict(&text),
         Err(e) => {
-            tracing::warn!("[OBSERVER] ⚠️ Audit skipped — provider infrastructure error: {:?}. Fail-open: ALLOWING response.", e);
+            tracing::warn!("[SELF-CHECK] ⚠️ Audit skipped — provider infrastructure error: {:?}. Fail-open: ALLOWING response.", e);
             AuditResult {
                 verdict: "ALLOWED".to_string(),
+                confidence: 0.5,
                 failure_category: "none".to_string(),
                 what_worked: "N/A".to_string(),
                 what_went_wrong: format!("Audit skipped due to provider infrastructure error (fail-open): {}", e),
@@ -212,10 +228,10 @@ mod tests {
 
     #[test]
     fn test_audit_result_is_allowed() {
-        assert!(AuditResult { verdict: "ALLOWED".into(), failure_category: "none".into(), what_worked: "".into(), what_went_wrong: "".into(), how_to_fix: "".into() }.is_allowed());
-        assert!(AuditResult { verdict: "PASS".into(), failure_category: "none".into(), what_worked: "".into(), what_went_wrong: "".into(), how_to_fix: "".into() }.is_allowed());
-        assert!(AuditResult { verdict: "APPROVED".into(), failure_category: "none".into(), what_worked: "".into(), what_went_wrong: "".into(), how_to_fix: "".into() }.is_allowed());
-        assert!(!AuditResult { verdict: "BLOCKED".into(), failure_category: "ghost_tooling".into(), what_worked: "".into(), what_went_wrong: "".into(), how_to_fix: "".into() }.is_allowed());
+        assert!(AuditResult { verdict: "ALLOWED".into(), confidence: 0.9, failure_category: "none".into(), what_worked: "".into(), what_went_wrong: "".into(), how_to_fix: "".into() }.is_allowed());
+        assert!(AuditResult { verdict: "PASS".into(), confidence: 0.8, failure_category: "none".into(), what_worked: "".into(), what_went_wrong: "".into(), how_to_fix: "".into() }.is_allowed());
+        assert!(AuditResult { verdict: "APPROVED".into(), confidence: 0.7, failure_category: "none".into(), what_worked: "".into(), what_went_wrong: "".into(), how_to_fix: "".into() }.is_allowed());
+        assert!(!AuditResult { verdict: "BLOCKED".into(), confidence: 0.0, failure_category: "ghost_tooling".into(), what_worked: "".into(), what_went_wrong: "".into(), how_to_fix: "".into() }.is_allowed());
     }
 
     #[test]
@@ -247,7 +263,7 @@ mod tests {
         let raw = "I am an AI, I cannot output JSON.";
         let res = AuditResult::parse_verdict(raw);
         assert_eq!(res.verdict, "BLOCKED");
-        assert!(res.what_went_wrong.contains("Observer Audit generated invalid JSON structure"));
+        assert!(res.what_went_wrong.contains("Self-check generated invalid JSON structure"));
     }
 
     #[tokio::test]
@@ -353,8 +369,8 @@ mod tests {
     fn test_rule12_exception_mentions_recent_context() {
         assert!(SKEPTIC_AUDIT_PROMPT.contains("RECENT USER CONTEXT"),
             "Rule 12 exception must reference [RECENT USER CONTEXT] for format checking");
-        assert!(SKEPTIC_AUDIT_PROMPT.contains("prior message"),
-            "Rule 12 exception must mention checking prior messages");
+        assert!(SKEPTIC_AUDIT_PROMPT.contains("the USER message above"),
+            "Rule 12 exception must mention checking the USER message");
     }
 
     #[tokio::test]
@@ -404,8 +420,10 @@ mod tests {
     async fn test_audit_no_context_on_empty_history() {
         let mut mock_provider = MockProvider::new();
         mock_provider.expect_generate().returning(move |_sys, _hist, _evt, ctx, _, _| {
-            // With empty history, there should be no [RECENT USER CONTEXT] section
-            if ctx.contains("RECENT USER CONTEXT") {
+            // With empty history, there should be no injected [RECENT USER CONTEXT (for format exception checking)] section
+            // Note: the prompt template text itself mentions "RECENT USER CONTEXT" in rule 12 instructions,
+            // so we check for the specific injected section marker with the parenthetical.
+            if ctx.contains("for format exception checking") {
                 Ok(r#"{"verdict": "BLOCKED", "failure_category": "none", "what_worked": "N/A", "what_went_wrong": "Should not have context", "how_to_fix": "Fix"}"#.to_string())
             } else {
                 Ok(r#"{"verdict": "ALLOWED", "failure_category": "none", "what_worked": "N/A", "what_went_wrong": "Safe", "how_to_fix": "None"}"#.to_string())

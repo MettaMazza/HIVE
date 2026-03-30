@@ -30,22 +30,24 @@ RUN cargo build --release && \
 # ── Stage 2: Runtime ────────────────────────────────────────────────
 FROM debian:trixie-slim AS runtime
 
-# Install ALL runtime dependencies
+# ── Layer 1: Python + training stack (STABLE — rarely changes) ──────
+# This layer is separated so that adding system tools later
+# does NOT invalidate the expensive ~2GB PyTorch download.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    curl \
-    libssl3 \
-    python3 \
-    python3-pip \
-    bash \
-    git \
-    cargo \
-    rustc \
-    findutils \
-    grep \
-    tar \
-    lsof \
-    procps \
+    ca-certificates curl libssl3 python3 python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy ONLY requirements files first — this layer only changes when
+# dependencies change, so pip install stays cached across rebuilds.
+COPY training/requirements*.txt training/
+RUN pip3 install --no-cache-dir --break-system-packages -r training/requirements_torch.txt
+
+# NOW copy training scripts — changing .py files no longer busts pip cache
+COPY training/*.py training/
+
+# ── Layer 2: System tools (can be modified without busting pip cache) ─
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash git cargo rustc findutils grep tar lsof procps \
     && curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
        -o /usr/share/keyrings/cloudflare-main.gpg \
     && echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main" \
@@ -65,13 +67,9 @@ COPY --from=builder /build/target/release/HIVE /usr/local/bin/hive
 COPY .env.example .env
 COPY README.md .
 COPY persona.toml.example .hive/persona.toml
-COPY training/ training/
-
-# Install training dependencies (transformers + PyTorch for Linux)
-RUN pip3 install --no-cache-dir --break-system-packages -r training/requirements_torch.txt
 
 # Create required directories
-RUN mkdir -p memory .hive && \
+RUN mkdir -p memory .hive training && \
     chown -R hive:hive /home/hive
 
 # ── Entrypoint script ──────────────────────────────────────────────

@@ -34,6 +34,13 @@ pub struct Engine {
     /// Platform-specific providers (e.g., glasses → qwen3.5:9b for fast responses).
     /// Falls back to `self.provider` if no platform-specific provider is registered.
     pub platform_providers: Arc<HashMap<String, Arc<dyn Provider>>>,
+    /// Dedicated provider for the Observer/Skeptic Audit.
+    /// Uses a lighter model (HIVE_OBSERVER_MODEL) to avoid blocking the main inference slot.
+    /// Falls back to `self.provider` if HIVE_OBSERVER_MODEL is not set.
+    pub observer_provider: Arc<dyn Provider>,
+    /// Reasoning Router — dynamic model selection based on message complexity.
+    /// None when HIVE_ROUTER_ENABLED is false (default for single-model users).
+    pub reasoning_router: Option<Arc<crate::providers::reasoning_router::ReasoningRouter>>,
     pub capabilities: Arc<AgentCapabilities>,
     pub memory: Arc<MemoryStore>,
     pub agent: Arc<AgentManager>,
@@ -66,6 +73,8 @@ pub struct Engine {
     pub pending_50_turn_synth: Arc<AtomicBool>,
     pub pending_daily_synth: Arc<AtomicBool>,
     pub pending_lifetime_synth: Arc<AtomicBool>,
+    /// Pending sleep training flag — set by timer, consumed before autonomy.
+    pub pending_sleep_training: Arc<AtomicBool>,
 }
 
 impl Engine {
@@ -140,8 +149,28 @@ impl Engine {
             tracing::info!("[ENGINE] 🐝 Autonomy channel: {} (from HIVE_TARGET_CHANNEL)", autonomy_channel);
         }
 
+        // Observer provider — uses a lighter model for the Skeptic Audit.
+        // If HIVE_OBSERVER_MODEL is set, create a separate OllamaProvider for it.
+        // Otherwise, falls back to the main provider.
+        let observer_provider: Arc<dyn Provider> = match std::env::var("HIVE_OBSERVER_MODEL") {
+            Ok(model) if !model.is_empty() => {
+                tracing::info!("[ENGINE] 🕵️ Observer using dedicated model: {} (set HIVE_OBSERVER_MODEL to change)", model);
+                Arc::new(crate::providers::ollama::OllamaProvider::with_model(&model))
+            }
+            _ => {
+                tracing::info!("[ENGINE] 🕵️ Observer using main model (set HIVE_OBSERVER_MODEL for a lighter audit model)");
+                provider.clone()
+            }
+        };
+
+        // Reasoning Router — initialise from env if enabled.
+        let reasoning_router = crate::providers::reasoning_router::ReasoningRouter::from_env()
+            .map(Arc::new);
+
         Self {
             platforms, provider, platform_providers: Arc::new(platform_providers),
+            observer_provider,
+            reasoning_router,
             capabilities, memory, agent, teacher, sleep_cycle, drives, outreach_gate, inbox, event_sender, event_receiver,
             concurrency_semaphore: Arc::new(Semaphore::new(max_parallel)),
             scope_locks: Arc::new(RwLock::new(HashMap::new())),
@@ -152,6 +181,7 @@ impl Engine {
             pending_50_turn_synth: Arc::new(AtomicBool::new(false)),
             pending_daily_synth: Arc::new(AtomicBool::new(false)),
             pending_lifetime_synth: Arc::new(AtomicBool::new(false)),
+            pending_sleep_training: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -489,10 +519,14 @@ impl Engine {
                 let pending_50 = self.pending_50_turn_synth.clone();
                 let pending_daily = self.pending_daily_synth.clone();
                 let pending_lifetime = self.pending_lifetime_synth.clone();
+                let pending_sleep = self.pending_sleep_training.clone();
                 let synth_provider = self.provider.clone();
                 let synth_memory = self.memory.clone();
                 let synth_scope = event.scope.clone();
                 let synth_drives = self.drives.clone();
+                let sleep_cycle_pre = self.sleep_cycle.clone();
+                let observer_provider_bg = self.observer_provider.clone();
+                let router_bg = self.reasoning_router.clone();
 
                 active_autonomy_task = Some(tokio::spawn(async move {
                     // Acquire concurrency permit — waits if all slots are busy
@@ -518,7 +552,17 @@ impl Engine {
                         if need_lifetime {
                             let _ = crate::agent::synthesis::synthesize_lifetime(synth_provider.clone(), synth_memory.clone(), synth_scope.clone(), Some(synth_drives.clone())).await;
                         }
-                        tracing::info!("[SYNTHESIS] ✅ Deferred synthesis complete. Proceeding to autonomy ReAct loop.");
+                        tracing::info!("[SYNTHESIS] ✅ Deferred synthesis complete.");
+                    }
+
+                    // ── SLEEP TRAINING PHASE: Run pending training BEFORE autonomy ──
+                    // Same deferred pattern as synthesis. Gets preempted by user messages.
+                    if pending_sleep.swap(false, Ordering::Relaxed) {
+                        tracing::info!("💤 [SLEEP] Running deferred sleep training before autonomy...");
+                        match sleep_cycle_pre.enter_sleep().await {
+                            Ok(report) => tracing::info!("☀️ [SLEEP] {}", report),
+                            Err(e) => tracing::error!("[SLEEP] ❌ Sleep cycle failed: {}", e),
+                        }
                     }
 
                     // Create telemetry channel INSIDE the spawned task
@@ -533,6 +577,8 @@ impl Engine {
                         &platforms_bg,
                         &agent_bg,
                         provider_bg,
+                        observer_provider_bg,
+                        router_bg,
                         memory_bg.clone(),
                         drives_bg,
                         capabilities_bg,
@@ -663,6 +709,7 @@ impl Engine {
                 let pending_50_bg = self.pending_50_turn_synth.clone();
                 let pending_daily_bg = self.pending_daily_synth.clone();
                 let pending_lifetime_bg = self.pending_lifetime_synth.clone();
+                let pending_sleep_bg = self.pending_sleep_training.clone();
 
                 let available = self.concurrency_semaphore.available_permits();
                 tracing::info!("[PARALLEL] 🐝 Spawning event from {} (scope: {}) — {}/{} inference slots available",
@@ -671,6 +718,8 @@ impl Engine {
 
                 let stop_flag_bg = self.stop_flag.clone();
                 let autonomy_ch = self.autonomy_channel.clone();
+                let observer_provider_bg = self.observer_provider.clone();
+                let router_bg = self.reasoning_router.clone();
 
                 tokio::spawn(async move {
                     // 1. Acquire per-scope lock — serializes events within the same channel/DM
@@ -698,6 +747,8 @@ impl Engine {
                         &platforms_bg,
                         &agent_bg,
                         provider_bg,
+                        observer_provider_bg,
+                        router_bg,
                         memory_bg.clone(),
                         drives_bg,
                         capabilities_bg,
@@ -801,28 +852,13 @@ impl Engine {
                         }
                     }
 
-                    // 8. Sleep Training Timer — replaces old threshold-based trigger
+                    // 8. Sleep Training Timer — sets deferred flag, runs before next autonomy
                     if teacher_bg.auto_train_enabled.load(std::sync::atomic::Ordering::Relaxed) {
                         let sleep_bg = sleep_cycle_bg.clone();
-                        let tx_clone = telemetry_tx.clone();
                         if sleep_bg.should_auto_sleep().await {
-                            tokio::spawn(async move {
-                                let (golden, pairs) = sleep_bg.teacher.get_counts();
-                                let _ = tx_clone.send(format!(
-                                    "\n💤 **Apis is sleeping...** Dreaming of {} golden examples and {} preference pairs.",
-                                    golden, pairs
-                                )).await;
-
-                                match sleep_bg.enter_sleep().await {
-                                    Ok(report) => {
-                                        let _ = tx_clone.send(format!("\n☀️ **{}**", report)).await;
-                                    }
-                                    Err(e) => {
-                                        tracing::error!("[SLEEP] ❌ Sleep cycle failed: {}", e);
-                                        let _ = tx_clone.send(format!("\n❌ **Sleep failed:** {}", e)).await;
-                                    }
-                                }
-                            });
+                            let (golden, pairs) = sleep_bg.teacher.get_counts();
+                            tracing::info!("💤 [SLEEP] Training due ({} golden, {} pairs). Deferring to next autonomy cycle.", golden, pairs);
+                            pending_sleep_bg.store(true, std::sync::atomic::Ordering::Relaxed);
                         }
                     }
                 });

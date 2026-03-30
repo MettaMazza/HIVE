@@ -417,8 +417,9 @@ string ending with an unescaped quote \" and an emoji 😊.",
         let mut mock_provider = MockProvider::new();
         mock_provider
             .expect_generate()
-            .returning(move |_, _, event, _ctx, _, _| {
-                if event.author_name == "Audit" {
+            .returning(move |_, _, _event, ctx, _, _| {
+                // Distinguish audit calls by the AUDIT MODE marker in context
+                if ctx.contains("SWITCH TO AUDIT MODE") {
                     let count = call_count_ptr.fetch_add(1, Ordering::SeqCst);
                     if count == 0 {
                         Ok(r#"{"verdict": "BLOCKED", "failure_category": "none", "what_worked": "N/A", "what_went_wrong": "Testing", "how_to_fix": "Fix it"}"#.to_string())
@@ -450,7 +451,7 @@ string ending with an unescaped quote \" and an emoji 😊.",
             message_index: None,
         }).await.unwrap();
 
-        sleep(Duration::from_millis(150)).await;
+        sleep(Duration::from_millis(500)).await;
         // Verify observer ran exactly twice (blocked once, allowed once)
         assert_eq!(call_count.load(Ordering::SeqCst), 2);
     }

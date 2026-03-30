@@ -8,6 +8,7 @@ pub mod openai;
 pub mod anthropic;
 pub mod gemini;
 pub mod xai;
+pub mod reasoning_router;
 
 #[derive(thiserror::Error, Debug)]
 pub enum ProviderError {

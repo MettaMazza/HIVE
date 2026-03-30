@@ -59,7 +59,7 @@ if [ "$1" = "rebuild" ]; then
     banner
     log "Rebuilding HIVE from source..."
     docker compose down 2>/dev/null || true
-    docker compose build --no-cache
+    docker compose build
     log "✅ Rebuild complete. Run ./launch.sh to start."
     exit 0
 fi

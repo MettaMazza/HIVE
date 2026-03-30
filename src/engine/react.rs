@@ -12,7 +12,7 @@ use crate::memory::MemoryStore;
 use crate::engine::drives::DriveSystem;
 
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip(event, history, telemetry_tx, platforms, agent, provider, memory, drives, capabilities, teacher, stop_flag), fields(event_id=%event.author_id, author=%event.author_name, scope=%event.scope.to_key()))]
+#[tracing::instrument(skip(event, history, telemetry_tx, platforms, agent, provider, observer_provider, reasoning_router, memory, drives, capabilities, teacher, stop_flag), fields(event_id=%event.author_id, author=%event.author_name, scope=%event.scope.to_key()))]
 pub async fn execute_react_loop(
     event: &Event,
     history: &[Event],
@@ -20,6 +20,8 @@ pub async fn execute_react_loop(
     platforms: &HashMap<String, Box<dyn crate::platforms::Platform>>,
     agent: &Arc<AgentManager>,
     provider: Arc<dyn Provider>,
+    observer_provider: Arc<dyn Provider>,
+    reasoning_router: Option<Arc<crate::providers::reasoning_router::ReasoningRouter>>,
     memory: Arc<MemoryStore>,
     drives: Arc<DriveSystem>,
     capabilities: Arc<AgentCapabilities>,
@@ -29,6 +31,21 @@ pub async fn execute_react_loop(
     let is_autonomy = event.author_id == "apis_autonomy";
     let tool_list = agent.get_available_tools_text_for_platform(&event.platform, is_autonomy);
     
+    // ── Reasoning Router: pick the right-sized model ──
+    // Autonomy → always HIGH. Glasses → skip (has its own provider). Otherwise → classify.
+    let provider = if let Some(ref router) = reasoning_router {
+        if is_autonomy {
+            router.force_high()
+        } else if event.platform.starts_with("glasses") {
+            provider // Glasses has its own provider already resolved
+        } else {
+            let (_level, routed) = router.classify(&event.content).await;
+            routed
+        }
+    } else {
+        provider
+    };
+
     // Update and inject homeostatic drive state as ambient context
     drives.update().await;
 
@@ -612,22 +629,22 @@ pub async fn execute_react_loop(
                 }
             }
 
-            // ── SKEPTIC OBSERVER AUDIT (SYNCHRONOUS) ──
-            // CRITICAL FIX: Build a CLEAN context for the observer that strips all
-            // previous [SKEPTIC AUDIT FAIL] blocks. Without this, each rejection's
-            // feedback gets passed back to the observer on retry via context_from_agent,
+            // ── SELF-REFLECTION AUDIT (SYNCHRONOUS) ──
+            // CRITICAL FIX: Build a CLEAN context for the self-check that strips all
+            // previous [SELF-CHECK FAIL] blocks. Without this, each rejection's
+            // feedback gets passed back on retry via context_from_agent,
             // causing a self-reinforcing loop where accumulated "formatting_violation"
-            // messages prime the observer to repeat the same verdict indefinitely.
+            // messages prime the self-check to repeat the same verdict indefinitely.
             let clean_observer_context: String = context_from_agent
                 .split("Cycle ")
-                .filter(|chunk| !chunk.contains("[SKEPTIC AUDIT FAIL"))
+                .filter(|chunk| !chunk.contains("[SELF-CHECK FAIL"))
                 .collect::<Vec<_>>()
                 .join("Cycle ");
             
-            tracing::info!("[AGENT LOOP] 🕵️ Running Skeptic Audit on Turn {}...", current_turn);
+            tracing::info!("[AGENT LOOP] 🕵️ Running self-check on Turn {}...", current_turn);
 
             let audit_result = crate::prompts::observer::run_skeptic_audit(
-                provider.clone(),
+                observer_provider.clone(),
                 &capabilities,
                 &candidate_answer,
                 &base_system_prompt,
@@ -653,7 +670,7 @@ pub async fn execute_react_loop(
                         }
                     }
                 }
-                tracing::info!("[AGENT LOOP] ✅ Audit passed. Delivering Turn {}.", current_turn);
+                tracing::info!("[AGENT LOOP] ✅ Audit passed (confidence: {:.2}). Delivering Turn {}.", audit_result.confidence, current_turn);
                 final_response_text = candidate_answer;
                 break;
             } else {
@@ -666,7 +683,7 @@ pub async fn execute_react_loop(
                 ));
                 
                 context_from_agent.push_str(&format!(
-                    "Cycle {} - [SKEPTIC AUDIT FAIL: INVISIBLE TO USER] Your output was intercepted.\nCategory: {}\nWhy it failed: {}\nHow to fix it: {}\n\nYou MUST rewrite your response immediately incorporating this feedback.\n\n",
+                    "Cycle {} - [SELF-CHECK FAIL: INVISIBLE TO USER] Your output did not meet your own standards.\nCategory: {}\nWhy it failed: {}\nHow to fix it: {}\n\nYou MUST rewrite your response immediately incorporating this feedback.\n\n",
                     current_turn,
                     audit_result.failure_category,
                     audit_result.what_went_wrong,
@@ -674,7 +691,7 @@ pub async fn execute_react_loop(
                 ));
                 
                 // Also tell the UI to resume "processing" since we blocked the completion
-                let _ = telemetry_tx.send("🔄 Observer rejected response. Rewriting...".to_string()).await;
+                let _ = telemetry_tx.send("🔄 Self-check caught an issue. Rewriting...".to_string()).await;
                 
                 continue;
             }
