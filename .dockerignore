@@ -1,14 +1,17 @@
-target/
-.git/
-.env
-memory/
-.hive/
-*.log
-*.tmp
-node_modules/
-.DS_Store
-mesh_sites/
-.gemini/
-*.gguf
-*.bin
-models/
+# ══════════════════════════════════════════════════════════════
+# Docker Build Context — WHITELIST approach
+# Only include what the Rust build actually needs.
+# Everything else is excluded to keep context < 100MB.
+# ══════════════════════════════════════════════════════════════
+
+# Ignore EVERYTHING by default
+*
+
+# Then whitelist only what the build needs:
+!src/
+!Cargo.toml
+!Cargo.lock
+!.env.example
+!README.md
+!persona.toml.example
+!build.rs
