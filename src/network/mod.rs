@@ -37,6 +37,9 @@ pub mod governance;
 pub mod pool;
 pub mod compute_relay;
 pub mod post_store;
+
+pub(crate) mod web_proxy_html;
+
 #[cfg(test)]
 mod adversarial_tests;
 
