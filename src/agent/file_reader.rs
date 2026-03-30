@@ -39,7 +39,14 @@ pub async fn execute_file_reader(
     let output = if target_path.contains("..") || target_path.starts_with('/') {
         "Access Denied: Path traverses outside isolated project root.".to_string()
     } else {
-        let content_result = tokio::fs::read_to_string(&target_path).await;
+        // Resolve relative to project root — try env var first, then compile-time path, then CWD
+        let project_root = std::env::var("HIVE_PROJECT_DIR")
+            .unwrap_or_else(|_| env!("CARGO_MANIFEST_DIR").to_string());
+        let absolute_path = std::path::Path::new(&project_root).join(&target_path);
+        let content_result = match tokio::fs::read_to_string(&absolute_path).await {
+            Ok(c) => Ok(c),
+            Err(_) => tokio::fs::read_to_string(&target_path).await,
+        };
         
         let (content, resolved_path) = match content_result {
             Ok(c) => (c, target_path.clone()),
@@ -49,8 +56,10 @@ pub async fn execute_file_reader(
                     .and_then(|f| f.to_str())
                     .unwrap_or(&target_path);
 
+                let src_dir = std::path::Path::new(&project_root).join("src");
+                let src_str = src_dir.to_string_lossy().to_string();
                 let find_result = std::process::Command::new("find")
-                    .args(&["src", "-name", filename, "-type", "f"])
+                    .args(&[&src_str, "-name", filename, "-type", "f"])
                     .output();
 
                 match find_result {
