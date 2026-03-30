@@ -253,7 +253,6 @@ impl ComputeRelay {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     fn test_config() -> ComputeRelayConfig {
         ComputeRelayConfig {
@@ -310,7 +309,7 @@ mod tests {
     #[test]
     fn test_heartbeat_generation() {
         let relay = test_relay();
-        let (peer, model, slots, ram, queue) = relay.generate_heartbeat();
+        let (peer, model, slots, ram, _queue) = relay.generate_heartbeat();
         assert_eq!(peer.0, "local_test_peer");
         assert!(!model.is_empty());
         assert!(slots > 0);

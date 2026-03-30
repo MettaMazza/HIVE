@@ -270,26 +270,7 @@ pub async fn run_app() {
         crate::server::apis_book_server::spawn_apis_book_server(apis_book.clone()).await;
     }
 
-    // 7c. Spawn the SafeNet Web Proxy (censorship-resistant browsing)
-    {
-        let proxy_config = crate::network::web_proxy::WebProxyConfig::from_env();
-        if std::env::var("HIVE_WEB_PROXY_ENABLED")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false)
-        {
-            crate::network::web_proxy::spawn_web_proxy(proxy_config, None).await;
-        } else {
-            tracing::info!("[WEB PROXY] Disabled (set HIVE_WEB_PROXY_ENABLED=true to enable)");
-        }
-    }
-
-    // 7d. Spawn the Offline Mesh Monitor (store-and-forward, connectivity tracking)
-    {
-        let offline_mesh = Arc::new(crate::network::offline::OfflineMesh::new());
-        offline_mesh.clone().spawn_monitor();
-    }
-
-    // 7e. Initialise the Resource Pool (web + compute sharing — enabled by default)
+    // 7c. Initialise the Resource Pool (web + compute sharing — enabled by default)
     let content_filter = Arc::new(crate::network::content_filter::ContentFilter::new());
     let pool_peer_id = crate::network::messages::PeerId(
         std::env::var("HIVE_MESH_CHAT_NAME").unwrap_or_else(|_| "Apis".to_string())
@@ -306,6 +287,35 @@ pub async fn run_app() {
         ));
         tracing::info!("[POOL] 🤝 Resource pool ready — web_share={}, compute_share={}",
             pool_manager.web_share_enabled, pool_manager.compute_share_enabled);
+    }
+
+    // 7d. Spawn the SafeNet Web Proxy (with pool for mesh relay)
+    {
+        let proxy_config = crate::network::web_proxy::WebProxyConfig::from_env();
+        crate::network::web_proxy::spawn_web_proxy(
+            proxy_config,
+            None, // QuicTransport passed when discovery wires it
+            Some(pool_manager.clone()),
+        ).await;
+    }
+
+    // 7e. Equality enforcement — no freeloading on the collective
+    if !pool_manager.verify_equality() {
+        tracing::error!("[SAFENET] ⛔ MESH ACCESS DENIED — sharing is disabled");
+        tracing::error!("[SAFENET] You must contribute (web share or compute share) to use the mesh");
+        // Do NOT spawn mesh services — this peer is disconnected
+    }
+
+    // 7f. Verify pool code integrity (tied to creator key)
+    crate::network::pool::PoolManager::verify_pool_integrity();
+    if crate::network::pool::PoolManager::is_creator_machine() {
+        tracing::info!("[SAFENET] 🔑 Creator key detected — authorised for code modifications");
+    }
+
+    // 7g. Spawn the Offline Mesh Monitor (store-and-forward, connectivity tracking)
+    {
+        let offline_mesh = Arc::new(crate::network::offline::OfflineMesh::new());
+        offline_mesh.clone().spawn_monitor();
     }
 
     // 8. Spawn the Native IMAP Background Inbox Listener

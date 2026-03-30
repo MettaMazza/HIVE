@@ -49,6 +49,8 @@ struct ProxyState {
     clearnet_available: Arc<RwLock<bool>>,
     /// Transport handle for mesh relay requests
     transport: Option<Arc<QuicTransport>>,
+    /// Pool manager for relay peer selection
+    pool: Option<Arc<crate::network::pool::PoolManager>>,
 }
 
 /// Configuration for the web proxy.
@@ -67,8 +69,8 @@ impl WebProxyConfig {
             port: std::env::var("HIVE_WEB_PROXY_PORT")
                 .ok().and_then(|v| v.parse().ok()).unwrap_or(8480),
             mesh_relay_enabled: std::env::var("HIVE_WEB_PROXY_MESH_RELAY")
-                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                .unwrap_or(false),
+                .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
+                .unwrap_or(true), // ON by default — equality
             doh_resolver: std::env::var("HIVE_DOH_RESOLVER")
                 .unwrap_or_else(|_| "https://cloudflare-dns.com/dns-query".to_string()),
             cache_enabled: std::env::var("HIVE_WEB_PROXY_CACHE")
@@ -87,6 +89,7 @@ struct ProxyStatus {
     mesh_relay_enabled: bool,
     cache_entries: usize,
     doh_resolver: String,
+    relay_peers: usize,
 }
 
 /// Proxy fetch request.
@@ -109,7 +112,11 @@ struct FetchResponse {
 }
 
 /// Spawn the web proxy server.
-pub async fn spawn_web_proxy(config: WebProxyConfig, transport: Option<Arc<QuicTransport>>) {
+pub async fn spawn_web_proxy(
+    config: WebProxyConfig,
+    transport: Option<Arc<QuicTransport>>,
+    pool: Option<Arc<crate::network::pool::PoolManager>>,
+) {
     let port = config.port;
 
     let state = ProxyState {
@@ -118,7 +125,10 @@ pub async fn spawn_web_proxy(config: WebProxyConfig, transport: Option<Arc<QuicT
         doh_resolver: config.doh_resolver,
         clearnet_available: Arc::new(RwLock::new(true)),
         transport,
+        pool,
     };
+
+    let health_state = state.clone();
 
     tokio::spawn(async move {
         tracing::info!("[WEB PROXY] 🌐 Starting on http://127.0.0.1:{}", port);
@@ -159,10 +169,10 @@ pub async fn spawn_web_proxy(config: WebProxyConfig, transport: Option<Arc<QuicT
             let available = client.get("https://1.1.1.1/cdn-cgi/trace")
                 .send().await.is_ok();
 
-            // Note: we can't update state here directly (moved). 
-            // The actual clearnet check is done per-request in proxy_fetch.
+            *health_state.clearnet_available.write().await = available;
+
             if !available {
-                tracing::warn!("[WEB PROXY] ⚠️ Clearnet appears down");
+                tracing::warn!("[WEB PROXY] ⚠️ Clearnet down — mesh relay active");
             }
         }
     });
@@ -173,12 +183,16 @@ pub async fn spawn_web_proxy(config: WebProxyConfig, transport: Option<Arc<QuicT
 async fn proxy_status(State(state): State<ProxyState>) -> Json<ProxyStatus> {
     let clearnet = *state.clearnet_available.read().await;
     let cache_count = state.cache.read().await.len();
+    let relay_peers = if let Some(pool) = &state.pool {
+        pool.web_pool.read().await.relay_count()
+    } else { 0 };
 
     Json(ProxyStatus {
         clearnet_available: clearnet,
         mesh_relay_enabled: state.mesh_relay_enabled,
         cache_entries: cache_count,
         doh_resolver: state.doh_resolver.clone(),
+        relay_peers,
     })
 }
 
@@ -253,29 +267,65 @@ async fn proxy_fetch(
         }
     }
 
-    // 3. Fall back to mesh relay (if enabled)
+    // 3. Fall back to mesh relay via PoolManager
     if state.mesh_relay_enabled {
-        tracing::info!("[WEB PROXY] 📡 Attempting mesh relay for: {}", req.url);
-        // TODO: Wire actual mesh relay via QuicTransport
-        // For now, return a clear indicator that mesh relay was attempted
-        let elapsed = start.elapsed().as_millis() as u64;
-        return Json(FetchResponse {
-            url: req.url.clone(),
-            status: 503,
-            content_type: "text/plain".to_string(),
-            body: "MESH_RELAY: No mesh peers with internet access available. Waiting for a relay peer.".to_string(),
-            source: "mesh_relay_pending".to_string(),
-            latency_ms: elapsed,
-        });
+        if let Some(pool) = &state.pool {
+            match pool.request_web_relay(&req.url).await {
+                Ok(relay_peer) => {
+                    tracing::info!("[WEB PROXY] 📡 Mesh relay for '{}' via peer {}",
+                        &req.url[..req.url.len().min(60)], relay_peer);
+
+                    // Send RelayRequest via QUIC transport to the selected peer
+                    if let Some(transport) = &state.transport {
+                        let relay_msg = crate::network::messages::MeshMessage::RelayRequest {
+                            destination_url: req.url.clone(),
+                            requester: crate::network::pool::PoolManager::ephemeral_id(),
+                        };
+                        let payload = rmp_serde::to_vec(&relay_msg).unwrap_or_default();
+                        let envelope = crate::network::messages::SignedEnvelope {
+                            sender: crate::network::pool::PoolManager::ephemeral_id(),
+                            payload,
+                            signature: vec![],
+                            timestamp: chrono::Utc::now().to_rfc3339(),
+                        };
+                        transport.broadcast(&envelope).await;
+
+                        let elapsed = start.elapsed().as_millis() as u64;
+                        return Json(FetchResponse {
+                            url: req.url.clone(),
+                            status: 202,
+                            content_type: "text/plain".to_string(),
+                            body: format!("MESH_RELAY: Request dispatched to peer {} via QUIC", relay_peer),
+                            source: "mesh_relay".to_string(),
+                            latency_ms: elapsed,
+                        });
+                    }
+
+                    // Transport not yet connected — peer selected, relay queued
+                    let elapsed = start.elapsed().as_millis() as u64;
+                    return Json(FetchResponse {
+                        url: req.url.clone(),
+                        status: 202,
+                        content_type: "text/plain".to_string(),
+                        body: format!("MESH_RELAY: Peer {} selected — transport connecting", relay_peer),
+                        source: "mesh_relay".to_string(),
+                        latency_ms: elapsed,
+                    });
+                }
+                Err(e) => {
+                    tracing::warn!("[WEB PROXY] Relay selection failed: {}", e);
+                }
+            }
+        }
     }
 
-    // 4. Total failure
+    // 4. Total failure — no clearnet, no relays
     let elapsed = start.elapsed().as_millis() as u64;
     Json(FetchResponse {
         url: req.url,
         status: 503,
         content_type: "text/plain".to_string(),
-        body: "No clearnet access and mesh relay is disabled.".to_string(),
+        body: "No clearnet access and no mesh relay peers available.".to_string(),
         source: "unavailable".to_string(),
         latency_ms: elapsed,
     })

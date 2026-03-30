@@ -53,6 +53,7 @@ pub async fn spawn_apis_book_server(book: Arc<ApisBook>) {
         let app = Router::new()
             .route("/api/feed", get(api_feed))
             .route("/api/stats", get(api_stats))
+            .route("/api/pool", get(api_pool_stats))
             .route("/api/stream", get(api_stream))
             .fallback(get(dashboard_html))
             .layer(CorsLayer::permissive())
@@ -108,6 +109,14 @@ async fn api_feed(State(state): State<BookState>, Query(params): Query<FeedQuery
 
 async fn api_stats(State(state): State<BookState>) -> Json<Value> {
     Json(state.book.stats().await)
+}
+
+/// Pool stats endpoint — aggregate web + compute pool status.
+async fn api_pool_stats() -> Json<Value> {
+    let pool = crate::network::pool::PoolManager::new(
+        crate::network::messages::PeerId("dashboard".to_string())
+    );
+    Json(pool.stats().await)
 }
 
 async fn api_stream(

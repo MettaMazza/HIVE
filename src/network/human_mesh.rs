@@ -131,8 +131,10 @@ impl HumanMesh {
     pub async fn broadcast(&self, content: &str) {
         let msg = HumanMessage::new(&self.local_id, &self.display_name, content);
         tracing::info!("[HUMAN MESH] 📤 Broadcasting: {}", &content[..content.len().min(50)]);
-        // In production, this would serialize and send via UDP/QUIC to all peers
-        let _ = msg; // Placeholder until transport layer is implemented
+        // Serialise and queue via offline mesh store-and-forward
+        let payload = serde_json::to_vec(&msg).unwrap_or_default();
+        let offline = crate::network::offline::OfflineMesh::new();
+        let _ = offline.queue_message(None, payload).await;
     }
 
     /// Send a message to a specific human peer.
@@ -144,7 +146,11 @@ impl HumanMesh {
 
         let msg = HumanMessage::new(&self.local_id, &self.display_name, content);
         tracing::info!("[HUMAN MESH] 📤 Sending to {}: {}", peer_id, &content[..content.len().min(50)]);
-        let _ = msg;
+        let payload = serde_json::to_vec(&msg).unwrap_or_default();
+        let target = crate::network::messages::PeerId(peer_id.to_string());
+        let offline = crate::network::offline::OfflineMesh::new();
+        offline.queue_message(Some(target), payload).await
+            .map_err(|e| format!("Queue error: {}", e))?;
         Ok(())
     }
 
