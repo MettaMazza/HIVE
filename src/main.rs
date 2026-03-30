@@ -324,6 +324,11 @@ pub async fn run_app() {
         crate::server::mesh_social::spawn_mesh_social_server(post_store).await;
     }
 
+    // 7i. Spawn Apis Code — the decentralised web IDE
+    {
+        crate::server::apis_code::spawn_apis_code_server().await;
+    }
+
     // 8. Spawn the Native IMAP Background Inbox Listener
     {
         crate::engine::email_watcher::spawn_email_watcher(memory_store.clone()).await;
