@@ -364,6 +364,10 @@ pub struct Engine {
     pub stop_flag: Arc<AtomicBool>,
     /// Target channel for autonomy events — read from HIVE_TARGET_CHANNEL.
     pub autonomy_channel: String,
+    /// Pending synthesis flags — set after user responses, consumed by autonomy task.
+    pub pending_50_turn_synth: Arc<AtomicBool>,
+    pub pending_daily_synth: Arc<AtomicBool>,
+    pub pending_lifetime_synth: Arc<AtomicBool>,
 }
 
 impl Engine {
@@ -404,12 +408,22 @@ impl Engine {
         event_sender: Option<mpsc::Sender<Event>>,
         event_receiver: mpsc::Receiver<Event>,
     ) -> Self {
-        // Read HIVE_MAX_PARALLEL from env, default to 16 (optimized for M3 Ultra 512GB + qwen3.5:35b)
-        let max_parallel: usize = std::env::var("HIVE_MAX_PARALLEL")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(16);
-        tracing::info!("[ENGINE] 🐝 Parallel mode: max {} concurrent ReAct loops (HIVE_MAX_PARALLEL)", max_parallel);
+        // Serial inference mode: when Ollama cannot parallelize the active model,
+        // force semaphore to 1 so all inference calls (chat, autonomy, synthesis) serialize.
+        // Toggle OFF when Ollama adds parallel support for qwen3.5.
+        let serial_mode = std::env::var("HIVE_SERIAL_INFERENCE")
+            .map(|v| v != "false" && v != "0")
+            .unwrap_or(true);
+
+        let max_parallel: usize = if serial_mode {
+            1
+        } else {
+            std::env::var("HIVE_MAX_PARALLEL")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(16)
+        };
+        tracing::info!("[ENGINE] 🐝 Inference mode: serial={}, max {} concurrent slots", serial_mode, max_parallel);
 
         if !platform_providers.is_empty() {
             for name in platform_providers.keys() {
@@ -437,6 +451,9 @@ impl Engine {
             human_mesh: None,
             stop_flag: Arc::new(AtomicBool::new(false)),
             autonomy_channel,
+            pending_50_turn_synth: Arc::new(AtomicBool::new(false)),
+            pending_daily_synth: Arc::new(AtomicBool::new(false)),
+            pending_lifetime_synth: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -544,11 +561,12 @@ impl Engine {
                 handle.abort();
             }
 
-            // PREEMPTION: If a user message arrives while autonomy is actively running,
-            // abort the autonomy ReAct loop immediately to free the GPU.
+            // PREEMPTION: If a user message arrives while autonomy/synthesis is actively running,
+            // abort the task immediately to free the GPU. Any in-flight synthesis is deferred —
+            // the pending flags remain true and will be picked up by the next autonomy trigger.
             if event.author_id != "apis_autonomy" {
                 if let Some(task) = active_autonomy_task.take() {
-                    tracing::warn!("[PREEMPTION] 🛑 User message arrived! Aborting active autonomy ReAct loop to prioritize user.");
+                    tracing::warn!("[PREEMPTION] 🛑 User message arrived! Aborting active autonomy/synthesis task to prioritize user.");
                     task.abort();
                     // CRITICAL: Await the abort to ensure the HTTP stream to Ollama is fully
                     // dropped. Without this, the engine races ahead to the user's ReAct loop
@@ -745,10 +763,40 @@ impl Engine {
                 let autonomy_ch = self.autonomy_channel.clone();
                     let stop_flag_bg = self.stop_flag.clone();
 
+                let pending_50 = self.pending_50_turn_synth.clone();
+                let pending_daily = self.pending_daily_synth.clone();
+                let pending_lifetime = self.pending_lifetime_synth.clone();
+                let synth_provider = self.provider.clone();
+                let synth_memory = self.memory.clone();
+                let synth_scope = event.scope.clone();
+                let synth_drives = self.drives.clone();
+
                 active_autonomy_task = Some(tokio::spawn(async move {
                     // Acquire concurrency permit — waits if all slots are busy
                     let _permit = semaphore_bg.acquire().await.expect("Semaphore closed");
                     tracing::info!("[AUTONOMY] 🎫 Acquired inference slot. Starting autonomy ReAct loop.");
+
+                    // ── SYNTHESIS PHASE: Run pending synthesis BEFORE autonomy ──
+                    // Synthesis runs during idle time alongside autonomy, never during user chat.
+                    // If a user messages during synthesis, the whole task gets aborted (preemption)
+                    // and the pending flags stay true for the next autonomy trigger.
+                    let need_50 = pending_50.swap(false, Ordering::Relaxed);
+                    let need_daily = pending_daily.swap(false, Ordering::Relaxed);
+                    let need_lifetime = pending_lifetime.swap(false, Ordering::Relaxed);
+                    if need_50 || need_daily || need_lifetime {
+                        tracing::info!("[SYNTHESIS] 🧬 Running deferred synthesis before autonomy (50-turn={}, daily={}, lifetime={})",
+                            need_50, need_daily, need_lifetime);
+                        if need_50 {
+                            let _ = crate::agent::synthesis::synthesize_50_turn(synth_provider.clone(), synth_memory.clone(), synth_scope.clone(), Some(synth_drives.clone())).await;
+                        }
+                        if need_daily {
+                            let _ = crate::agent::synthesis::synthesize_24_hr(synth_provider.clone(), synth_memory.clone(), synth_scope.clone(), Some(synth_drives.clone())).await;
+                        }
+                        if need_lifetime {
+                            let _ = crate::agent::synthesis::synthesize_lifetime(synth_provider.clone(), synth_memory.clone(), synth_scope.clone(), Some(synth_drives.clone())).await;
+                        }
+                        tracing::info!("[SYNTHESIS] ✅ Deferred synthesis complete. Proceeding to autonomy ReAct loop.");
+                    }
 
                     // Create telemetry channel INSIDE the spawned task
                     let telemetry_tx = spawn_telemetry_receiver(
@@ -890,11 +938,9 @@ impl Engine {
                 let scope_locks_bg = self.scope_locks.clone();
                 let autonomy_sender_bg = autonomy_sender.clone();
                 let autonomy_handle_bg = autonomy_handle.clone();
-                // Synthesis clones — runs AFTER the ReAct loop to avoid Ollama stream collision
-                let synth_provider = self.provider.clone();
-                let synth_memory = self.memory.clone();
-                let synth_scope = event.scope.clone();
-                let synth_drives = self.drives.clone();
+                let pending_50_bg = self.pending_50_turn_synth.clone();
+                let pending_daily_bg = self.pending_daily_synth.clone();
+                let pending_lifetime_bg = self.pending_lifetime_synth.clone();
 
                 let available = self.concurrency_semaphore.available_permits();
                 tracing::info!("[PARALLEL] 🐝 Spawning event from {} (scope: {}) — {}/{} inference slots available",
@@ -969,35 +1015,20 @@ impl Engine {
                     }
 
                     // ── RELEASE LOCKS BEFORE POST-DELIVERY WORK ──────────
-                    // The scope lock serializes ReAct loops for the same channel/DM.
-                    // Once the response is stored in memory and delivered, the lock
-                    // MUST be released so the next request can start immediately.
-                    // Previously, these were implicitly dropped at end of the async
-                    // block (line ~992), holding the lock through synthesis, training,
-                    // and autonomy timer setup — blocking new requests for 30-70+ seconds.
                     drop(_scope_guard);
                     drop(_permit);
 
-                    // 7.4. Deferred Background Synthesis — spawned AFTER _permit drops.
-                    // Acquires its own inference slot, so it naturally queues behind
-                    // any incoming user messages (user events are already waiting on
-                    // the semaphore by the time synthesis tries to acquire).
-                    if bg_synth_needed || bg_daily_needed {
-                        let synth_semaphore = semaphore_bg.clone();
-                        tokio::spawn(async move {
-                            let _synth_permit = synth_semaphore.acquire().await.expect("Semaphore closed");
-                            tracing::info!("[SYNTHESIS] 🎫 Acquired inference slot for deferred synthesis (50-turn={}, daily={}, lifetime={})",
-                                bg_synth_needed, bg_daily_needed, bg_lifetime_needed);
-                            if bg_synth_needed {
-                                let _ = crate::agent::synthesis::synthesize_50_turn(synth_provider.clone(), synth_memory.clone(), synth_scope.clone(), Some(synth_drives.clone())).await;
-                            }
-                            if bg_daily_needed {
-                                let _ = crate::agent::synthesis::synthesize_24_hr(synth_provider.clone(), synth_memory.clone(), synth_scope.clone(), Some(synth_drives.clone())).await;
-                            }
-                            if bg_lifetime_needed {
-                                let _ = crate::agent::synthesis::synthesize_lifetime(synth_provider.clone(), synth_memory.clone(), synth_scope.clone(), Some(synth_drives.clone())).await;
-                            }
-                        });
+                    // 7.4. Synthesis flags — mark pending, consumed by next autonomy trigger.
+                    // Synthesis no longer runs here. It runs during idle time (autonomy lifecycle)
+                    // to avoid GPU contention with user chat.
+                    if bg_synth_needed {
+                        pending_50_bg.store(true, Ordering::Relaxed);
+                    }
+                    if bg_daily_needed {
+                        pending_daily_bg.store(true, Ordering::Relaxed);
+                    }
+                    if bg_lifetime_needed {
+                        pending_lifetime_bg.store(true, Ordering::Relaxed);
                     }
 
                     // 7.5. Spawn Continuous Autonomy timer (5 min)
