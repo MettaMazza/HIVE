@@ -32,6 +32,8 @@ pub mod apis_chat;
 pub mod apis_book;
 pub mod web_proxy;
 pub mod offline;
+pub mod content_filter;
+pub mod governance;
 #[cfg(test)]
 mod adversarial_tests;
 
@@ -49,6 +51,8 @@ pub use transport::QuicTransport;
 pub use apis_chat::ApisChat;
 pub use apis_book::ApisBook;
 pub use offline::OfflineMesh;
+pub use content_filter::ContentFilter;
+pub use governance::GovernanceEngine;
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
