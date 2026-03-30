@@ -72,9 +72,13 @@ impl Teacher {
         let default_dir = PathBuf::from("./memory/teacher");
 
         let base = base_dir.unwrap_or(default_dir);
-        std::fs::create_dir_all(&base).ok();
+        if let Err(e) = std::fs::create_dir_all(&base) {
+            tracing::error!("[TEACHER] ❌ Failed to create teacher directory '{}': {}", base.display(), e);
+        }
         let archive = base.join("archive");
-        std::fs::create_dir_all(&archive).ok();
+        if let Err(e) = std::fs::create_dir_all(&archive) {
+            tracing::error!("[TEACHER] ❌ Failed to create archive directory '{}': {}", archive.display(), e);
+        }
 
         let golden_path = base.join("golden_buffer.jsonl");
         let preference_path = base.join("preference_buffer.jsonl");
@@ -148,8 +152,13 @@ impl Teacher {
 
     /// Save manifest to disk.
     pub fn save_manifest(&self, manifest: &Manifest) {
-        if let Ok(json) = serde_json::to_string_pretty(manifest) {
-            let _ = std::fs::write(&self.manifest_path, json);
+        match serde_json::to_string_pretty(manifest) {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(&self.manifest_path, json) {
+                    tracing::error!("[TEACHER] ❌ Failed to write manifest '{}': {}", self.manifest_path.display(), e);
+                }
+            }
+            Err(e) => tracing::error!("[TEACHER] ❌ Failed to serialize manifest: {}", e),
         }
     }
 

@@ -41,17 +41,27 @@ impl Teacher {
             attempts: 1,
         };
 
-        if let Ok(json) = serde_json::to_string(&example)
-            && let Ok(mut file) = tokio::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&self.golden_path)
-                .await
-            {
-                let _ = file.write_all(format!("{}\n", json).as_bytes()).await;
-                self.golden_count.fetch_add(1, Ordering::Relaxed);
-                tracing::info!("[TEACHER] 🏆 Golden example captured ({} buffered)", self.golden_count.load(Ordering::Relaxed));
+        match serde_json::to_string(&example) {
+            Ok(json) => {
+                match tokio::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&self.golden_path)
+                    .await
+                {
+                    Ok(mut file) => {
+                        if let Err(e) = file.write_all(format!("{}\n", json).as_bytes()).await {
+                            tracing::error!("[TEACHER] ❌ Failed to write golden example to '{}': {}", self.golden_path.display(), e);
+                        } else {
+                            self.golden_count.fetch_add(1, Ordering::Relaxed);
+                            tracing::info!("[TEACHER] 🏆 Golden example captured ({} buffered)", self.golden_count.load(Ordering::Relaxed));
+                        }
+                    }
+                    Err(e) => tracing::error!("[TEACHER] ❌ Failed to open golden buffer '{}': {}", self.golden_path.display(), e),
+                }
             }
+            Err(e) => tracing::error!("[TEACHER] ❌ Failed to serialize golden example: {}", e),
+        }
     }
 }
 

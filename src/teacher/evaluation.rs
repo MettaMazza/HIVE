@@ -53,46 +53,66 @@ impl Teacher {
             total_attempts,
         };
 
-        if let Ok(json) = serde_json::to_string(&pair)
-            && let Ok(mut file) = tokio::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&self.preference_path)
-                .await
-            {
-                let _ = file.write_all(format!("{}\n", json).as_bytes()).await;
-                let current_count = self.preference_count.fetch_add(1, Ordering::Relaxed) + 1;
-                tracing::info!("[TEACHER] ⚖️ Preference pair captured [{}] ({} buffered)", failure_category, current_count);
-                
-                // --- ORPO AUTONOMOUS FINE-TUNING DAEMON ---
-                // Native 2026 test-time compute scaling: Once we hit the dynamic pair threshold,
-                // securely spawn the Turing ALU to physically execute the preference tuning bash script
-                // against the JSONL buffer without interrupting the main ReAct loop socket.
-                if current_count > 0 && current_count % crate::teacher::PAIR_THRESHOLD == 0 {
-                    tracing::warn!("[TEACHER] 🧠 Threshold reached ({} pairs). Spawning autonomous ORPO alignment daemon...", current_count);
-                    
-                    let alu = crate::computer::alu::ALU::new(Some(std::path::PathBuf::from("memory/turing_grid/orpo_cell")));
-                    let script = r#"
-set -e
-echo "[ORPO DAEMON] Initiating autonomous LoRA preference tuning natively..."
-echo "Pairs collected: $PIPELINE_INPUT"
-# In a full v1.1 production environment, this calls unsloth:
-# python3 memory/scripts/unsloth_orpo.py --dataset memory/teacher/preference_buffer.jsonl --output models/lora_latest
-echo "[ORPO DAEMON] Weights seamlessly shifted. Resume standard operations."
-"#;
-                    
-                    let script_string = script.to_string();
-                    tokio::spawn(async move {
-                        let cells = vec![
-                            ("bash".to_string(), format!("export PIPELINE_INPUT='{}'\n{}", current_count, script_string))
-                        ];
-                        match alu.execute_pipeline(&cells).await {
-                            Ok(res) => tracing::info!("[TEACHER] Autonomous Alignment Complete:\n{}", res),
-                            Err(e) => tracing::error!("[TEACHER] Autonomous Alignment Failed:\n{}", e),
+        match serde_json::to_string(&pair) {
+            Ok(json) => {
+                match tokio::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&self.preference_path)
+                    .await
+                {
+                    Ok(mut file) => {
+                        if let Err(e) = file.write_all(format!("{}\n", json).as_bytes()).await {
+                            tracing::error!("[TEACHER] ❌ Failed to write preference pair to '{}': {}", self.preference_path.display(), e);
+                            return;
                         }
-                    });
+                        let current_count = self.preference_count.fetch_add(1, Ordering::Relaxed) + 1;
+                        tracing::info!("[TEACHER] ⚖️ Preference pair captured [{}] ({} buffered)", failure_category, current_count);
+
+                        // --- ORPO AUTONOMOUS ALIGNMENT DAEMON ---
+                        // Once we accumulate PAIR_THRESHOLD preference pairs, spawn the real
+                        // training pipeline in micro mode to immediately align on the new data.
+                        if current_count > 0 && current_count % crate::teacher::PAIR_THRESHOLD == 0 {
+                            tracing::warn!("[TEACHER] 🧠 Threshold reached ({} pairs). Spawning ORPO alignment...", current_count);
+
+                            let python_bin = std::env::var("HIVE_PYTHON_BIN")
+                                .unwrap_or_else(|_| "python3".to_string());
+                            let backend = std::env::var("HIVE_TRAINING_BACKEND")
+                                .unwrap_or_else(|_| "auto".to_string());
+
+                            tokio::spawn(async move {
+                                let output = tokio::process::Command::new(&python_bin)
+                                    .arg("training/train_teacher.py")
+                                    .arg("--micro")
+                                    .arg("--stack")
+                                    .arg("--backend")
+                                    .arg(&backend)
+                                    .arg("--examples")
+                                    .arg(current_count.to_string())
+                                    .output()
+                                    .await;
+
+                                match output {
+                                    Ok(result) => {
+                                        let stdout = String::from_utf8_lossy(&result.stdout);
+                                        let stderr = String::from_utf8_lossy(&result.stderr);
+                                        if result.status.success() {
+                                            tracing::info!("[TEACHER] ✅ ORPO alignment complete:\n{}", stdout);
+                                        } else {
+                                            tracing::error!("[TEACHER] ❌ ORPO alignment failed (exit {}):\nstdout: {}\nstderr: {}",
+                                                result.status, stdout, stderr);
+                                        }
+                                    }
+                                    Err(e) => tracing::error!("[TEACHER] ❌ Failed to spawn ORPO training: {}", e),
+                                }
+                            });
+                        }
+                    }
+                    Err(e) => tracing::error!("[TEACHER] ❌ Failed to open preference buffer '{}': {}", self.preference_path.display(), e),
                 }
             }
+            Err(e) => tracing::error!("[TEACHER] ❌ Failed to serialize preference pair: {}", e),
+        }
     }
 }
 

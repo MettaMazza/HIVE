@@ -653,13 +653,34 @@ impl Engine {
                         let _ = platform.send(response).await;
                     }
                     let sleep_cycle = self.sleep_cycle.clone();
+                    let result_platform = event.platform.clone();
+                    let result_scope = event.scope.clone();
+                    let platforms_for_sleep = self.platforms.clone();
                     tokio::spawn(async move {
                         match sleep_cycle.enter_sleep().await {
                             Ok(report) => {
                                 tracing::info!("[SLEEP] ✅ Sleep cycle complete: {}", report);
+                                let response = Response {
+                                    platform: result_platform,
+                                    target_scope: result_scope,
+                                    text: format!("☀️ **Sleep complete!** {}", report),
+                                    is_telemetry: false,
+                                };
+                                if let Some(platform) = platforms_for_sleep.get(response.platform.split(':').next().unwrap_or("")) {
+                                    let _ = platform.send(response).await;
+                                }
                             }
                             Err(e) => {
                                 tracing::error!("[SLEEP] ❌ Sleep cycle failed: {}", e);
+                                let response = Response {
+                                    platform: result_platform,
+                                    target_scope: result_scope,
+                                    text: format!("❌ **Sleep cycle failed:** {}", e),
+                                    is_telemetry: false,
+                                };
+                                if let Some(platform) = platforms_for_sleep.get(response.platform.split(':').next().unwrap_or("")) {
+                                    let _ = platform.send(response).await;
+                                }
                             }
                         }
                     });

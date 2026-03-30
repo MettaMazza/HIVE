@@ -212,46 +212,69 @@ impl SleepCycle {
         let manifest = self.teacher.load_manifest();
         let parent = manifest.current.clone();
 
-        // Unload the Ollama model before training to free Metal/IOSurface handles.
-        // MLX LoRA training needs Metal buffers, and the system has a hard 1024
-        // IOSurface client limit. Keeping the 35B model loaded in Ollama while
-        // simultaneously running MLX training can exhaust this limit, especially
-        // when other apps (Chrome, etc.) have leaked IOSurface handles.
-        // The model reloads automatically on next inference call.
-        let ollama_host = std::env::var("OLLAMA_HOST")
-            .unwrap_or_else(|_| "http://localhost:11434".to_string());
-        let model_name = std::env::var("HIVE_MODEL")
-            .unwrap_or_else(|_| "qwen3.5:35b".to_string());
+        let python_bin = std::env::var("HIVE_PYTHON_BIN")
+            .unwrap_or_else(|_| "python3".to_string());
+        let training_backend = std::env::var("HIVE_TRAINING_BACKEND")
+            .unwrap_or_else(|_| "auto".to_string());
 
-        tracing::info!("💤 [SLEEP] Unloading Ollama model '{}' to free Metal resources for training...", model_name);
-        let unload_payload = serde_json::json!({
-            "model": model_name,
-            "keep_alive": 0
-        });
-        let unload_result = reqwest::Client::new()
-            .post(format!("{}/api/generate", ollama_host))
-            .json(&unload_payload)
-            .send()
-            .await;
-        match &unload_result {
-            Ok(resp) if resp.status().is_success() => {
-                tracing::info!("💤 [SLEEP] ✅ Ollama model unloaded — Metal resources freed");
-            }
-            Ok(resp) => {
-                tracing::warn!("💤 [SLEEP] Ollama unload returned {}, proceeding anyway", resp.status());
-            }
-            Err(e) => {
-                tracing::warn!("💤 [SLEEP] Could not unload Ollama model: {}, proceeding anyway", e);
-            }
+        // Validate training script exists before spawning
+        let script_path = std::path::Path::new("training/train_teacher.py");
+        if !script_path.exists() {
+            self.teacher.release_training_lock().await;
+            return Err(format!(
+                "Training script not found at '{}'. Ensure the training directory is present.",
+                script_path.display()
+            ));
         }
 
-        // Brief pause to let the OS reclaim IOSurface handles
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        // macOS: Unload the Ollama model to free Metal/IOSurface handles.
+        // MLX LoRA training needs Metal buffers, and the system has a hard 1024
+        // IOSurface client limit. On Linux/Windows this is unnecessary.
+        #[cfg(target_os = "macos")]
+        {
+            let ollama_host = std::env::var("OLLAMA_HOST")
+                .or_else(|_| std::env::var("HIVE_OLLAMA_URL"))
+                .unwrap_or_else(|_| "http://localhost:11434".to_string());
+            let model_name = std::env::var("HIVE_MODEL")
+                .unwrap_or_else(|_| "qwen3.5:35b".to_string());
 
-        let output = tokio::process::Command::new("python3.12")
+            tracing::info!("💤 [SLEEP] Unloading Ollama model '{}' to free Metal resources for training...", model_name);
+            let unload_payload = serde_json::json!({
+                "model": model_name,
+                "keep_alive": 0
+            });
+            let unload_result = reqwest::Client::new()
+                .post(format!("{}/api/generate", ollama_host))
+                .json(&unload_payload)
+                .send()
+                .await;
+            match &unload_result {
+                Ok(resp) if resp.status().is_success() => {
+                    tracing::info!("💤 [SLEEP] ✅ Ollama model unloaded — Metal resources freed");
+                }
+                Ok(resp) => {
+                    tracing::warn!("💤 [SLEEP] Ollama unload returned {}, proceeding anyway", resp.status());
+                }
+                Err(e) => {
+                    tracing::warn!("💤 [SLEEP] Could not unload Ollama model: {}, proceeding anyway", e);
+                }
+            }
+            // Brief pause to let macOS reclaim IOSurface handles
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            tracing::info!("💤 [SLEEP] Non-macOS platform — skipping Ollama model unload");
+        }
+
+        tracing::info!("💤 [SLEEP] Launching training: backend={}, python={}", training_backend, python_bin);
+
+        let output = tokio::process::Command::new(&python_bin)
             .arg("training/train_teacher.py")
             .arg("--micro")
             .arg("--stack")
+            .arg("--backend")
+            .arg(&training_backend)
             .arg("--examples")
             .arg(selected_count.to_string())
             .arg("--lr")
@@ -262,14 +285,22 @@ impl SleepCycle {
             .arg(self.config.micro_max_seq_len.to_string())
             .output()
             .await
-            .map_err(|e| format!("Failed to execute training script: {}", e))?;
+            .map_err(|e| format!("Failed to execute training script '{}': {}", python_bin, e))?;
 
         let duration = start.elapsed().as_secs_f64();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
 
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::error!("💤 [SLEEP] ❌ Training failed (exit {}):\nstdout: {}\nstderr: {}",
+                output.status, stdout, stderr);
             self.teacher.release_training_lock().await;
-            return Err(format!("Micro-training failed: {}", stderr));
+            return Err(format!("Micro-training failed (exit {}): {}", output.status, stderr));
+        }
+
+        // Log training output on success
+        if !stdout.is_empty() {
+            tracing::info!("💤 [SLEEP] Training output:\n{}", stdout);
         }
 
         // Read updated manifest
@@ -447,15 +478,23 @@ impl SleepCycle {
             attempts: 1, // Identity reflections are always "first pass"
         };
 
-        if let Ok(json) = serde_json::to_string(&identity_example) {
-            if let Ok(mut file) = tokio::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&self.teacher.golden_path)
-                .await
-            {
-                let _ = file.write_all(format!("{}\n", json).as_bytes()).await;
+        match serde_json::to_string(&identity_example) {
+            Ok(json) => {
+                match tokio::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&self.teacher.golden_path)
+                    .await
+                {
+                    Ok(mut file) => {
+                        if let Err(e) = file.write_all(format!("{}\n", json).as_bytes()).await {
+                            tracing::error!("[TEACHER] ❌ Failed to write identity reflection: {}", e);
+                        }
+                    }
+                    Err(e) => tracing::error!("[TEACHER] ❌ Failed to open golden buffer for identity reflection: {}", e),
+                }
             }
+            Err(e) => tracing::error!("[TEACHER] ❌ Failed to serialize identity reflection: {}", e),
         }
 
         Ok(())

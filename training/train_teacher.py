@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """
-HIVE Teacher Module — MLX Training Pipeline
+HIVE Teacher Module — Multi-Backend Training Pipeline
 Runs mixed ORPO + SFT micro-training on golden examples and preference pairs.
-Designed for Apple Silicon (M3 Ultra) via mlx-lm-lora.
+
+Backends:
+  - MLX (default on macOS/Apple Silicon) via mlx-lm-lora
+  - Torch (Linux/Windows/fallback) via HuggingFace Transformers + PEFT
 
 Usage:
-    python3 training/train_teacher.py             # Full training
-    python3 training/train_teacher.py --dry-run    # Parse validation only
-    python3 training/train_teacher.py --micro      # Micro sleep training (1-2 examples)
-    python3 training/train_teacher.py --micro --stack  # Stack on previous adapter
+    python3 training/train_teacher.py                        # Auto-detect backend
+    python3 training/train_teacher.py --dry-run               # Parse validation only
+    python3 training/train_teacher.py --micro --stack          # Micro sleep training
+    python3 training/train_teacher.py --backend torch          # Force torch backend
+    python3 training/train_teacher.py --backend mlx            # Force MLX backend
 """
 
 import argparse
@@ -16,13 +20,14 @@ import json
 import os
 import sys
 import shutil
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from collections import Counter
 
 # ─── Configuration ───────────────────────────────────────────────────────────
 
-BASE_MODEL = "mlx-community/Qwen3.5-35B-A3B-4bit"
+MLX_BASE_MODEL = os.environ.get("HIVE_TRAINING_MODEL_MLX", "mlx-community/Qwen3.5-35B-A3B-4bit")
+TORCH_BASE_MODEL = os.environ.get("HIVE_TRAINING_MODEL_TORCH", "Qwen/Qwen3.5-35B-A3B")
 MAX_SEQ_LEN = 16384
 LORA_R = 8
 LORA_ALPHA = 8
@@ -40,6 +45,40 @@ ARCHIVE_DIR = TEACHER_DIR / "archive"
 MANIFEST_PATH = TEACHER_DIR / "manifest.json"
 OUTPUT_DIR = Path("./training/output")
 
+# ─── Backend Detection ───────────────────────────────────────────────────────
+
+def detect_backend(requested: str = "auto") -> str:
+    """Auto-detect training backend: mlx (macOS default) > torch (Linux/Windows).
+    
+    Returns: 'mlx' or 'torch'
+    """
+    backend = os.environ.get("HIVE_TRAINING_BACKEND", requested)
+    if backend in ("mlx", "torch"):
+        print(f"[TEACHER] Backend forced: {backend}")
+        return backend
+
+    # macOS with Apple Silicon → MLX is ALWAYS the default
+    if sys.platform == "darwin":
+        try:
+            import mlx  # noqa: F401
+            print("[TEACHER] Backend auto-detected: mlx (macOS/Apple Silicon)")
+            return "mlx"
+        except ImportError:
+            print("[TEACHER] ⚠️ macOS detected but MLX not installed — falling back to torch", file=sys.stderr)
+
+    # Linux/Windows → torch (auto-detects CUDA/CPU at runtime)
+    try:
+        import torch  # noqa: F401
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        print(f"[TEACHER] Backend auto-detected: torch (device={device})")
+        return "torch"
+    except ImportError:
+        pass
+
+    print("[TEACHER] ❌ No training backend available.", file=sys.stderr)
+    print("[TEACHER] Install mlx-lm-lora (macOS) or transformers+peft+trl (Linux/Windows).", file=sys.stderr)
+    sys.exit(1)
+
 # ─── Data Loading ────────────────────────────────────────────────────────────
 
 def load_jsonl(path: Path, max_items: int = None) -> list:
@@ -48,12 +87,13 @@ def load_jsonl(path: Path, max_items: int = None) -> list:
         return []
     items = []
     with open(path) as f:
-        for line in f:
+        for i, line in enumerate(f):
             line = line.strip()
             if line:
                 try:
                     items.append(json.loads(line))
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as e:
+                    print(f"[TEACHER] ⚠️ Skipping malformed JSONL line {i+1} in {path}: {e}", file=sys.stderr)
                     continue
     if max_items:
         items = items[-max_items:]  # Take most recent
@@ -63,11 +103,14 @@ def load_jsonl(path: Path, max_items: int = None) -> list:
 def load_manifest() -> dict:
     """Load or create manifest."""
     if MANIFEST_PATH.exists():
-        with open(MANIFEST_PATH) as f:
-            return json.load(f)
+        try:
+            with open(MANIFEST_PATH) as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            print(f"[TEACHER] ⚠️ Failed to load manifest: {e}. Using defaults.", file=sys.stderr)
     return {
-        "current": BASE_MODEL,
-        "base": BASE_MODEL,
+        "current": MLX_BASE_MODEL,
+        "base": MLX_BASE_MODEL,
         "history": [],
         "retention": 5
     }
@@ -75,8 +118,12 @@ def load_manifest() -> dict:
 
 def save_manifest(manifest: dict):
     """Save manifest to disk."""
-    with open(MANIFEST_PATH, "w") as f:
-        json.dump(manifest, f, indent=2)
+    try:
+        with open(MANIFEST_PATH, "w") as f:
+            json.dump(manifest, f, indent=2)
+    except IOError as e:
+        print(f"[TEACHER] ❌ Failed to save manifest: {e}", file=sys.stderr)
+        sys.exit(1)
 
 # ─── Data Formatting ─────────────────────────────────────────────────────────
 
@@ -101,43 +148,32 @@ def format_golden_for_sft(examples: list) -> list:
 
 
 def strip_system_prompt(prompt: str, max_chars: int = 2000) -> str:
-    """Extract the identity/persona section from the full kernel prompt.
-    
-    The full prompt is ~110K chars: HUD + kernel laws + tool defs + identity.
-    For training, we only want the identity block so the model learns
-    HOW Apis communicates, not the system architecture.
-    
-    Extracts from 'You are Apis' to the next '###' heading.
-    """
-    # Find the identity section
+    """Extract the identity/persona section from the full kernel prompt."""
     start = prompt.find("You are Apis")
     if start == -1:
-        # Fallback: try other identity markers
         for marker in ["# Identity", "## Identity", "# Persona"]:
             start = prompt.find(marker)
             if start != -1:
                 break
-    
+
     if start == -1:
         return "You are Apis, the intelligent core of the HIVE Engine."
-    
-    # Find the end: next section header after identity starts
+
     remainder = prompt[start:]
     end_markers = ["### Self-Supervised", "### Capabilities and Limits",
                    "### Available Tools", "## Tool Definitions"]
-    
+
     end = len(remainder)
     for marker in end_markers:
         idx = remainder.find(marker)
         if idx > 0 and idx < end:
             end = idx
-    
+
     identity = remainder[:end].rstrip()
-    
-    # Hard cap
+
     if len(identity) > max_chars:
         identity = identity[:max_chars].rstrip()
-    
+
     return identity
 
 
@@ -188,6 +224,134 @@ def get_next_version(manifest: dict) -> str:
     date_str = datetime.now().strftime("%Y%m%d")
     return f"apis-v{version_num}-{date_str}"
 
+# ─── MLX Training Backend ───────────────────────────────────────────────────
+
+def train_mlx(sft_data: list, train_from: str, resume_adapter: str,
+              lr: float, epochs: int, max_seq_len: int):
+    """Train via MLX LoRA (Apple Silicon native). Existing, proven path."""
+    sft_cmd = (
+        f"python3 -m mlx_lm.lora "
+        f"--model {train_from} "
+        f"--data {OUTPUT_DIR} "
+        f"--train "
+        f"--num-layers {LORA_R} "
+        f"--learning-rate {lr} "
+        f"--iters {epochs} "
+        f"--batch-size 1 "
+        f"--max-seq-length {max_seq_len} "
+        f"--adapter-path {OUTPUT_DIR}/adapters"
+    )
+    if resume_adapter:
+        sft_cmd += f" --resume-adapter-file {resume_adapter}/adapters.safetensors"
+
+    print(f"[TEACHER] Running MLX: {sft_cmd}")
+    exit_code = os.system(sft_cmd)
+    if exit_code != 0:
+        print(f"[TEACHER] ❌ MLX SFT training failed with exit code {exit_code}", file=sys.stderr)
+        sys.exit(1)
+
+# ─── Torch Training Backend ─────────────────────────────────────────────────
+
+def train_torch(sft_data: list, train_from: str, resume_adapter: str,
+                lr: float, epochs: int, max_seq_len: int):
+    """Train via HuggingFace Transformers + PEFT (Linux/Windows/CPU)."""
+    try:
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments
+        from peft import LoraConfig, get_peft_model, PeftModel
+        from trl import SFTTrainer, SFTConfig
+        from datasets import Dataset
+    except ImportError as e:
+        print(f"[TEACHER] ❌ Torch backend missing dependencies: {e}", file=sys.stderr)
+        print("[TEACHER] Install: pip install -r training/requirements_torch.txt", file=sys.stderr)
+        sys.exit(1)
+
+    # Device detection
+    if torch.cuda.is_available():
+        device = "cuda"
+        dtype = torch.bfloat16
+        print(f"[TEACHER] Torch device: CUDA ({torch.cuda.get_device_name(0)})")
+    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        device = "mps"
+        dtype = torch.float32
+        print("[TEACHER] Torch device: MPS (Apple Silicon via PyTorch)")
+    else:
+        device = "cpu"
+        dtype = torch.float32
+        print("[TEACHER] Torch device: CPU (training will be slow)")
+
+    model_id = os.environ.get("HIVE_TRAINING_MODEL_TORCH", train_from)
+    print(f"[TEACHER] Loading model: {model_id} (dtype={dtype})")
+
+    tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    model = AutoModelForCausalLM.from_pretrained(
+        model_id,
+        torch_dtype=dtype,
+        device_map=device if device == "cuda" else None,
+        trust_remote_code=True,
+    )
+    if device == "mps":
+        model = model.to("mps")
+
+    # Resume from previous adapter if stacking
+    if resume_adapter:
+        adapter_path = Path(resume_adapter) / "adapters"
+        if adapter_path.exists():
+            print(f"[TEACHER] Loading previous adapter for stacking: {adapter_path}")
+            model = PeftModel.from_pretrained(model, str(adapter_path))
+            model = model.merge_and_unload()
+
+    # Apply LoRA
+    lora_config = LoraConfig(
+        r=LORA_R,
+        lora_alpha=LORA_ALPHA,
+        target_modules=["q_proj", "v_proj", "k_proj", "o_proj"],
+        lora_dropout=0.05,
+        bias="none",
+        task_type="CAUSAL_LM",
+    )
+    model = get_peft_model(model, lora_config)
+    model.print_trainable_parameters()
+
+    # Prepare dataset
+    sft_path = OUTPUT_DIR / "train.jsonl"
+    dataset = Dataset.from_json(str(sft_path))
+
+    # Training config
+    adapter_output = str(OUTPUT_DIR / "adapters")
+    training_args = SFTConfig(
+        output_dir=adapter_output,
+        num_train_epochs=epochs,
+        per_device_train_batch_size=1,
+        learning_rate=lr,
+        max_seq_length=max_seq_len,
+        logging_steps=1,
+        save_strategy="no",
+        fp16=(device == "cuda" and dtype == torch.float16),
+        bf16=(device == "cuda" and dtype == torch.bfloat16),
+        report_to="none",
+    )
+
+    trainer = SFTTrainer(
+        model=model,
+        train_dataset=dataset,
+        processing_class=tokenizer,
+        args=training_args,
+    )
+
+    print("[TEACHER] Starting Torch training...")
+    trainer.train()
+
+    # Save adapter
+    print(f"[TEACHER] Saving adapter to {adapter_output}")
+    model.save_pretrained(adapter_output)
+    tokenizer.save_pretrained(adapter_output)
+
+    print("[TEACHER] ✅ Torch training complete")
+
 # ─── Main Training Entry ─────────────────────────────────────────────────────
 
 def parse_args():
@@ -199,12 +363,17 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=None, help="Override learning rate")
     parser.add_argument("--epochs", type=int, default=None, help="Override epoch count")
     parser.add_argument("--max-seq-len", type=int, default=None, help="Override max sequence length")
+    parser.add_argument("--backend", choices=["auto", "mlx", "torch"], default="auto",
+                       help="Training backend (default: auto-detect)")
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
     dry_run = args.dry_run
+
+    # Detect backend
+    backend = detect_backend(args.backend)
 
     # Apply micro-mode overrides
     global LEARNING_RATE, NUM_EPOCHS, MAX_SEQ_LEN, MAX_GOLDEN, MAX_PAIRS
@@ -226,7 +395,7 @@ def main():
 
     print("=" * 60)
     print("[TEACHER] HIVE Self-Supervised Training Pipeline")
-    print(f"[TEACHER] Mode: {mode_label}")
+    print(f"[TEACHER] Mode: {mode_label} | Backend: {backend}")
     if args.micro:
         print(f"[TEACHER] Micro config: lr={LEARNING_RATE}, epochs={NUM_EPOCHS}, max_examples={MAX_GOLDEN}, seq_len={MAX_SEQ_LEN}")
         if args.stack:
@@ -241,8 +410,8 @@ def main():
     print(f"[TEACHER] Preference pairs: {len(pairs)}")
 
     if len(golden) == 0 and len(pairs) == 0:
-        print("[TEACHER] No training data available. Exiting.")
-        return
+        print("[TEACHER] ❌ No training data available. Exiting.", file=sys.stderr)
+        sys.exit(1)
 
     # 2. Category distribution
     if pairs:
@@ -259,7 +428,7 @@ def main():
     print(f"[TEACHER] ORPO pairs: {len(orpo_data)}")
 
     if dry_run:
-        print("[TEACHER] Dry run complete. Data parsed successfully.")
+        print("[TEACHER] ✅ Dry run complete. Data parsed successfully.")
         if sft_data:
             print(f"[TEACHER] Sample SFT: {json.dumps(sft_data[0], indent=2)[:500]}")
         if orpo_data:
@@ -281,16 +450,17 @@ def main():
 
     print(f"[TEACHER] Datasets written to {OUTPUT_DIR}")
 
-    # 5. Run MLX LoRA training
+    # 5. Resolve model and adapter for training
     manifest = load_manifest()
     new_version = get_next_version(manifest)
     parent = manifest["current"]
 
-    # ALWAYS train from the base model. For cumulative stacking, we use
-    # --resume-adapter-file to load the previous adapter weights on top.
-    # The version labels (e.g. "apis-v1-20260327") are NOT model paths.
-    train_from = manifest.get("base", BASE_MODEL)
-    
+    # Select base model per backend
+    if backend == "mlx":
+        train_from = manifest.get("base", MLX_BASE_MODEL)
+    else:
+        train_from = os.environ.get("HIVE_TRAINING_MODEL_TORCH", TORCH_BASE_MODEL)
+
     # Find the latest adapter for stacking
     resume_adapter = None
     if args.stack and manifest.get("latest_adapter"):
@@ -300,52 +470,38 @@ def main():
             resume_adapter = str(adapter_dir)
             print(f"[TEACHER] Stacking on adapter: {resume_adapter}")
         else:
-            print(f"[TEACHER] No previous adapter found, training from scratch")
+            print(f"[TEACHER] ⚠️ No previous adapter found at {adapter_dir}, training from scratch")
 
     print(f"[TEACHER] Training {new_version} (model: {train_from}, parent: {parent})")
     print(f"[TEACHER] Config: lr={LEARNING_RATE}, epochs={NUM_EPOCHS}, r={LORA_R}, seq_len={MAX_SEQ_LEN}")
 
-    # MLX LoRA SFT training
+    # 6. Run training via selected backend
     if sft_data:
-        sft_cmd = (
-            f"python3.12 -m mlx_lm.lora "
-            f"--model {train_from} "
-            f"--data {OUTPUT_DIR} "
-            f"--train "
-            f"--num-layers {LORA_R} "
-            f"--learning-rate {LEARNING_RATE} "
-            f"--iters {NUM_EPOCHS} "
-            f"--batch-size 1 "
-            f"--max-seq-length {MAX_SEQ_LEN} "
-            f"--adapter-path {OUTPUT_DIR}/adapters"
-        )
-        # Append resume flag for cumulative stacking
-        if resume_adapter:
-            sft_cmd += f" --resume-adapter-file {resume_adapter}/adapters.safetensors"
-        print(f"[TEACHER] Running: {sft_cmd}")
-        exit_code = os.system(sft_cmd)
-        if exit_code != 0:
-            print(f"[TEACHER] SFT training failed with exit code {exit_code}")
-            sys.exit(1)
+        if backend == "mlx":
+            train_mlx(sft_data, train_from, resume_adapter,
+                      LEARNING_RATE, NUM_EPOCHS, MAX_SEQ_LEN)
+        else:
+            train_torch(sft_data, train_from, resume_adapter,
+                        LEARNING_RATE, NUM_EPOCHS, MAX_SEQ_LEN)
 
-    # 6. Version the adapter for cumulative stacking
-    # Qwen 3.5 MoE (hybrid SSM/attention) can't be converted to GGUF via any
-    # available tool. Instead, we version adapters and use --resume-adapter-file
-    # for cumulative stacking. The Ollama base model stays the same, while
-    # the adapters compound over sleep cycles.
+    # 7. Version the adapter for cumulative stacking
     versioned_adapter_dir = OUTPUT_DIR / "adapters" / new_version
     versioned_adapter_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Copy current adapter to versioned location
-    import shutil
+
     for f_name in ["adapters.safetensors", "adapter_config.json"]:
         src = OUTPUT_DIR / "adapters" / f_name
         if src.exists():
             shutil.copy2(str(src), str(versioned_adapter_dir / f_name))
-    
+
+    # Torch saves differently — also copy PEFT files
+    for f_name in ["adapter_model.safetensors", "adapter_config.json"]:
+        src = OUTPUT_DIR / "adapters" / f_name
+        if src.exists():
+            shutil.copy2(str(src), str(versioned_adapter_dir / f_name))
+
     print(f"[TEACHER] 💾 Adapter saved: {versioned_adapter_dir}")
 
-    # 7. Update manifest (track adapter path, not Ollama model)
+    # 8. Update manifest
     manifest["history"].append({
         "version": new_version,
         "date": datetime.now().isoformat(),
@@ -353,15 +509,16 @@ def main():
         "pair_count": len(pairs),
         "parent": parent,
         "adapter_path": str(versioned_adapter_dir),
+        "backend": backend,
     })
     manifest["current"] = new_version
     manifest["latest_adapter"] = str(OUTPUT_DIR / "adapters")
     save_manifest(manifest)
 
-    # 8. Archive processed data
+    # 9. Archive processed data
     archive_processed(len(golden), len(pairs))
 
-    # 9. Cleanup old adapters (keep last N)
+    # 10. Cleanup old adapters (keep last N)
     retention = manifest.get("retention", 5)
     if len(manifest["history"]) > retention:
         old_versions = manifest["history"][:-retention]
@@ -373,7 +530,7 @@ def main():
         manifest["history"] = manifest["history"][-retention:]
         save_manifest(manifest)
 
-    print(f"[TEACHER] ✅ Training complete: {new_version}")
+    print(f"[TEACHER] ✅ Training complete: {new_version} (backend: {backend})")
     print(f"[TEACHER] Golden: {len(golden)} | Pairs: {len(pairs)}")
 
 
