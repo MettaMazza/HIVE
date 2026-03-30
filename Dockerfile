@@ -51,6 +51,7 @@ RUN pip3 install --no-cache-dir --break-system-packages diffusers transformers a
 # ── Layer 2: System tools (can be modified without busting pip cache) ─
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash git cargo rustc findutils grep tar lsof procps \
+    chromium \
     && curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
        -o /usr/share/keyrings/cloudflare-main.gpg \
     && echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main" \
@@ -74,6 +75,9 @@ COPY persona.toml.example .hive/persona.toml
 # Copy Flux scripts (MUST be after WORKDIR so they land at /home/hive/src/computer/)
 COPY src/computer/generate_image.py src/computer/generate_image.py
 COPY src/computer/flux_server.py src/computer/flux_server.py
+
+# Copy source code so codebase_read can inspect the engine
+COPY src/ src/
 
 # Create required directories
 RUN mkdir -p memory .hive training && \
@@ -119,6 +123,7 @@ echo "🐝 ═══════════════════════
 
 # Disable auto-open inside container (no browser)
 export HIVE_AUTO_OPEN=false
+export HIVE_PROJECT_DIR=/home/hive
 
 # Point at host Ollama
 export OLLAMA_BASE_URL="${OLLAMA_URL}"
@@ -134,7 +139,7 @@ ENTRYPOINT
 RUN chmod +x /usr/local/bin/start-hive.sh
 
 # Expose all ports
-EXPOSE 3030 3031 3032 3033 3034 3035 8421 8422 8480
+EXPOSE 3030 3031 3032 3033 3034 3035 3037 3038 8421 8422 8480
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

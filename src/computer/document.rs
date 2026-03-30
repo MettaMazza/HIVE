@@ -215,11 +215,7 @@ impl DocumentComposer {
                     headless: true,
                     sandbox: false,
                     idle_browser_timeout: std::time::Duration::from_secs(30),
-                    path: if cfg!(target_os = "macos") {
-                        Some(std::path::PathBuf::from("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"))
-                    } else {
-                        None
-                    },
+                    path: detect_chrome_path(),
                     ..Default::default()
                 }) {
                     Ok(b) => {
@@ -506,6 +502,32 @@ impl DocumentComposer {
         let json = fs::read_to_string(&path).await?;
         Ok(serde_json::from_str(&json)?)
     }
+}
+
+/// Detect Chrome/Chromium binary path across platforms.
+fn detect_chrome_path() -> Option<std::path::PathBuf> {
+    let candidates: &[&str] = if cfg!(target_os = "macos") {
+        &[
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        ]
+    } else {
+        &[
+            "/usr/bin/chromium",
+            "/usr/bin/chromium-browser",
+            "/usr/bin/google-chrome",
+            "/usr/bin/google-chrome-stable",
+        ]
+    };
+
+    for path in candidates {
+        if std::path::Path::new(path).exists() {
+            tracing::info!("[PDF] Found browser at: {}", path);
+            return Some(std::path::PathBuf::from(path));
+        }
+    }
+    tracing::warn!("[PDF] No Chrome/Chromium found, falling back to auto-detection");
+    None
 }
 
 // Simple HTML Escaper
