@@ -1,0 +1,53 @@
+# ══════════════════════════════════════════════════════════════════════
+#  🐝 HIVE — Docker Compose (One-Click Launch)
+# ══════════════════════════════════════════════════════════════════════
+# Usage: docker compose up
+# Or just run: ./launch.sh
+# ══════════════════════════════════════════════════════════════════════
+
+services:
+  hive:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hive-mesh
+    restart: unless-stopped
+
+    ports:
+      - "3030:3030"   # Panopticon (Engine Visualizer)
+      - "3031:3031"   # Apis Book (AI Activity Dashboard)
+      - "3032:3032"   # HiveSurface (Social Media)
+      - "3033:3033"   # Apis Code (Web IDE)
+      - "3034:3034"   # HiveChat (Discord Clone)
+      - "3035:3035"   # HivePortal (Mesh Homepage) ← MAIN ENTRY
+      - "8421:8421"   # File Server
+      - "8422:8422"   # Glasses WebSocket
+      - "8480:8480"   # Web Proxy
+
+    volumes:
+      - hive-memory:/home/hive/memory       # Persistent memory
+      - hive-data:/home/hive/.hive           # Keys and config
+      - ollama-models:/root/.ollama          # AI models (cached)
+
+    environment:
+      - HIVE_AUTO_OPEN=false                 # No browser inside container
+      - OLLAMA_BASE_URL=http://127.0.0.1:11434
+      - HIVE_MODEL=qwen2.5:7b
+      - RUST_LOG=HIVE=info
+
+    # GPU support (optional — uncomment for NVIDIA GPUs)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+volumes:
+  hive-memory:
+    name: hive-memory
+  hive-data:
+    name: hive-data
+  ollama-models:
+    name: hive-ollama-models

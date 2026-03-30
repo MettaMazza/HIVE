@@ -286,28 +286,35 @@ HIVE doesn't just generate — it **audits itself** before every response:
 
 ## 🚀 Quick Start
 
-### Prerequisites
+### Option A: One-Click Docker Launch (Recommended)
 
-- [Rust](https://rustup.rs/) (stable)
-- [Ollama](https://ollama.ai/) with a model pulled (default: `qwen3.5:35b`)
-- A [Discord bot token](https://discord.com/developers/applications) (optional — CLI mode works without one)
-
-### Run It
+Everything is handled for you — Docker install, container build, model download, browser launch.
 
 ```bash
-# Clone
 git clone https://github.com/MettaMazza/HIVE.git
 cd HIVE
+./launch.sh
+```
 
-# Configure
-cp .env.example .env
-# Edit .env with your tokens
+That's it. The script will:
+1. ✅ Install Docker if you don't have it
+2. ✅ Start Docker if it's not running
+3. ✅ Build HIVE from source in a container
+4. ✅ Download the AI model automatically
+5. ✅ Launch all mesh services
+6. ✅ Open HivePortal in your browser
 
-# Pull the model
+**Stop:** `./launch.sh stop` · **Rebuild:** `./launch.sh rebuild` · **Logs:** `docker logs -f hive-mesh`
+
+### Option B: Native (No Docker)
+
+```bash
+# Prerequisites: Rust (rustup.rs) + Ollama (ollama.ai)
+git clone https://github.com/MettaMazza/HIVE.git
+cd HIVE
+cp .env.example .env    # Edit with your tokens
 ollama pull qwen3.5:35b
-
-# Launch
-./start_hive.sh
+cargo run --release     # HivePortal opens automatically
 ```
 
 ### CLI-Only Mode
