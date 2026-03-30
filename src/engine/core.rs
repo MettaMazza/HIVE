@@ -19,7 +19,9 @@ use crate::teacher::{Teacher, SleepCycle};
 
 
 use crate::engine::core_pipeline::{load_recent_autonomy_sessions, load_recompile_history, spawn_telemetry_receiver};
+#[cfg(test)]
 pub use crate::engine::core_pipeline::format_elapsed;
+#[cfg(test)]
 pub(crate) use crate::engine::core_pipeline::humanize_telemetry;
 
 use crate::agent::AgentManager;

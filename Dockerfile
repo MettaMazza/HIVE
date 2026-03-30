@@ -47,7 +47,6 @@ COPY --from=builder /build/target/release/HIVE /usr/local/bin/hive
 
 # Copy configuration files
 COPY .env.example .env
-COPY prompts/ prompts/
 COPY README.md .
 COPY persona.toml.example .hive/persona.toml
 
