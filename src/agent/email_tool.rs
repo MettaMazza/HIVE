@@ -20,7 +20,7 @@ pub async fn execute_email(
         };
     }
 
-    if action == "send_email" {
+    if action == "send_email" || action == "send" {
         telemetry!(telemetry_tx, "  → Compiling outbound SMTP payload...\n".into());
         
         let to = extract_tag(&description, "to:").unwrap_or_default();

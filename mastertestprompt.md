@@ -30,7 +30,7 @@ The following prompt is designed to push the HIVE Agent stack to its absolute li
 > 24. Use `download` to download a test file: `url:[https://httpbin.org/json]` to verify the download tool and file server.
 > 25. Use `file_writer` to compose a cyberpunk-themed PDF: `action:[compose] id:[report] title:[Master Gauntlet v4] theme:[cyberpunk] content:[# Capability Tests Complete.\n\nAll systems verified.]`.
 > 26. Use `file_writer` to render the same report as markdown: `action:[render] id:[report] format:[md]` to verify multi-format output works.
-> 27. Use `send_email` to send a test message: `action:[send] email:[test@hive.local] subject:[Gauntlet Update] content:[Gauntlet in progress.]`.
+> 27. Use `send_email` to send a test message: `action:[send] to:[test@hive.local] subject:[Gauntlet Update] body:[Gauntlet in progress.]`.
 > 28. Use `set_alarm` to schedule a temporal ping: `time:[+2m] message:[Gauntlet synchronization check.]`.
 > 29. Use `smart_home` to ping the local network: `device:[test_node] state:[ping]`.
 > 30. Use `manage_goals` to create a root goal: `action:[create] title:[Master Gauntlet Certification] description:[Complete all capability tests and verify every subsystem] priority:[0.9] tags:[gauntlet,testing]`. SAVE the returned goal ID.
