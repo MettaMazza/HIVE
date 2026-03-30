@@ -340,6 +340,25 @@ pub async fn run_app() {
         crate::server::hive_portal::spawn_hive_portal_server(registry).await;
     }
 
+    // 7l. Auto-open HivePortal in the default browser
+    {
+        let auto_open = std::env::var("HIVE_AUTO_OPEN")
+            .map(|v| v != "false" && v != "0")
+            .unwrap_or(true);
+        if auto_open {
+            let portal_port: u16 = std::env::var("REMOVED_MESH_GOVERNED")
+                .ok().and_then(|v| v.parse().ok())
+                .unwrap_or(3035);
+            tokio::spawn(async move {
+                // Small delay to ensure servers are bound
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                let url = format!("http://127.0.0.1:{}", portal_port);
+                tracing::info!("[PORTAL] 🌐 Opening mesh homepage: {}", url);
+                let _ = std::process::Command::new("open").arg(&url).spawn();
+            });
+        }
+    }
+
     // 8. Spawn the Native IMAP Background Inbox Listener
     {
         crate::engine::email_watcher::spawn_email_watcher(memory_store.clone()).await;
