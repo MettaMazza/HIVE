@@ -34,6 +34,8 @@ pub mod web_proxy;
 pub mod offline;
 pub mod content_filter;
 pub mod governance;
+pub mod pool;
+pub mod compute_relay;
 #[cfg(test)]
 mod adversarial_tests;
 
@@ -53,6 +55,8 @@ pub use apis_book::ApisBook;
 pub use offline::OfflineMesh;
 pub use content_filter::ContentFilter;
 pub use governance::GovernanceEngine;
+pub use pool::PoolManager;
+pub use compute_relay::ComputeRelay;
 
 use std::sync::Arc;
 use tokio::sync::RwLock;

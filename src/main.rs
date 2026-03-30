@@ -289,6 +289,25 @@ pub async fn run_app() {
         offline_mesh.clone().spawn_monitor();
     }
 
+    // 7e. Initialise the Resource Pool (web + compute sharing — enabled by default)
+    let content_filter = Arc::new(crate::network::content_filter::ContentFilter::new());
+    let pool_peer_id = crate::network::messages::PeerId(
+        std::env::var("HIVE_MESH_CHAT_NAME").unwrap_or_else(|_| "Apis".to_string())
+    );
+    let pool_manager = Arc::new(crate::network::pool::PoolManager::new(pool_peer_id.clone()));
+    {
+        // Spawn compute relay (serves inference for the mesh)
+        let relay_config = crate::network::compute_relay::ComputeRelayConfig::from_env();
+        let _compute_relay = Arc::new(crate::network::compute_relay::ComputeRelay::new(
+            relay_config,
+            content_filter.clone(),
+            pool_manager.compute_pool.clone(),
+            pool_peer_id.clone(),
+        ));
+        tracing::info!("[POOL] 🤝 Resource pool ready — web_share={}, compute_share={}",
+            pool_manager.web_share_enabled, pool_manager.compute_share_enabled);
+    }
+
     // 8. Spawn the Native IMAP Background Inbox Listener
     {
         crate::engine::email_watcher::spawn_email_watcher(memory_store.clone()).await;

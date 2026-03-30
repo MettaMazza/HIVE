@@ -98,6 +98,7 @@ pub enum ResourceType {
     InternetRelay,
     Storage,
     Compute,
+    ComputeGpu,
     DnsResolver,
     FileHosting,
 }
@@ -225,6 +226,43 @@ pub enum MeshMessage {
     RelayResponse {
         data: Vec<u8>,
         content_type: String,
+        provider: PeerId,
+    },
+
+    // ── Compute Pooling ──
+    /// Request remote inference from a mesh peer.
+    /// SECURITY: Contains ONLY the raw prompt. No history, no memory, no identity.
+    ComputeRequest {
+        job_id: String,
+        model: String,
+        prompt: String,
+        max_tokens: u32,
+        requester: PeerId,        // Ephemeral per-request ID
+    },
+    /// Response from a compute peer (partial or complete).
+    ComputeResponse {
+        job_id: String,
+        tokens: String,
+        done: bool,
+        provider: PeerId,
+    },
+    /// Heartbeat advertising compute capacity.
+    ComputeHeartbeat {
+        peer_id: PeerId,
+        model: String,
+        available_slots: u32,
+        ram_gb: f64,
+        queue_depth: u32,
+    },
+
+    // ── Pool Coordination ──
+    PoolStatusRequest {
+        requester: PeerId,
+    },
+    PoolStatusResponse {
+        web_relays_available: u32,
+        compute_nodes_available: u32,
+        total_compute_slots: u32,
         provider: PeerId,
     },
 }
