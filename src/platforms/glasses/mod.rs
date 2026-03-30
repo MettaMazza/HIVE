@@ -472,6 +472,75 @@ async fn handle_connection(
                                     let pong = serde_json::json!({"type": "pong"});
                                     let _ = ws_sender.send(Message::Text(pong.to_string().into())).await;
                                 }
+
+                                // ── Mesh Tab ──
+                                "mesh_peers" => {
+                                    // Return list of connected peers
+                                    // TODO: Wire to actual QuicTransport when available
+                                    let peers = serde_json::json!({
+                                        "type": "mesh_peer_list",
+                                        "peers": [],
+                                        "count": 0,
+                                        "message": "Mesh transport initialising..."
+                                    });
+                                    let _ = ws_sender.send(Message::Text(peers.to_string().into())).await;
+                                }
+                                "mesh_status" => {
+                                    let status = serde_json::json!({
+                                        "type": "mesh_status",
+                                        "peers": 0,
+                                        "connectivity": "online",
+                                        "queued_messages": 0,
+                                        "uptime_secs": 0,
+                                    });
+                                    let _ = ws_sender.send(Message::Text(status.to_string().into())).await;
+                                }
+                                "mesh_send" => {
+                                    if let Some(content) = data.get("content").and_then(|v| v.as_str()) {
+                                        tracing::info!("[GLASSES] 📡 Mesh send from app: {}", &content[..content.len().min(50)]);
+                                        // TODO: Wire to QuicTransport broadcast
+                                        let ack = serde_json::json!({
+                                            "type": "mesh_send_ack",
+                                            "status": "queued",
+                                        });
+                                        let _ = ws_sender.send(Message::Text(ack.to_string().into())).await;
+                                    }
+                                }
+                                "mesh_broadcast" => {
+                                    if let Some(content) = data.get("content").and_then(|v| v.as_str()) {
+                                        tracing::info!("[GLASSES] 📢 Mesh broadcast from app: {}", &content[..content.len().min(50)]);
+                                        let ack = serde_json::json!({
+                                            "type": "mesh_broadcast_ack",
+                                            "status": "queued",
+                                        });
+                                        let _ = ws_sender.send(Message::Text(ack.to_string().into())).await;
+                                    }
+                                }
+
+                                // ── Apis-Book Tab (One-Way Mirror) ──
+                                "apis_book_feed" => {
+                                    let limit = data.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
+                                    // TODO: Wire to ApisBook instance when passed to glasses
+                                    let feed = serde_json::json!({
+                                        "type": "apis_book_feed",
+                                        "entries": [],
+                                        "count": 0,
+                                        "limit": limit,
+                                    });
+                                    let _ = ws_sender.send(Message::Text(feed.to_string().into())).await;
+                                }
+
+                                // ── Proxy Status ──
+                                "proxy_status" => {
+                                    let status = serde_json::json!({
+                                        "type": "proxy_status",
+                                        "clearnet_available": true,
+                                        "mesh_relay_enabled": false,
+                                        "cache_entries": 0,
+                                    });
+                                    let _ = ws_sender.send(Message::Text(status.to_string().into())).await;
+                                }
+
                                 _ => {
                                     tracing::debug!("[GLASSES] Unknown message type: {}", data.get("type").and_then(|v| v.as_str()).unwrap_or("none"));
                                 }

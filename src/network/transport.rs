@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::network::messages::{PeerId, SignedEnvelope, MeshMessage};
+use crate::network::messages::{PeerId, SignedEnvelope};
 
 /// QUIC Transport — manages encrypted P2P connections.
 pub struct QuicTransport {

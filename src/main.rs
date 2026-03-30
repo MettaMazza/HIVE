@@ -270,6 +270,25 @@ pub async fn run_app() {
         crate::server::apis_book_server::spawn_apis_book_server(apis_book.clone()).await;
     }
 
+    // 7c. Spawn the SafeNet Web Proxy (censorship-resistant browsing)
+    {
+        let proxy_config = crate::network::web_proxy::WebProxyConfig::from_env();
+        if std::env::var("HIVE_WEB_PROXY_ENABLED")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+        {
+            crate::network::web_proxy::spawn_web_proxy(proxy_config, None).await;
+        } else {
+            tracing::info!("[WEB PROXY] Disabled (set HIVE_WEB_PROXY_ENABLED=true to enable)");
+        }
+    }
+
+    // 7d. Spawn the Offline Mesh Monitor (store-and-forward, connectivity tracking)
+    {
+        let offline_mesh = Arc::new(crate::network::offline::OfflineMesh::new());
+        offline_mesh.clone().spawn_monitor();
+    }
+
     // 8. Spawn the Native IMAP Background Inbox Listener
     {
         crate::engine::email_watcher::spawn_email_watcher(memory_store.clone()).await;

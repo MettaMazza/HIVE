@@ -30,6 +30,8 @@ pub mod human_mesh;
 pub mod transport;
 pub mod apis_chat;
 pub mod apis_book;
+pub mod web_proxy;
+pub mod offline;
 #[cfg(test)]
 mod adversarial_tests;
 
@@ -46,6 +48,7 @@ pub use human_mesh::HumanMesh;
 pub use transport::QuicTransport;
 pub use apis_chat::ApisChat;
 pub use apis_book::ApisBook;
+pub use offline::OfflineMesh;
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
