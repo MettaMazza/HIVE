@@ -318,6 +318,12 @@ pub async fn run_app() {
         offline_mesh.clone().spawn_monitor();
     }
 
+    // 7h. Spawn HiveSurface — the decentralised social web platform
+    {
+        let post_store = Arc::new(crate::network::post_store::PostStore::new());
+        crate::server::mesh_social::spawn_mesh_social_server(post_store).await;
+    }
+
     // 8. Spawn the Native IMAP Background Inbox Listener
     {
         crate::engine::email_watcher::spawn_email_watcher(memory_store.clone()).await;

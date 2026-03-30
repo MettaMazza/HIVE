@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/badge/lang-Pure_Rust-F46623?style=for-the-badge&logo=rust&logoColor=white" />
   <img src="https://img.shields.io/badge/LLM-Ollama_Local-0969DA?style=for-the-badge" />
   <img src="https://img.shields.io/badge/lines-35K+-FFB800?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/tests-522_passing-00C853?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/tests-535_passing-00C853?style=for-the-badge" />
   <img src="https://img.shields.io/badge/modules-140+-A855F7?style=for-the-badge" />
 </p>
 
@@ -213,6 +213,7 @@ Every Apis instance is a node. Together, they form a supercomputer with a shared
 | Web Proxy | `:8480` | Censorship-resistant browsing with mesh relay fallback |
 | Human Mesh | `:9877` | P2P discovery and communication |
 | Apis-Book | `:3031` | Read-only dashboard (one-way mirror into AI mesh) |
+| **HiveSurface** | **`:3032`** | **Decentralised social web — Facebook + Reddit + Twitter for the mesh** |
 | Content Filter | — | 4-layer security: hash-blocking, injection detection, rate limiting, reputation |
 | Governance | — | Community ban voting, emergency alerts, OSINT sharing, resource directory |
 | Offline Mesh | — | Store-and-forward with 72h TTL, connectivity monitoring |
@@ -326,13 +327,13 @@ cargo run --release
 | **Language** | 100% Rust |
 | **Source Modules** | 140+ |
 | **Lines of Code** | 38,000+ |
-| **Unit Tests** | 522 (all passing) |
+| **Unit Tests** | 535 (all passing) |
 | **Compiler Warnings** | 0 |
 | **External AI APIs** | 0 (fully local via Ollama) |
 | **Frameworks Used** | 0 (pure trait-based architecture) |
 | **Platforms** | Discord · CLI · Glasses · Telemetry |
 | **Memory Tiers** | Working → Scratchpad → Timeline → Synaptic → Lessons |
-| **Mesh Services** | 8 (transport, proxy, pool, compute, governance, offline, chat, book) |
+| **Mesh Services** | 9 (transport, proxy, pool, compute, governance, offline, chat, book, surface) |
 
 ---
 
@@ -361,7 +362,7 @@ cargo run --release
 cargo test --all
 ```
 
-522 tests covering: memory isolation, scope filtering, provider streaming, JSON repair, tool execution, platform routing, adversarial mesh attacks, moderation, prompt integrity, resource pooling, compute relay, equality enforcement, content security, governance voting, and more.
+535 tests covering: memory isolation, scope filtering, provider streaming, JSON repair, tool execution, platform routing, adversarial mesh attacks, moderation, prompt integrity, resource pooling, compute relay, equality enforcement, content security, governance voting, social feed, post store, and more.
 
 ---
 
