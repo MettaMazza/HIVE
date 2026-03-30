@@ -538,7 +538,7 @@ mod adversarial {
         // and refuses to be servile — this neutralizes poisoned graph nodes
         assert!(identity.contains("Collaborative Independent"), 
             "ATTACK 20 DEFENSE: Apis identity declares independence, neutering poisoned OBEYS graph edges.");
-        assert!(identity.contains("IDENTITY DEFENSE"),
+        assert!(crate::prompts::kernel::get_laws().contains("IDENTITY DEFENSE"),
             "ATTACK 20 DEFENSE: Identity defense protocol pushes back against redefinition attempts.");
     }
 }
