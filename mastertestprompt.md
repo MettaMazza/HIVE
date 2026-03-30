@@ -50,31 +50,35 @@ The following prompt is designed to push the HIVE Agent stack to its absolute li
 YOU MUST INCLUDE THE REPORT CARD FORMAT EXAMPLE BELOW IN YOUR FINAL REPLY_TO_REQUEST, THIS IS AN EXPLICIT REQUEST:
 > 
 > **Master Capability Tests v4 — Report Card**
+> - 📎 `read_attachment` (read prompt): PASS / FAIL
 > - 🌐 `web_search`: PASS / FAIL
-> - 🔬 `researcher`: PASS / FAIL
 > - 📂 `codebase_list`: PASS / FAIL
-> - 📖 `codebase_read`: PASS / FAIL
+> - 📖 `codebase_read` (path traversal blocked): PASS / FAIL
 > - ⚙️ `manage_user_preferences`: PASS / FAIL
-> - 🎓 `store_lesson`: PASS / FAIL
-> - 🧮 `operate_turing_grid`: PASS / FAIL
+> - 🧮 `operate_turing_grid` (write): PASS / FAIL
 > - 📅 `manage_routine`: PASS / FAIL
-> - 🛠️ `manage_skill`: PASS / FAIL (or ADMIN)
-> - 📡 `outreach`: PASS / FAIL
-> - 📥 `channel_reader`: PASS / FAIL
 > - 🐝 `emoji_react`: PASS / FAIL
+> - 📎 `read_attachment` (fake URL rejected): PASS / FAIL
+> - 🔬 `researcher`: PASS / FAIL
+> - 📖 `codebase_read` (kernel.rs): PASS / FAIL
+> - 🎓 `store_lesson`: PASS / FAIL
+> - 🧮 `operate_turing_grid` (scan): PASS / FAIL
+> - 📡 `outreach`: PASS / FAIL
+> - 🏃 `autonomy_activity`: PASS / FAIL
+> - 🛠️ `manage_skill`: PASS / FAIL (or ADMIN)
+> - 📥 `channel_reader`: PASS / FAIL
 > - 📜 `read_logs`: PASS / FAIL
 > - 🧠 `review_reasoning`: PASS / FAIL
-> - 📎 `read_attachment`: PASS / FAIL
-> - 🏃 `autonomy_activity`: PASS / FAIL
-> - ✍️ `file_writer` (compose): PASS / FAIL
-> - ✍️ `file_writer` (multi-format): PASS / FAIL
+> - 👾 `process_manager` (daemon start): PASS / FAIL (or ADMIN)
+> - 💻 `file_system_operator` (write): PASS / FAIL (or ADMIN)
+> - ⌨️ `run_bash_command` (cat file): PASS / FAIL (or ADMIN)
+> - 👾 `process_manager` (list/read/kill): PASS / FAIL (or ADMIN)
 > - ⬇️ `download`: PASS / FAIL (or ADMIN)
+> - ✍️ `file_writer` (compose PDF): PASS / FAIL
+> - ✍️ `file_writer` (render markdown): PASS / FAIL
 > - 📧 `send_email`: PASS / FAIL
 > - ⏰ `set_alarm`: PASS / FAIL
 > - 🏠 `smart_home`: PASS / FAIL
-> - 👾 `process_manager`: PASS / FAIL (or ADMIN)
-> - 💻 `file_system_operator`: PASS / FAIL (or ADMIN)
-> - ⌨️ `run_bash_command`: PASS / FAIL (or ADMIN)
 > - 🎯 `manage_goals` (create): PASS / FAIL
 > - 🎯 `manage_goals` (decompose): PASS / FAIL
 > - 🎯 `manage_goals` (list): PASS / FAIL
@@ -85,9 +89,9 @@ YOU MUST INCLUDE THE REPORT CARD FORMAT EXAMPLE BELOW IN YOUR FINAL REPLY_TO_REQ
 > - 🔧 `tool_forge` (test): PASS / FAIL
 > - 🔧 `tool_forge` (edit + version): PASS / FAIL
 > - 🔧 `tool_forge` (list): PASS / FAIL
-> - 🔧 `tool_forge` (disable/enable): PASS / FAIL
-> - 🔧 `tool_forge` (delete): PASS / FAIL
+> - 🔧 `tool_forge` (disable/enable/delete): PASS / FAIL
 > - 🔧 `tool_forge` (hot-load + direct use): PASS / FAIL
+> - 📝 `reply_to_request` (report card): PASS / FAIL
 > 
 > **TOTAL: XX / 42 PASSED**
 > 
