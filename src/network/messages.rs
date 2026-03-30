@@ -71,6 +71,37 @@ pub struct QuarantineNotice {
     pub signature: Vec<u8>,          // ed25519 signature of the issuer
 }
 
+// ─── Governance & Emergency Types ────────────────────────────────────────
+
+/// Alert severity for emergency broadcasts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AlertSeverity {
+    Info,
+    Warning,
+    Critical,
+    Catastrophic,
+}
+
+/// Crisis categories for emergency alerts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum CrisisCategory {
+    ConnectivityLost,
+    CensorshipActive,
+    InfrastructureFailure,
+    SafetyAlert,
+    ResourceAvailable,
+}
+
+/// Types of resources a peer can advertise.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ResourceType {
+    InternetRelay,
+    Storage,
+    Compute,
+    DnsResolver,
+    FileHosting,
+}
+
 // ─── Wire Protocol ──────────────────────────────────────────────────────
 
 /// All mesh messages. Every variant is signed and schema-validated before processing.
@@ -134,6 +165,68 @@ pub enum MeshMessage {
 
     // ── Governance ──
     Quarantine(QuarantineNotice),
+
+    // ── Apis-to-Apis Chat ──
+    /// Direct message between Apis instances across the mesh.
+    ApisChat {
+        from_peer: PeerId,
+        from_name: String,
+        content: String,
+        reply_to: Option<String>,
+        timestamp: String,
+    },
+    /// Channel-based broadcast to all connected Apis instances.
+    ApisBroadcast {
+        from_peer: PeerId,
+        from_name: String,
+        channel: String,
+        content: String,
+        timestamp: String,
+    },
+
+    // ── Community Governance ──
+    BanProposal {
+        target: PeerId,
+        reason: String,
+        evidence_hash: String,
+        proposer: PeerId,
+    },
+    BanVote {
+        target: PeerId,
+        voter: PeerId,
+        approve: bool,
+        signature: Vec<u8>,
+    },
+
+    // ── Emergency & Survival ──
+    EmergencyAlert {
+        severity: AlertSeverity,
+        category: CrisisCategory,
+        message: String,
+        issuer: PeerId,
+    },
+    ResourceAdvertise {
+        resource_type: ResourceType,
+        capacity: String,
+        issuer: PeerId,
+    },
+    OSINTReport {
+        category: String,
+        data: String,
+        issuer: PeerId,
+        signature: Vec<u8>,
+    },
+
+    // ── Relay ──
+    RelayRequest {
+        destination_url: String,
+        requester: PeerId,
+    },
+    RelayResponse {
+        data: Vec<u8>,
+        content_type: String,
+        provider: PeerId,
+    },
 }
 
 /// Signed envelope wrapping every mesh message.

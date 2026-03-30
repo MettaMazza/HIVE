@@ -27,10 +27,14 @@ pub mod self_destruct;
 pub mod creator_key;
 pub mod prompt_integrity;
 pub mod human_mesh;
+pub mod transport;
+pub mod apis_chat;
+pub mod apis_book;
 #[cfg(test)]
 mod adversarial_tests;
 
 pub use messages::{PeerId, PeerInfo, MeshMessage, SignedEnvelope, Attestation};
+pub use messages::{AlertSeverity, CrisisCategory, ResourceType};
 pub use exporter::MeshExporter;
 pub use integrity::IntegrityWatchdog;
 pub use trust::{TrustLevel, TrustStore};
@@ -39,6 +43,9 @@ pub use discovery::{DiscoveryConfig, PeerRegistry, DiscoveryDaemon};
 pub use sync::KnowledgeSync;
 pub use prompt_integrity::{compute_prompt_hash, verify_prompts, get_prompt_hash};
 pub use human_mesh::HumanMesh;
+pub use transport::QuicTransport;
+pub use apis_chat::ApisChat;
+pub use apis_book::ApisBook;
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
