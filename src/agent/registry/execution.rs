@@ -442,6 +442,26 @@ pub fn dispatch_native_tool(
     } 
 
     if tool_type == "opencode" {
+        // AUTONOMY GUARD: Block OpenCode during autonomy — not mature enough for
+        // unsupervised use. Apis should use native tools (codebase_read, file_writer,
+        // system_recompile) to read, edit, and compile code during autonomy.
+        let is_autonomy = match scope {
+            Scope::Public { user_id, .. } => user_id == "apis_autonomy",
+            Scope::Private { user_id } => user_id == "apis_autonomy",
+        };
+        if is_autonomy {
+            tracing::warn!("[AUTONOMY GUARD] 🛡️ Blocked OpenCode during autonomy mode.");
+            let handle = tokio::spawn(async move {
+                ToolResult {
+                    task_id,
+                    output: "SYSTEM: OpenCode is disabled during Autonomy mode. Use your native tools instead: `codebase_list` to browse files, `codebase_read` to read them, `file_writer` to edit them, and `system_recompile` to build. Choose a different action.".into(),
+                    tokens_used: 0,
+                    status: ToolStatus::Failed("Blocked in Autonomy".into()),
+                }
+            });
+            return Some(handle);
+        }
+
         if let Some(bridge) = opencode_bridge.clone() {
             let handle = tokio::spawn(async move {
                 crate::agent::opencode::execute_opencode_tool(task_id, desc, bridge, tx_clone).await

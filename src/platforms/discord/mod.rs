@@ -73,12 +73,17 @@ impl EventHandler for Handler {
                 "The message content"
             ).required(true))
             .default_member_permissions(serenity::model::Permissions::ADMINISTRATOR);
-        
+
+        let command_aicoms = serenity::builder::CreateCommand::new("aicoms")
+            .description("ADMIN ONLY: Toggle bot-to-bot (AI) communications")
+            .default_member_permissions(serenity::model::Permissions::ADMINISTRATOR);
+
         let _ = serenity::model::application::Command::create_global_command(&ctx.http, command_clean).await;
         let _ = serenity::model::application::Command::create_global_command(&ctx.http, command_clear).await;
         let _ = serenity::model::application::Command::create_global_command(&ctx.http, command_sweep).await;
         let _ = serenity::model::application::Command::create_global_command(&ctx.http, command_tending).await;
         let _ = serenity::model::application::Command::create_global_command(&ctx.http, command_proxy).await;
+        let _ = serenity::model::application::Command::create_global_command(&ctx.http, command_aicoms).await;
     }
 
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {

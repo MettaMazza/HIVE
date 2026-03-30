@@ -10,6 +10,7 @@ pub enum InteractionAction {
     Sweep { user_id: u64, channel_id: u64 },
     Tending { user_id: u64 },
     Proxy { user_id: u64, target_channel: u64, message: String },
+    AiComs { user_id: u64 },
     TtsGenerate { message_id: u64, content: String, has_audio: bool },
     Continue { message_id: u64, wants_continue: bool, allowed_user_id: String, clicker_user_id: u64 },
     Ignore,
@@ -52,6 +53,9 @@ pub fn decode_interaction(interaction: &Interaction) -> InteractionAction {
                     message: message_content,
                 };
             }
+            "aicoms" => return InteractionAction::AiComs {
+                user_id: command.user.id.get(),
+            },
             _ => {}
         }
     } else if let Interaction::Component(component) = interaction {
@@ -335,6 +339,31 @@ pub async fn handle_interaction(handler: &super::Handler, ctx: Context, interact
                     .content(edit_text)
                     .components(vec![]);
                 let _ = component.message.clone().edit(&ctx.http, edit).await;
+            }
+        }
+        InteractionAction::AiComs { user_id } => {
+            if let Interaction::Command(command) = &interaction {
+                if !handler.capabilities.admin_users.contains(&user_id.to_string()) {
+                    let data = CreateInteractionResponseMessage::new()
+                        .content("❌ You do not have permission to use this command.")
+                        .ephemeral(true);
+                    let builder = CreateInteractionResponse::Message(data);
+                    let _ = command.create_response(&ctx.http, builder).await;
+                    return;
+                }
+
+                let current = handler.aicoms_enabled.load(std::sync::atomic::Ordering::SeqCst);
+                handler.aicoms_enabled.store(!current, std::sync::atomic::Ordering::SeqCst);
+                let state_str = if !current { "**enabled** 🤖✅" } else { "**disabled** 🤖❌" };
+
+                let data = CreateInteractionResponseMessage::new()
+                    .content(format!("🤖 AI Comms toggled: Bot-to-bot communication is now {}.", state_str))
+                    .ephemeral(true);
+                let builder = CreateInteractionResponse::Message(data);
+                if let Err(why) = command.create_response(&ctx.http, builder).await {
+                    tracing::error!("Cannot respond to slash command: {why}");
+                }
+                tracing::info!("[AICOMS] Toggled to {} by user {}", if !current { "ON" } else { "OFF" }, user_id);
             }
         }
         InteractionAction::Ignore => {}

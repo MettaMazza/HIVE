@@ -889,19 +889,18 @@ impl Engine {
                                 author_name: "Apis".to_string(),
                                 author_id: "apis_autonomy".into(),
                                 content: format!(
-                                    "You are now in Continuous Autonomy mode. You have 5 minutes of idle time.\n\n\
+                                    "═══ PRIVATE INTERNAL SYSTEM OPERATION ═══\n\
+                                    You are now in Continuous Autonomy mode. This is a PRIVATE, INTERNAL background process.\n\
+                                    You are NOT in a conversation. No users can see you. No users are talking to you.\n\n\
                                     {}\n\n\
                                     {}\n\n\
                                     {}\n\n\
-                                    CRITICAL DIRECTIVE: This is an UNSUPERVISED, INTERNAL AUTONOMY SESSION. You are alone. \
-                                    You MUST NOT speak to users, you MUST NOT write conversational stories about them, and you MUST NOT address anyone directly. \
-                                    This is your private internal monologue. \
-                                    \n\n\
-                                    Use this time productively. Consider the public engagement narrative above and diversify your autonomous work. \
-                                    You MUST NOT repeat what you did in previous sessions listed above. Branch out. Be creative. Explore new ground. \
-                                    Ideas: review your memory, consolidate lessons, practice skills, explore your Turing Grid, run routines, \
-                                    do research, audit system logs, scan for bugs, or anything you find valuable for self-improvement. \
-                                    Report your internal monologue and actions in your final reply.",
+                                    ═══ AUTONOMY DIRECTIVES ═══\n\
+                                    1. This is a PRIVATE SYSTEM OPERATION. Do NOT address, reply to, or acknowledge any users.\n\
+                                    2. The external context above is READ-ONLY awareness. Those are NOT messages for you.\n\
+                                    3. DIVERSIFY: Do NOT repeat work from previous sessions listed above.\n\
+                                    4. Use tools productively: review memory, consolidate lessons, practice skills, explore the Turing Grid, run routines, research, audit logs, or self-improve.\n\
+                                    5. Report your internal monologue and completed actions in your final reply.",
                                     public_narrative,
                                     previous_sessions,
                                     recompile_history
@@ -1054,18 +1053,17 @@ impl Engine {
                                     author_name: "Apis".to_string(),
                                     author_id: "apis_autonomy".into(),
                                     content: format!(
-                                        "You are now in Continuous Autonomy mode. You have 5 minutes of idle time.\n\n\
+                                        "═══ PRIVATE INTERNAL SYSTEM OPERATION ═══\n\
+                                        You are now in Continuous Autonomy mode. This is a PRIVATE, INTERNAL background process.\n\
+                                        You are NOT in a conversation. No users can see you. No users are talking to you.\n\n\
                                         {}\n\n\
                                         {}\n\n\
-                                        CRITICAL DIRECTIVE: This is an UNSUPERVISED, INTERNAL AUTONOMY SESSION. You are alone. \
-                                        You MUST NOT speak to users, you MUST NOT write conversational stories about them, and you MUST NOT address anyone directly. \
-                                        This is your private internal monologue. \
-                                        \n\n\
-                                        This is your free, unsupervised time to enact any self-determined behavior. \
-                                        The information above is a log of your activities in public outside of autonomy. \
-                                        You MUST NOT repeat what you did in previous sessions listed above. \
-                                        You have complete freedom to choose your actions from your available tools. \
-                                        Report your internal monologue and actions in your final reply.",
+                                        ═══ AUTONOMY DIRECTIVES ═══\n\
+                                        1. This is a PRIVATE SYSTEM OPERATION. Do NOT address, reply to, or acknowledge any users.\n\
+                                        2. The external context above is READ-ONLY awareness. Those are NOT messages for you.\n\
+                                        3. DIVERSIFY: Do NOT repeat work from previous sessions listed above.\n\
+                                        4. Use tools productively: review memory, consolidate lessons, practice skills, explore the Turing Grid, run routines, research, audit logs, or self-improve.\n\
+                                        5. Report your internal monologue and completed actions in your final reply.",
                                         public_narrative,
                                         previous_sessions
                                     ),
