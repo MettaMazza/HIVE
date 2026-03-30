@@ -93,6 +93,8 @@ pub async fn spawn_apis_code_server() {
             .route("/api/mkdir", post(api_mkdir))
             .route("/api/terminal", post(api_terminal))
             .route("/api/ask", post(api_ask))
+            .route("/api/build-site", post(api_build_site))
+            .route("/api/publish-site", post(api_publish_site))
             .route("/api/search", get(api_search))
             .route("/api/status", get(api_status))
             .fallback(get(serve_ide))
@@ -461,6 +463,135 @@ fn ext_to_language(ext: &str) -> &'static str {
     }
 }
 
+#[derive(Deserialize)]
+struct BuildSiteReq {
+    site_type: String, // blog, portfolio, forum, shop, landing
+    site_name: String,
+    description: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct PublishSiteReq {
+    name: String,
+    description: String,
+    folder: String, // relative path to site folder
+    icon: Option<String>,
+}
+
+async fn api_build_site(State(state): State<CodeState>, Json(req): Json<BuildSiteReq>) -> Json<Value> {
+    let prompt = format!(
+        r#"You are the Mesh Site Builder AI — an expert web designer specialising in decentralised mesh websites.
+
+You create beautiful, fully functional single-page websites that work WITHOUT internet, CDNs, or external dependencies. All CSS is inline, all JS is embedded. The sites must be self-contained HTML files.
+
+Design rules:
+- Dark theme with modern aesthetics (glassmorphism, gradients, smooth animations)
+- Responsive design (mobile-first)
+- No external dependencies (no CDN links, no npm, no frameworks)
+- Professional quality — investor-demo ready
+- All images use CSS gradients or emoji as placeholders
+- Include proper meta tags and SEO
+
+The user wants a {} site called "{}".
+Additional context: {}
+
+Generate a COMPLETE index.html file. Include ALL the HTML, CSS, and JavaScript in a single file. The site should look premium and professional. Do not use any placeholder text — fill in realistic content appropriate for the site type.
+
+Respond with ONLY the complete HTML code, nothing else."#,
+        req.site_type, req.site_name,
+        req.description.as_deref().unwrap_or("No additional details")
+    );
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(180))
+        .build().unwrap_or_default();
+
+    let body = serde_json::json!({
+        "model": *state.model,
+        "prompt": prompt,
+        "stream": false,
+        "options": { "num_predict": 8192, "temperature": 0.4 }
+    });
+
+    match client.post(format!("{}/api/generate", *state.ollama_base))
+        .json(&body).send().await
+    {
+        Ok(resp) => {
+            match resp.json::<Value>().await {
+                Ok(data) => {
+                    let response = data["response"].as_str().unwrap_or("").to_string();
+                    // Extract HTML from response (might be wrapped in code fences)
+                    let html = if response.contains("```html") {
+                        response.split("```html").nth(1)
+                            .and_then(|s| s.split("```").next())
+                            .unwrap_or(&response).trim().to_string()
+                    } else if response.contains("<!DOCTYPE") || response.contains("<html") {
+                        response.trim().to_string()
+                    } else {
+                        response
+                    };
+
+                    // Save to workspace
+                    let folder = format!("mesh_sites/{}", req.site_name.to_lowercase().replace(' ', "_"));
+                    let site_path = std::path::PathBuf::from(state.workspace.as_str()).join(&folder);
+                    let _ = std::fs::create_dir_all(&site_path);
+                    let index_path = site_path.join("index.html");
+                    let _ = std::fs::write(&index_path, &html);
+
+                    tracing::info!("[APIS CODE] 🌐 Built mesh site: {} ({} bytes)", folder, html.len());
+
+                    Json(serde_json::json!({
+                        "ok": true,
+                        "folder": folder,
+                        "file": format!("{}/index.html", folder),
+                        "size": html.len(),
+                        "html": html,
+                    }))
+                }
+                Err(e) => Json(serde_json::json!({"error": format!("Parse error: {}", e)})),
+            }
+        }
+        Err(e) => Json(serde_json::json!({"error": format!("AI error: {}. Is Ollama running?", e)})),
+    }
+}
+
+async fn api_publish_site(State(state): State<CodeState>, Json(req): Json<PublishSiteReq>) -> Json<Value> {
+    // Verify the folder exists and has an index.html
+    let site_path = std::path::PathBuf::from(state.workspace.as_str()).join(&req.folder);
+    let index = site_path.join("index.html");
+    if !index.exists() {
+        return Json(serde_json::json!({"error": "No index.html found in site folder"}));
+    }
+
+    // Register with HivePortal
+    let portal_port: u16 = std::env::var("REMOVED_MESH_GOVERNED")
+        .ok().and_then(|v| v.parse().ok()).unwrap_or(3035);
+
+    let client = reqwest::Client::new();
+    let result = client.post(format!("http://127.0.0.1:{}/api/sites", portal_port))
+        .json(&serde_json::json!({
+            "name": req.name,
+            "description": req.description,
+            "url": format!("file://{}", index.to_string_lossy()),
+            "icon": req.icon.unwrap_or_else(|| "🌐".to_string()),
+            "category": "user-site",
+        }))
+        .send().await;
+
+    match result {
+        Ok(resp) => {
+            match resp.json::<Value>().await {
+                Ok(data) => {
+                    tracing::info!("[APIS CODE] 🌐 Published mesh site: {}", req.name);
+                    Json(data)
+                }
+                Err(e) => Json(serde_json::json!({"error": format!("Portal response error: {}", e)})),
+            }
+        }
+        Err(e) => Json(serde_json::json!({"error": format!("Could not reach HivePortal: {}", e)})),
+    }
+}
+
 // ─── SPA Frontend ───────────────────────────────────────────────────────
 
 async fn serve_ide() -> Html<String> {
@@ -592,6 +723,7 @@ const IDE_HTML: &str = r##"<!DOCTYPE html>
             <span style="font-size:11px;color:var(--text-muted)" id="workspace-path">loading...</span>
         </div>
         <div class="titlebar-right">
+            <button class="tb-btn" onclick="buildSite()" style="border-color:#a6e3a1;color:#a6e3a1">🌐 Build a Site</button>
             <button class="tb-btn" onclick="newFile()">+ New File</button>
             <button class="tb-btn save" onclick="saveFile()" id="save-btn">💾 Save</button>
         </div>
@@ -961,6 +1093,65 @@ async function loadStatus() {
         document.getElementById('sb-files').textContent = `${data.file_count || 0} files`;
         document.getElementById('sb-model').textContent = `🤖 ${data.model || 'unknown'}`;
     } catch(e) {}
+}
+
+// ── Build a Mesh Site ──
+async function buildSite() {
+    const types = ['blog','portfolio','forum','shop','landing','documentation','gallery'];
+    const type_ = prompt('What kind of site?\n\n' + types.map((t,i)=>`${i+1}. ${t}`).join('\n') + '\n\nEnter number or type:');
+    if (!type_) return;
+    const siteType = types[parseInt(type_)-1] || type_;
+    const name = prompt('Site name:');
+    if (!name) return;
+    const desc = prompt('Brief description (optional):') || '';
+
+    const msgs = document.getElementById('ai-messages');
+    msgs.innerHTML += `<div class="ai-msg user"><div class="bubble">Build a ${siteType} site called "${esc(name)}"</div></div>`;
+    msgs.innerHTML += `<div class="ai-msg assistant" id="build-loading"><div class="bubble">🔧 Building your mesh site... This may take 1-2 minutes while Apis designs it.</div></div>`;
+    msgs.scrollTop = msgs.scrollHeight;
+
+    try {
+        const res = await fetch('/api/build-site', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({site_type: siteType, site_name: name, description: desc})
+        });
+        const data = await res.json();
+        document.getElementById('build-loading')?.remove();
+
+        if (data.ok) {
+            msgs.innerHTML += `<div class="ai-msg assistant"><div class="bubble">✅ Site built! Saved to <strong>${esc(data.folder)}</strong> (${data.size} bytes).<br><br><button onclick="openFile('${esc(data.file)}')"
+                style="padding:6px 12px;border-radius:6px;border:1px solid var(--green);background:rgba(166,227,161,0.1);color:var(--green);cursor:pointer;font-family:inherit">📄 Open index.html</button>
+                <button onclick="publishSite('${esc(data.folder)}','${esc(name)}','${esc(desc)}')"
+                style="padding:6px 12px;border-radius:6px;border:1px solid var(--accent);background:var(--accent-dim);color:var(--accent);cursor:pointer;font-family:inherit;margin-left:6px">🚀 Publish to Mesh</button>
+            </div></div>`;
+            refreshTree();
+        } else {
+            msgs.innerHTML += `<div class="ai-msg assistant"><div class="bubble" style="color:var(--red)">❌ ${esc(data.error)}</div></div>`;
+        }
+    } catch(err) {
+        document.getElementById('build-loading')?.remove();
+        msgs.innerHTML += `<div class="ai-msg assistant"><div class="bubble" style="color:var(--red)">Error: ${err.message}</div></div>`;
+    }
+    msgs.scrollTop = msgs.scrollHeight;
+}
+
+async function publishSite(folder, name, desc) {
+    const msgs = document.getElementById('ai-messages');
+    try {
+        const res = await fetch('/api/publish-site', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({name, description: desc, folder, icon:'🌐'})
+        });
+        const data = await res.json();
+        if (data.ok) {
+            msgs.innerHTML += `<div class="ai-msg assistant"><div class="bubble">🚀 Published! Your site is now listed on <a href="http://localhost:3035" target="_blank" style="color:var(--accent)">HivePortal</a>.</div></div>`;
+        } else {
+            msgs.innerHTML += `<div class="ai-msg assistant"><div class="bubble" style="color:var(--red)">${esc(data.error)}</div></div>`;
+        }
+    } catch(err) {
+        msgs.innerHTML += `<div class="ai-msg assistant"><div class="bubble" style="color:var(--red)">Error: ${err.message}</div></div>`;
+    }
+    msgs.scrollTop = msgs.scrollHeight;
 }
 
 // ── Boot ──

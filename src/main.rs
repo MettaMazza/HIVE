@@ -329,6 +329,17 @@ pub async fn run_app() {
         crate::server::apis_code::spawn_apis_code_server().await;
     }
 
+    // 7j. Spawn HiveChat — the decentralised Discord clone
+    {
+        crate::server::hive_chat::spawn_hive_chat_server().await;
+    }
+
+    // 7k. Spawn HivePortal — the mesh homepage & app launcher
+    {
+        let registry = Arc::new(crate::server::hive_portal::SiteRegistry::new());
+        crate::server::hive_portal::spawn_hive_portal_server(registry).await;
+    }
+
     // 8. Spawn the Native IMAP Background Inbox Listener
     {
         crate::engine::email_watcher::spawn_email_watcher(memory_store.clone()).await;

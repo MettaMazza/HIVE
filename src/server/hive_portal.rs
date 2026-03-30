@@ -1,0 +1,410 @@
+/// HivePortal — Mesh Homepage & App Launcher.
+///
+/// The "Google Tab" for the mesh. A beautiful landing page with a search
+/// bar, visual grid of all mesh services, and user-published mesh sites.
+///
+/// Served on localhost:3035 (configurable via REMOVED_MESH_GOVERNED).
+use axum::{
+    routing::get,
+    Router,
+    Json,
+    extract::{State, Query},
+    response::Html,
+};
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use tokio::net::TcpListener;
+use tower_http::cors::CorsLayer;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeshSite {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub url: String,
+    pub icon: String,
+    pub author: String,
+    pub category: String,
+    pub created_at: String,
+}
+
+pub struct SiteRegistry {
+    sites: RwLock<Vec<MeshSite>>,
+}
+
+impl SiteRegistry {
+    pub fn new() -> Self {
+        Self { sites: RwLock::new(Vec::new()) }
+    }
+
+    pub async fn register(&self, site: MeshSite) {
+        self.sites.write().await.push(site);
+    }
+
+    pub async fn list(&self) -> Vec<MeshSite> {
+        self.sites.read().await.clone()
+    }
+
+    pub async fn search(&self, query: &str) -> Vec<MeshSite> {
+        let q = query.to_lowercase();
+        self.sites.read().await.iter()
+            .filter(|s| s.name.to_lowercase().contains(&q) || s.description.to_lowercase().contains(&q))
+            .cloned().collect()
+    }
+}
+
+#[derive(Clone)]
+struct PortalState {
+    registry: Arc<SiteRegistry>,
+}
+
+#[derive(Deserialize)]
+struct SearchQuery { q: Option<String> }
+
+#[derive(Deserialize)]
+struct RegisterSite {
+    name: String,
+    description: String,
+    url: String,
+    icon: Option<String>,
+    category: Option<String>,
+}
+
+pub async fn spawn_hive_portal_server(registry: Arc<SiteRegistry>) {
+    let port: u16 = std::env::var("REMOVED_MESH_GOVERNED")
+        .ok().and_then(|v| v.parse().ok())
+        .unwrap_or(3035);
+
+    let state = PortalState { registry };
+
+    tokio::spawn(async move {
+        tracing::info!("[PORTAL] 🏠 HivePortal starting on http://127.0.0.1:{}", port);
+
+        let app = Router::new()
+            .route("/api/services", get(api_services))
+            .route("/api/sites", get(api_sites).post(api_register_site))
+            .route("/api/search", get(api_search))
+            .route("/api/status", get(api_portal_status))
+            .fallback(get(serve_portal))
+            .layer(CorsLayer::permissive())
+            .with_state(state);
+
+        let addr = format!("127.0.0.1:{}", port);
+        match TcpListener::bind(&addr).await {
+            Ok(listener) => {
+                tracing::info!("[PORTAL] 🏠 Bound on {}", addr);
+                if let Err(e) = axum::serve(listener, app).await {
+                    tracing::error!("[PORTAL] ❌ Server error: {}", e);
+                }
+            }
+            Err(e) => tracing::error!("[PORTAL] ❌ Failed to bind {}: {}", addr, e),
+        }
+    });
+}
+
+// ─── API Endpoints ──────────────────────────────────────────────────────
+
+async fn api_services() -> Json<Value> {
+    let pool = crate::network::pool::PoolManager::new(
+        crate::network::messages::PeerId("portal".into())
+    );
+    let pool_stats = pool.stats().await;
+
+    let clearnet = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build().unwrap_or_default()
+        .get("https://1.1.1.1/cdn-cgi/trace")
+        .send().await.is_ok();
+
+    Json(json!({
+        "services": [
+            {"id":"surface","name":"HiveSurface","icon":"🌐","desc":"Social media — posts, reactions, communities","port":3032,"url":"http://localhost:3032","category":"social"},
+            {"id":"code","name":"Apis Code","icon":"💻","desc":"AI-powered web IDE with terminal","port":3033,"url":"http://localhost:3033","category":"tools"},
+            {"id":"chat","name":"HiveChat","icon":"💬","desc":"Discord-style messaging & servers","port":3034,"url":"http://localhost:3034","category":"social"},
+            {"id":"book","name":"Apis Book","icon":"📖","desc":"Read-only AI mesh activity dashboard","port":3031,"url":"http://localhost:3031","category":"tools"},
+            {"id":"panopticon","name":"Panopticon","icon":"👁️","desc":"Engine visualizer & telemetry","port":3030,"url":"http://localhost:3030","category":"tools"},
+            {"id":"proxy","name":"Web Proxy","icon":"🛡️","desc":"Censorship-resistant mesh browsing","port":8480,"url":"http://localhost:8480","category":"network"},
+        ],
+        "connectivity": if clearnet { "online" } else { "mesh_only" },
+        "web_relays": pool_stats["web_relays_available"],
+        "compute_nodes": pool_stats["compute_nodes_available"],
+        "total_compute_slots": pool_stats["total_compute_slots"],
+    }))
+}
+
+async fn api_sites(State(state): State<PortalState>) -> Json<Value> {
+    let sites = state.registry.list().await;
+    Json(json!({"sites": sites, "count": sites.len()}))
+}
+
+async fn api_register_site(State(state): State<PortalState>, Json(req): Json<RegisterSite>) -> Json<Value> {
+    if req.name.trim().is_empty() || req.url.trim().is_empty() {
+        return Json(json!({"error": "Name and URL required"}));
+    }
+    let site = MeshSite {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: req.name, description: req.description,
+        url: req.url, icon: req.icon.unwrap_or_else(|| "🌐".to_string()),
+        author: std::env::var("HIVE_USER_NAME").or_else(|_| std::env::var("USER")).unwrap_or_else(|_| "Anonymous".to_string()),
+        category: req.category.unwrap_or_else(|| "general".to_string()),
+        created_at: chrono::Utc::now().to_rfc3339(),
+    };
+    let id = site.id.clone();
+    state.registry.register(site).await;
+    Json(json!({"ok": true, "site_id": id}))
+}
+
+async fn api_search(State(state): State<PortalState>, Query(params): Query<SearchQuery>) -> Json<Value> {
+    let q = params.q.unwrap_or_default();
+    if q.is_empty() {
+        return Json(json!({"results": [], "query": ""}));
+    }
+    let sites = state.registry.search(&q).await;
+    Json(json!({"results": sites, "query": q, "count": sites.len()}))
+}
+
+async fn api_portal_status() -> Json<Value> {
+    Json(json!({
+        "portal": "HivePortal",
+        "version": "1.0",
+        "services": 6,
+    }))
+}
+
+// ─── SPA Frontend ───────────────────────────────────────────────────────
+
+async fn serve_portal() -> Html<String> {
+    Html(PORTAL_HTML.to_string())
+}
+
+const PORTAL_HTML: &str = r##"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HIVE — Mesh Homepage</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        :root{--bg:#08080d;--surface:#111118;--card:#16161f;--border:rgba(255,255,255,0.06);--text:#e0e0e8;--text-dim:#888;--text-muted:#555;--amber:#ffc107;--amber-glow:rgba(255,193,7,0.12);--green:#4caf50;--red:#ef5350;--blue:#42a5f5;--radius:20px}
+        body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+
+        /* Status Bar */
+        .topbar{padding:12px 32px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)}
+        .topbar-left{display:flex;align-items:center;gap:8px}
+        .topbar h1{font-size:18px;font-weight:800;background:linear-gradient(135deg,#ffc107,#ff9800);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+        .topbar-right{display:flex;gap:10px;font-size:11px}
+        .stat{padding:4px 10px;border-radius:16px;background:rgba(255,255,255,0.04);border:1px solid var(--border);display:flex;align-items:center;gap:4px}
+        .dot{width:6px;height:6px;border-radius:50%}
+        .dot-g{background:var(--green);box-shadow:0 0 8px var(--green)}
+        .dot-r{background:var(--red);animation:pulse 2s infinite}
+        @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+        /* Hero */
+        .hero{text-align:center;padding:60px 20px 40px}
+        .hero-logo{font-size:72px;margin-bottom:16px;filter:drop-shadow(0 0 40px rgba(255,193,7,0.3))}
+        .hero h2{font-size:32px;font-weight:800;margin-bottom:8px;background:linear-gradient(135deg,#ffc107,#ff6f00);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+        .hero p{color:var(--text-dim);font-size:14px;max-width:480px;margin:0 auto}
+
+        /* Search */
+        .search-wrap{max-width:600px;margin:30px auto;position:relative}
+        .search-input{width:100%;padding:16px 56px 16px 24px;border-radius:30px;border:1px solid var(--border);background:var(--card);color:var(--text);font-family:inherit;font-size:15px;outline:none;transition:all .3s}
+        .search-input:focus{border-color:var(--amber);box-shadow:0 0 30px rgba(255,193,7,0.1)}
+        .search-btn{position:absolute;right:6px;top:6px;padding:10px 20px;border-radius:24px;border:none;background:linear-gradient(135deg,#ffc107,#ff9800);color:#000;font-weight:600;cursor:pointer;font-family:inherit;font-size:13px}
+        .search-btn:hover{transform:scale(1.05)}
+
+        /* Grid */
+        .section{max-width:1100px;margin:0 auto;padding:0 24px}
+        .section-title{font-size:14px;font-weight:700;color:var(--amber);text-transform:uppercase;letter-spacing:2px;margin:32px 0 16px;display:flex;align-items:center;gap:8px}
+        .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px}
+
+        .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:24px;cursor:pointer;transition:all .3s;text-decoration:none;display:block}
+        .card:hover{border-color:var(--amber);transform:translateY(-4px);box-shadow:0 12px 40px rgba(255,193,7,0.08)}
+        .card-icon{font-size:40px;margin-bottom:12px;display:block}
+        .card-name{font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px}
+        .card-desc{font-size:12px;color:var(--text-dim);line-height:1.5}
+        .card-port{font-size:10px;color:var(--text-muted);margin-top:8px;font-family:monospace}
+
+        /* User Sites */
+        .user-card{background:linear-gradient(135deg,rgba(255,193,7,0.05),rgba(255,152,0,0.03));border:1px solid rgba(255,193,7,0.1)}
+        .user-card:hover{border-color:var(--amber)}
+        .user-card .card-author{font-size:10px;color:var(--text-muted);margin-top:6px}
+
+        /* Build CTA */
+        .cta{text-align:center;padding:40px 20px;margin-top:20px}
+        .cta-btn{display:inline-flex;align-items:center;gap:8px;padding:14px 28px;border-radius:30px;border:2px solid var(--amber);background:transparent;color:var(--amber);font-weight:700;font-size:14px;cursor:pointer;font-family:inherit;transition:all .3s;text-decoration:none}
+        .cta-btn:hover{background:var(--amber-glow);transform:scale(1.05)}
+
+        /* Search Results */
+        .results{max-width:600px;margin:0 auto;padding:0 24px}
+        .result-item{padding:12px 16px;border-radius:12px;border:1px solid var(--border);background:var(--card);margin-bottom:8px;cursor:pointer;transition:all .2s}
+        .result-item:hover{border-color:var(--amber)}
+        .result-name{font-weight:600;font-size:14px}
+        .result-url{font-size:11px;color:var(--text-muted)}
+
+        /* Footer */
+        .footer{text-align:center;padding:30px;color:var(--text-muted);font-size:11px;border-top:1px solid var(--border);margin-top:40px}
+    </style>
+</head>
+<body>
+    <div class="topbar">
+        <div class="topbar-left">
+            <span style="font-size:24px">🐝</span>
+            <h1>HIVE</h1>
+        </div>
+        <div class="topbar-right">
+            <div class="stat"><div class="dot" id="conn-dot"></div><span id="conn-text">checking...</span></div>
+            <div class="stat">🖥️ <span id="compute-count">0</span> compute</div>
+            <div class="stat">🌐 <span id="relay-count">0</span> relays</div>
+        </div>
+    </div>
+
+    <div class="hero">
+        <div class="hero-logo">🐝</div>
+        <h2>Welcome to the Mesh</h2>
+        <p>Your decentralised internet. No corporations, no censorship. Every peer is a server. Search, browse, create.</p>
+    </div>
+
+    <div class="search-wrap">
+        <input class="search-input" id="search-input" placeholder="Search the mesh..." onkeydown="if(event.key==='Enter')doSearch()">
+        <button class="search-btn" onclick="doSearch()">Search</button>
+    </div>
+
+    <div id="search-results" class="results" style="display:none"></div>
+
+    <div class="section" id="services-section">
+        <div class="section-title">⚡ Core Services</div>
+        <div class="grid" id="services-grid"></div>
+    </div>
+
+    <div class="section" id="sites-section">
+        <div class="section-title">🌐 Mesh Sites</div>
+        <div class="grid" id="sites-grid">
+            <div style="color:var(--text-muted);font-size:13px;grid-column:1/-1;text-align:center;padding:20px">
+                No user sites published yet. Build one in <a href="http://localhost:3033" style="color:var(--amber)">Apis Code</a>!
+            </div>
+        </div>
+    </div>
+
+    <div class="cta">
+        <a class="cta-btn" href="http://localhost:3033">🔧 Build Your Own Mesh Site</a>
+    </div>
+
+    <div class="footer">
+        <p>🐝 HIVE v4.7 — The Human Internet Viable Ecosystem</p>
+        <p>Everything here runs peer-to-peer. You are the internet.</p>
+    </div>
+
+<script>
+async function loadServices() {
+    try {
+        const res = await fetch('/api/services');
+        const data = await res.json();
+
+        // Status
+        const dot = document.getElementById('conn-dot');
+        const text = document.getElementById('conn-text');
+        if (data.connectivity === 'online') { dot.className='dot dot-g'; text.textContent='online'; }
+        else { dot.className='dot dot-r'; text.textContent='mesh only'; }
+        document.getElementById('compute-count').textContent = data.total_compute_slots || 0;
+        document.getElementById('relay-count').textContent = data.web_relays || 0;
+
+        // Services grid
+        const grid = document.getElementById('services-grid');
+        grid.innerHTML = (data.services || []).map(s => `
+            <a class="card" href="${s.url}" target="_blank">
+                <span class="card-icon">${s.icon}</span>
+                <div class="card-name">${esc(s.name)}</div>
+                <div class="card-desc">${esc(s.desc)}</div>
+                <div class="card-port">:${s.port}</div>
+            </a>
+        `).join('');
+    } catch(e) {}
+}
+
+async function loadSites() {
+    try {
+        const res = await fetch('/api/sites');
+        const data = await res.json();
+        const sites = data.sites || [];
+        if (!sites.length) return;
+        const grid = document.getElementById('sites-grid');
+        grid.innerHTML = sites.map(s => `
+            <a class="card user-card" href="${esc(s.url)}" target="_blank">
+                <span class="card-icon">${s.icon}</span>
+                <div class="card-name">${esc(s.name)}</div>
+                <div class="card-desc">${esc(s.description)}</div>
+                <div class="card-author">by ${esc(s.author)}</div>
+            </a>
+        `).join('');
+    } catch(e) {}
+}
+
+async function doSearch() {
+    const q = document.getElementById('search-input').value.trim();
+    if (!q) { document.getElementById('search-results').style.display='none'; return; }
+
+    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+    const data = await res.json();
+    const results = data.results || [];
+    const el = document.getElementById('search-results');
+
+    if (!results.length) {
+        el.style.display='block';
+        el.innerHTML = `<div style="text-align:center;padding:20px;color:var(--text-muted)">No results for "${esc(q)}"</div>`;
+        return;
+    }
+    el.style.display='block';
+    el.innerHTML = results.map(r => `
+        <a class="result-item" href="${esc(r.url)}" target="_blank" style="display:block;text-decoration:none;color:var(--text)">
+            <div class="result-name">${r.icon} ${esc(r.name)}</div>
+            <div class="result-url">${esc(r.url)}</div>
+            <div style="font-size:12px;color:var(--text-dim);margin-top:4px">${esc(r.description)}</div>
+        </a>
+    `).join('');
+}
+
+function esc(t){if(!t)return'';const d=document.createElement('div');d.textContent=t;return d.innerHTML}
+
+loadServices();
+loadSites();
+setInterval(loadServices, 30000);
+</script>
+</body>
+</html>"##;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_portal_html_not_empty() {
+        assert!(PORTAL_HTML.len() > 1000);
+        assert!(PORTAL_HTML.contains("HIVE"));
+        assert!(PORTAL_HTML.contains("/api/services"));
+        assert!(PORTAL_HTML.contains("/api/sites"));
+    }
+
+    #[tokio::test]
+    async fn test_site_registry() {
+        let registry = SiteRegistry::new();
+        assert_eq!(registry.list().await.len(), 0);
+
+        registry.register(MeshSite {
+            id: "1".into(), name: "Test Site".into(), description: "A test".into(),
+            url: "http://localhost:9999".into(), icon: "🧪".into(),
+            author: "Alice".into(), category: "test".into(),
+            created_at: "2024-01-01".into(),
+        }).await;
+
+        assert_eq!(registry.list().await.len(), 1);
+
+        let results = registry.search("test").await;
+        assert_eq!(results.len(), 1);
+
+        let empty = registry.search("nonexistent").await;
+        assert_eq!(empty.len(), 0);
+    }
+}
