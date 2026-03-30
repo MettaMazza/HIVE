@@ -264,6 +264,12 @@ pub async fn run_app() {
         crate::server::visualizer_server::spawn_visualizer_server(memory_store.clone()).await;
     }
 
+    // 7b. Spawn the Apis-Book Dashboard (One-Way Mirror into AI Mesh)
+    let apis_book = Arc::new(crate::network::apis_book::ApisBook::new());
+    {
+        crate::server::apis_book_server::spawn_apis_book_server(apis_book.clone()).await;
+    }
+
     // 8. Spawn the Native IMAP Background Inbox Listener
     {
         crate::engine::email_watcher::spawn_email_watcher(memory_store.clone()).await;
