@@ -152,23 +152,24 @@ pub async fn run_skeptic_audit(
         .collect::<Vec<_>>()
         .join(" | ");
 
-    // CRITICAL: If the user attached a file, the observer must see its contents.
-    // Without this, the observer only sees "[USER_ATTACHMENT: message.txt | ...]" 
+    // CRITICAL: If the user attached a file, the observer must see its FULL contents.
+    // Without this, the observer only sees "[USER_ATTACHMENT: message.txt | ...]"
     // and cannot detect formatting/structure requests inside the attached file.
-    // Extract read_attachment outputs from the tool context and inline them.
+    // Scan tool context for the first substantial Output: block (the file read result).
     let mut attachment_content = String::new();
     if new_event.content.contains("[USER_ATTACHMENT") {
-        for chunk in tool_context.split("read_attachment") {
-            // Look for successful read_attachment results in the accumulated context
-            if let Some(output_start) = chunk.find("Output:") {
-                let output = &chunk[output_start + 7..];
-                // Take up to the next cycle/task boundary or 3000 chars (whichever is shorter)
-                let end = output.find("\n\nCycle ").or_else(|| output.find("\n\n[COMPLETED")).unwrap_or(output.len().min(3000));
-                let trimmed = output[..end].trim();
-                if !trimmed.is_empty() && trimmed.len() > 50 {
-                    attachment_content.push_str(&format!("\n\n[ATTACHED FILE CONTENT]: {}", &trimmed.chars().take(3000).collect::<String>()));
-                    break; // Only need the first attachment
-                }
+        // Tool context format: "Cycle N - Task step_X: Success\nOutput: [content]\n\n"
+        // Find the first substantial Output: block — this is the file content.
+        for segment in tool_context.split("Output: ") {
+            // Skip the first split (text before first Output:)
+            let trimmed = segment.split("\n\nCycle ").next()
+                .or_else(|| segment.split("\n\n[COMPLETED").next())
+                .unwrap_or(segment)
+                .trim();
+            if trimmed.len() > 100 {
+                // Pass FULL attachment content to observer — no truncation
+                attachment_content = format!("\n\n[ATTACHED FILE CONTENT (user's file — check for formatting requests)]: {}", trimmed);
+                break;
             }
         }
     }

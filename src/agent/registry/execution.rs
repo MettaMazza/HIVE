@@ -659,6 +659,54 @@ pub fn dispatch_native_tool(
         return Some(handle);
     }
 
+    if tool_type == "wallet" {
+        let scope_clone = scope.clone();
+        let caps_clone = capabilities.clone();
+        let handle = tokio::spawn(async move {
+            // Construct keystore and solana client on-demand
+            let wallet_secret = std::env::var("HIVE_WALLET_SECRET").unwrap_or_else(|_| {
+                // Auto-generate a deterministic secret from DISCORD_TOKEN hash for convenience
+                // Production deployments should set HIVE_WALLET_SECRET explicitly
+                let fallback_seed = std::env::var("DISCORD_TOKEN").unwrap_or_else(|_| "hive_default_secret_change_me".into());
+                use sha2::{Sha256, Digest};
+                let hash = Sha256::digest(fallback_seed.as_bytes());
+                format!("{:x}", hash)
+            });
+            let keystore = std::sync::Arc::new(
+                crate::crypto::keystore::Keystore::new_with_secret("data/wallets", wallet_secret)
+            );
+            let solana = std::sync::Arc::new(
+                crate::crypto::solana::HiveSolanaClient::new()
+            );
+            crate::agent::wallet_tool::execute_wallet(
+                task_id, desc, &scope_clone, keystore, solana, caps_clone, tx_clone,
+            ).await
+        });
+        return Some(handle);
+    }
+
+    if tool_type == "nft_gallery" {
+        let scope_clone = scope.clone();
+        let caps_clone = capabilities.clone();
+        let handle = tokio::spawn(async move {
+            let wallet_secret = std::env::var("HIVE_WALLET_SECRET").unwrap_or_else(|_| {
+                let fallback_seed = std::env::var("DISCORD_TOKEN").unwrap_or_else(|_| "hive_default_secret_change_me".into());
+                use sha2::{Sha256, Digest};
+                format!("{:x}", Sha256::digest(fallback_seed.as_bytes()))
+            });
+            let keystore = std::sync::Arc::new(
+                crate::crypto::keystore::Keystore::new_with_secret("data/wallets", wallet_secret)
+            );
+            let solana = std::sync::Arc::new(
+                crate::crypto::solana::HiveSolanaClient::new()
+            );
+            crate::agent::nft_tool::execute_nft(
+                task_id, desc, &scope_clone, keystore, solana, caps_clone, tx_clone,
+            ).await
+        });
+        return Some(handle);
+    }
+
     // Self-moderation & self-protection tools (all 10 route through moderation_tool::execute_moderation)
     let moderation_tools = [
         "refuse_request", "disengage", "mute_user", "set_boundary", "block_topic",

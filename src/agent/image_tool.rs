@@ -31,8 +31,46 @@ pub async fn execute_generate_image(
         let _ = tx.send("typing_indicator".into()).await;
     }
 
+    // Generate a unique output path (shared by HTTP and subprocess paths)
+    let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
+    let cache_dir_env = std::env::var("HIVE_CACHE_DIR").unwrap_or_else(|_| String::from("memory/cache/images"));
+    let current_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let cache_dir = current_dir.join(cache_dir_env);
+    let _ = tokio::fs::create_dir_all(&cache_dir).await;
+    let output_path = cache_dir.join(format!("flux-{}_w{}_h{}.png", timestamp, width, height));
+    let output_str = output_path.to_string_lossy().to_string();
+
+    // ── Try HTTP Flux server first (works from Docker via host.docker.internal) ──
+    let flux_url = std::env::var("HIVE_FLUX_URL")
+        .unwrap_or_else(|_| "http://localhost:8490".into());
+
+    let http_result = try_flux_http(&flux_url, &prompt, &output_str, &width, &height).await;
+    if let Some(result) = http_result {
+        match result {
+            Ok(path) => {
+                if let Some(tx) = &telemetry_tx {
+                    let _ = tx.send(format!("✨ Flux rendering complete: {}\n", path)).await;
+                }
+                // Auto-mint as NFT trading card
+                let mint_msg = try_auto_mint_nft(&prompt, &path);
+                return ToolResult {
+                    task_id,
+                    tokens_used: 0,
+                    status: ToolStatus::Success,
+                    output: format!(
+                        "Image generated successfully.{} YOU MUST include this EXACT tag in your human conversational response to display it to the user:\n\n[ATTACH_IMAGE]({})\n\nIf you do not include this, the user will not see the image.",
+                        mint_msg, path
+                    ),
+                };
+            }
+            Err(e) => {
+                tracing::warn!("[AGENT:image] Flux HTTP server error: {} — falling back to subprocess", e);
+            }
+        }
+    }
+
+    // ── Fallback: direct subprocess (native host runs without server) ──
     // Call the external python script
-    // E.g., python3 src/computer/generate_image.py "prompt" "/.../.hive/memory/cache/images/flux-1234.png"
     let script_path = "src/computer/generate_image.py";
 
     let python_bin = std::env::var("HIVE_PYTHON_BIN").unwrap_or_else(|_| {
@@ -44,15 +82,6 @@ pub async fn execute_generate_image(
         }
     });
     let mut cmd = tokio::process::Command::new(python_bin);
-    
-    // Generate a unique output path
-    let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
-    let cache_dir_env = std::env::var("HIVE_CACHE_DIR").unwrap_or_else(|_| String::from("memory/cache/images"));
-    let current_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    let cache_dir = current_dir.join(cache_dir_env);
-    let _ = tokio::fs::create_dir_all(&cache_dir).await;
-    let output_path = cache_dir.join(format!("flux-{}_w{}_h{}.png", timestamp, width, height));
-    let output_str = output_path.to_string_lossy().to_string();
 
     cmd.arg(script_path).arg(&prompt).arg(&output_str).arg("--width").arg(&width).arg("--height").arg(&height);
     if let Some(s) = style {
@@ -82,14 +111,16 @@ pub async fn execute_generate_image(
                         .send(format!("✨ Flux rendering complete: {}\n", path))
                         .await;
                 }
+                // Auto-mint as NFT trading card
+                let mint_msg = try_auto_mint_nft(&prompt, &path);
 
                 ToolResult {
                     task_id,
                     tokens_used: 0,
                     status: ToolStatus::Success,
                     output: format!(
-                        "Image generated successfully. YOU MUST include this EXACT tag in your human conversational response to display it to the user:\n\n[ATTACH_IMAGE]({})\n\nIf you do not include this, the user will not see the image.",
-                        path
+                        "Image generated successfully.{} YOU MUST include this EXACT tag in your human conversational response to display it to the user:\n\n[ATTACH_IMAGE]({})\n\nIf you do not include this, the user will not see the image.",
+                        mint_msg, path
                     ),
                 }
             } else {
@@ -125,6 +156,58 @@ pub async fn execute_generate_image(
                 ),
             }
         }
+    }
+}
+
+/// Try to generate via the Flux HTTP server (host-side, like Ollama).
+/// Returns None if server is unreachable (fall back to subprocess).
+/// Returns Some(Ok(path)) on success, Some(Err(msg)) on server error.
+async fn try_flux_http(
+    base_url: &str,
+    prompt: &str,
+    output_path: &str,
+    width: &str,
+    height: &str,
+) -> Option<Result<String, String>> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .connect_timeout(std::time::Duration::from_secs(2))
+        .build()
+        .ok()?;
+
+    let url = format!("{}/generate", base_url.trim_end_matches('/'));
+    let body = serde_json::json!({
+        "prompt": prompt,
+        "output_path": output_path,
+        "width": width.parse::<u32>().unwrap_or(1024),
+        "height": height.parse::<u32>().unwrap_or(1024),
+    });
+
+    let response = match client.post(&url).json(&body).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            if e.is_connect() || e.is_timeout() {
+                // Server not running — fall back to subprocess
+                return None;
+            }
+            return Some(Err(format!("HTTP error: {}", e)));
+        }
+    };
+
+    if response.status().is_success() {
+        match response.json::<serde_json::Value>().await {
+            Ok(json) => {
+                let path = json.get("path")
+                    .and_then(|p| p.as_str())
+                    .unwrap_or(output_path)
+                    .to_string();
+                Some(Ok(path))
+            }
+            Err(e) => Some(Err(format!("Failed to parse response: {}", e))),
+        }
+    } else {
+        let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".into());
+        Some(Err(format!("Flux server returned {}", error_text)))
     }
 }
 
@@ -303,5 +386,44 @@ mod tests {
             std::env::remove_var("HIVE_CACHE_DIR");
         }
         let _ = tokio::fs::remove_dir_all(temp_dir).await;
+    }
+}
+
+/// Auto-mint a trading card NFT from a generated image.
+/// Returns a message string to append to the tool output.
+/// This is fire-and-forget — image generation never fails due to NFT minting errors.
+fn try_auto_mint_nft(prompt: &str, image_path: &str) -> String {
+    use crate::crypto::nft::CardGallery;
+    use std::path::PathBuf;
+
+    let gallery_path = PathBuf::from("data/wallets/gallery.json");
+
+    // Get Apis system wallet pubkey for ownership
+    let owner_pubkey = match std::env::var("HIVE_WALLET_SECRET") {
+        Ok(secret) => {
+            let ks = crate::crypto::keystore::Keystore::new_with_secret("data/wallets", secret);
+            ks.get_public_key("apis_system").unwrap_or_else(|| "apis_system".into())
+        }
+        Err(_) => "apis_system".into(),
+    };
+
+    // Default confidence for auto-minted cards (observer can update later)
+    let confidence = 0.75; // Uncommon by default
+
+    let mut gallery = CardGallery::load(&gallery_path);
+    let card = gallery.mint_card(prompt, image_path, confidence, &owner_pubkey);
+
+    match gallery.save(&gallery_path) {
+        Ok(()) => {
+            tracing::info!(
+                "[NFT:AUTO] 🎴 Auto-minted card #{}: \"{}\" ({})",
+                gallery.total_minted, card.name, card.rarity
+            );
+            format!(" 🎴 Auto-minted as NFT: \"{}\" ({}, {:.2} HIVE).", card.name, card.rarity, card.price)
+        }
+        Err(e) => {
+            tracing::warn!("[NFT:AUTO] Failed to save gallery: {}", e);
+            String::new()
+        }
     }
 }

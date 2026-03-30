@@ -49,6 +49,9 @@ pub mod compiler_tool;
 pub mod contributors_tool;
 pub mod contacts_tool;
 pub mod opencode;
+pub mod wallet_tool;
+pub mod credits_tool;
+pub mod nft_tool;
 
 pub mod tool_registry;
 

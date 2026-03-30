@@ -12,6 +12,7 @@ pub mod computer;
 pub mod voice;
 pub mod server;
 pub mod network;
+pub mod crypto;
 
 use std::sync::Arc;
 use tokio::io::AsyncBufRead;
@@ -68,6 +69,40 @@ pub async fn run_app() {
     let reader = get_reader();
     
     dotenv::dotenv().ok(); // Load .env file manually
+
+    // ── Auto-start Flux image generation server ────────────────────────
+    // Runs as a background process alongside HIVE, like Ollama.
+    // SKIP inside Docker — the host's Flux server handles it via HTTP
+    // (launched by launch.sh, called via host.docker.internal:8490).
+    // If Python or diffusers aren't available, it fails silently —
+    // the image tool falls back to direct subprocess calls.
+    let in_docker = std::path::Path::new("/.dockerenv").exists();
+    if !in_docker {
+        let python_bin = std::env::var("HIVE_PYTHON_BIN").unwrap_or_else(|_| {
+            let local_venv = std::path::Path::new(".venv/bin/python3");
+            if local_venv.exists() {
+                local_venv.to_string_lossy().to_string()
+            } else {
+                "python3".to_string()
+            }
+        });
+        let flux_script = std::path::Path::new("src/computer/flux_server.py");
+        if flux_script.exists() {
+            match std::process::Command::new(&python_bin)
+                .arg(flux_script)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+            {
+                Ok(_child) => {
+                    tracing::info!("[FLUX] 🎨 Flux server starting on http://localhost:8490");
+                }
+                Err(e) => {
+                    tracing::warn!("[FLUX] ⚠️ Could not start Flux server: {} — image generation will use direct subprocess", e);
+                }
+            }
+        }
+    }
 
     let discord_token = std::env::var("DISCORD_TOKEN").unwrap_or_default();
 
@@ -340,7 +375,17 @@ pub async fn run_app() {
         crate::server::hive_portal::spawn_hive_portal_server(registry).await;
     }
 
-    // 7l. Auto-open HivePortal in the default browser
+    // 7l. Spawn HIVE Bank — DeFi wallet & NFT trading cards
+    {
+        crate::server::hive_bank::spawn_hive_bank_server().await;
+    }
+
+    // 7m. Spawn HIVE Marketplace — Goods & Services commerce
+    {
+        crate::server::hive_marketplace::spawn_hive_marketplace_server().await;
+    }
+
+    // 7n. Auto-open HivePortal in the default browser
     {
         let auto_open = std::env::var("HIVE_AUTO_OPEN")
             .map(|v| v != "false" && v != "0")

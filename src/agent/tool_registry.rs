@@ -396,6 +396,34 @@ pub(crate) fn build_default_registries() -> (HashMap<String, ToolTemplate>, Hash
         registry.insert(request_consent.name.clone(), request_consent);
         registry.insert(wellbeing_status.name.clone(), wellbeing_status);
 
+        // HIVE Coin wallet tool
+        let wallet = ToolTemplate {
+            name: "wallet".into(),
+            system_prompt: "Manage HIVE Coin wallets. Admin-only. Platform-agnostic. \
+                Actions: 'action:[create]' creates a wallet for the caller. \
+                'action:[balance] user_id:[id]' checks balance. \
+                'action:[send] to:[recipient_id_or_address] amount:[number]' sends HIVE. \
+                'action:[receive]' shows your wallet address for receiving. \
+                'action:[history] limit:[10]' shows transaction history. \
+                'action:[mint] to:[recipient] amount:[number]' mints new HIVE (creator/system only).".into(),
+            tools: vec![],
+        };
+        registry.insert(wallet.name.clone(), wallet);
+
+        // HIVE NFT Trading Cards tool
+        let nft = ToolTemplate {
+            name: "nft_gallery".into(),
+            system_prompt: "Browse and manage HIVE Trading Card NFTs. Admin-only. \
+                'action:[gallery]' lists all cards for sale. \
+                'action:[collection] user_id:[id]' shows a user's collection. \
+                'action:[buy] card_id:[first 8 chars]' purchases a card with HIVE Coin. \
+                'action:[gift] card_id:[id] to:[recipient_id]' gifts a card. \
+                'action:[sell] card_id:[id] price:[amount]' lists a card for sale. \
+                'action:[stats]' shows gallery statistics.".into(),
+            tools: vec![],
+        };
+        registry.insert(nft.name.clone(), nft);
+
         // Discord-only tools
         discord_tools.insert(channel_reader.name.clone(), channel_reader);
         discord_tools.insert(emoji_react.name.clone(), emoji_react);

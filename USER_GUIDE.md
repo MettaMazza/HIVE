@@ -594,6 +594,91 @@ Copy `.env.example` to `.env` and edit it. Here's every setting:
 
 ---
 
+## 💳 Credits & Economy
+
+HIVE has a dual-currency system: credits (non-crypto internal points) and HIVE Coin (cryptographic currency). Most users interact with credits daily.
+
+### Credits vs HIVE Coin
+
+| Feature | Credits | HIVE Coin |
+|---------|---------|-----------|
+| **Type** | Non-crypto, internal points | Cryptographic currency |
+| **Earning** | Mesh contribution (compute, network, social) | Minting by Creator Key holder only |
+| **Spending** | Compute, network, marketplace, priority boost | Network fees, permanent ownership |
+| **Scope** | Per-mesh instance | Portable across instances |
+| **Persistence** | JSON files in `data/credits/` | Blockchain ledger |
+
+### How to Earn Credits
+
+- **Compute Sharing** — Share your GPU with the mesh: ~2 credits per 1000 compute units
+- **Network Relay** — Share your internet connection: ~1 credit per 100 requests
+- **Idle Time** — Be online and idle: ~0.5 credits per hour
+- **Code Contributions** — Write code for HIVE: ~10 credits per contribution
+- **Social Sharing** — Share posts or content: ~3 credits per share (max 5/day)
+- **Community Voting** — Vote on governance proposals: ~1 credit per vote
+- **Governance** — Vote on mesh-wide decisions: ~2 credits per governance vote
+- **Content Contribution** — Write wiki articles, documentation: ~2 credits per post
+- **Welcome Bonus** — New users receive 100 credits on first startup
+
+### How to Spend Credits
+
+- **Compute Time** — Prioritize AI inference requests: ~1 credit per 1000 tokens
+- **Network Bandwidth** — Boost upload/download speeds: ~0.5 credits per 100 MB
+- **Marketplace Purchases** — Buy digital goods and services
+- **Priority Boost** — Jump the access queue: ~5 credits for 5 minutes of priority access
+
+### Dynamic Pricing
+
+During high mesh demand, prices adjust automatically:
+- **High Demand** — Price × 1.5 multiplier
+- **Moderate Demand** — Price × 1.2 multiplier
+- **Low Demand** — Standard pricing
+
+Prices reset every hour based on real-time supply/demand metrics.
+
+### Universal Access
+
+Everyone can use the HIVE mesh with **0 credits**. You'll be added to a free access queue with shared resources (max 3 concurrent requests). Credits don't buy access—they buy **priority** within the queue.
+
+### Goods & Services Marketplace (Port 3038)
+
+A peer-to-peer marketplace for trading:
+
+| Category | Examples |
+|----------|----------|
+| **Digital Goods** | E-books, music, art, templates, code libraries |
+| **Services** | Consulting, tutoring, design, writing, moderation |
+| **Compute Time** | GPU hours, inference capacity, model training |
+| **Storage Space** | Mesh-hosted file storage, backup space |
+| **Mesh Sites** | Websites built with the Mesh Site Builder |
+
+Browse listings, filter by category, and negotiate prices in credits or HIVE Coin.
+
+### NFT Trading Cards (Port 3037)
+
+Enhanced HIVE Bank for blockchain-based trading cards:
+- Rarity tiers: Common, Uncommon, Rare, Epic, Legendary, Unique
+- Buy, sell, gift, and auction cards
+- Card provenance tracked on-chain
+
+### The `credits` Agent Tool
+
+Apis has a **`credits`** tool with these actions:
+
+| Action | What It Does |
+|--------|-------------|
+| `balance` | Check your current credit balance |
+| `history` | See your credit transaction history |
+| `earn` | Log a credit-earning event (usually automatic) |
+| `spend` | Spend credits on compute/network/marketplace |
+| `leaderboard` | See top contributors by credits earned |
+| `stats` | View your earning/spending stats for the day/week/month |
+| `reputation` | Check your mesh reputation score |
+
+Example: *"What's my credit balance?"* → Apis calls `credits balance`
+
+---
+
 ## 💬 Talking to Apis
 
 Just message her on Discord or through any of the web interfaces. She understands natural language. Some things to try:

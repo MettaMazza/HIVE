@@ -45,6 +45,9 @@ RUN pip3 install --no-cache-dir --break-system-packages -r training/requirements
 # NOW copy training scripts — changing .py files no longer busts pip cache
 COPY training/*.py training/
 
+# Flux dependencies (cached in this layer — scripts copied later after WORKDIR)
+RUN pip3 install --no-cache-dir --break-system-packages diffusers transformers accelerate sentencepiece protobuf
+
 # ── Layer 2: System tools (can be modified without busting pip cache) ─
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash git cargo rustc findutils grep tar lsof procps \
@@ -67,6 +70,10 @@ COPY --from=builder /build/target/release/HIVE /usr/local/bin/hive
 COPY .env.example .env
 COPY README.md .
 COPY persona.toml.example .hive/persona.toml
+
+# Copy Flux scripts (MUST be after WORKDIR so they land at /home/hive/src/computer/)
+COPY src/computer/generate_image.py src/computer/generate_image.py
+COPY src/computer/flux_server.py src/computer/flux_server.py
 
 # Create required directories
 RUN mkdir -p memory .hive training && \
@@ -115,6 +122,11 @@ export HIVE_AUTO_OPEN=false
 
 # Point at host Ollama
 export OLLAMA_BASE_URL="${OLLAMA_URL}"
+
+# Point at host Flux server (GPU on host, HTTP from container)
+# Fallback: if no host server, use container's Python directly (CPU — slow but works)
+export HIVE_FLUX_URL="http://host.docker.internal:8490"
+export HIVE_PYTHON_BIN="python3"
 
 # Run HIVE
 exec /usr/local/bin/hive

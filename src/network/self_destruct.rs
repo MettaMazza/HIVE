@@ -44,6 +44,24 @@ pub async fn self_destruct(mesh_dir: &Path, binary_path: Option<&Path>) {
         }
     }
 
+    // Wipe economy data (credits, marketplace, wallet data)
+    let economy_paths = [
+        "data/credits",
+        "data/marketplace",
+        "data/wallets/ledger.json",
+        "data/wallets/gallery.json",
+    ];
+    for path_str in &economy_paths {
+        let path = std::path::Path::new(path_str);
+        if path.is_dir() {
+            let _ = tokio::fs::remove_dir_all(path).await;
+        } else if path.exists() {
+            let random: Vec<u8> = (0..256).map(|i| (i as u8).wrapping_mul(37).wrapping_add(13)).collect();
+            let _ = tokio::fs::write(path, &random).await;
+            let _ = tokio::fs::remove_file(path).await;
+        }
+    }
+
     // 2. Corrupt the sealed binary if path is provided
     if let Some(binary_path) = binary_path {
         if binary_path.exists() {
@@ -62,7 +80,7 @@ pub async fn self_destruct(mesh_dir: &Path, binary_path: Option<&Path>) {
 
     // 4. Log permanently
     let log_entry = format!(
-        "[{}] SELF-DESTRUCT: Binary tampering detected. All mesh data destroyed. Identity wiped. Sealed binary corrupted.\n",
+        "[{}] SELF-DESTRUCT: Binary tampering detected. All mesh data destroyed. Identity wiped. Economy data (credits, marketplace, gallery) destroyed. Sealed binary corrupted.\n",
         chrono::Utc::now().to_rfc3339()
     );
     let _ = tokio::fs::create_dir_all("logs").await;

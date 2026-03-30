@@ -50,6 +50,12 @@ info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 if [ "$1" = "stop" ]; then
     banner
     log "Stopping HIVE..."
+    # Kill Flux server if running
+    if [ -f /tmp/hive_flux.pid ]; then
+        kill "$(cat /tmp/hive_flux.pid)" 2>/dev/null || true
+        rm -f /tmp/hive_flux.pid
+        log "🎨 Flux server stopped."
+    fi
     docker compose down 2>/dev/null || docker-compose down 2>/dev/null || true
     log "✅ HIVE stopped."
     exit 0
@@ -223,6 +229,26 @@ log "✅ Compose: $($COMPOSE_CMD version 2>/dev/null | head -1)"
 echo ""
 log "🔨 Building HIVE container (this takes ~5 min first time)..."
 echo ""
+
+# ── Step 4.5: Start Flux server on HOST (GPU access) ────────────────
+# Flux needs MPS/Metal which is only available on the host, not inside Docker.
+# This mirrors the Ollama pattern — GPU service on host, HTTP from container.
+FLUX_SCRIPT="src/computer/flux_server.py"
+if [ -f "$FLUX_SCRIPT" ]; then
+    # Find the right Python
+    PYTHON_BIN=$(grep HIVE_PYTHON_BIN .env 2>/dev/null | grep -v '^#' | cut -d= -f2- | tr -d '"' || echo "")
+    if [ -z "$PYTHON_BIN" ]; then
+        PYTHON_BIN="python3"
+    fi
+    # Kill any existing Flux server
+    if [ -f /tmp/hive_flux.pid ]; then
+        kill "$(cat /tmp/hive_flux.pid)" 2>/dev/null || true
+    fi
+    # Start Flux server in background
+    "$PYTHON_BIN" "$FLUX_SCRIPT" &
+    echo $! > /tmp/hive_flux.pid
+    log "🎨 Flux server starting on http://localhost:8490 (host GPU)"
+fi
 
 $COMPOSE_CMD up -d --build
 

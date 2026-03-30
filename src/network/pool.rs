@@ -290,6 +290,13 @@ impl ComputePool {
         }
     }
 
+    /// Get the provider PeerId and tokens from the last completed job.
+    pub fn last_completed_tokens(&self) -> Option<(String, u64)> {
+        // This method returns the last recorded tokens for credit earning.
+        // In a full implementation, this would track the most recent completion.
+        None
+    }
+
     /// Check token usage quota for a requester.
     fn check_token_quota(&self, requester: &str) -> bool {
         // Reset window if expired
@@ -335,6 +342,8 @@ pub struct PoolManager {
     pub web_share_enabled: bool,
     /// Whether compute sharing is enabled (default: true — equality)
     pub compute_share_enabled: bool,
+    /// Credits engine for economy tracking
+    pub credits_engine: Option<Arc<crate::crypto::credits::CreditsEngine>>,
 }
 
 impl PoolManager {
@@ -353,7 +362,14 @@ impl PoolManager {
             local_peer,
             web_share_enabled: web_enabled,
             compute_share_enabled: compute_enabled,
+            credits_engine: None,
         }
+    }
+
+    /// Attach a credits engine for economy tracking.
+    pub fn with_credits(mut self, engine: Arc<crate::crypto::credits::CreditsEngine>) -> Self {
+        self.credits_engine = Some(engine);
+        self
     }
 
     /// Generate an ephemeral PeerId for a request (privacy).

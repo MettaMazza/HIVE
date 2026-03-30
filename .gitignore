@@ -74,3 +74,14 @@ gauntlet_admin.log
 
 # Coverage output
 lcov.info
+
+# HIVE Coin — wallet data (NEVER commit private keys or ledger state)
+data/wallets/
+data/ledger.json
+*.enc.json
+
+# Credits System — runtime data (NEVER commit user credit state)
+data/credits/
+
+# Marketplace — listing and transaction data
+data/marketplace/

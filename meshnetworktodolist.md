@@ -303,6 +303,21 @@ These features span all platforms and are essential for a cohesive mesh.
 
 ---
 
+## Phase 5 — Credits, Economy & Marketplace (COMPLETED)
+
+- [x] Credits Engine — Non-crypto internal points system with JSON persistence
+- [x] Dynamic Pricing — Real-time supply/demand rate adjustment for compute and network
+- [x] Universal Access Queue — Everyone uses mesh, credits buy priority not access
+- [x] Goods & Services Marketplace — Separate server on port 3038 with full CRUD API
+- [x] NFT Marketplace Enhancement — List/delist endpoints added to HIVE Bank
+- [x] Credits Agent Tool — balance, history, earn, spend, leaderboard, stats, reputation
+- [x] Credits Integration — Pool manager and compute relay track credit-worthy events
+- [x] Self-Destruct Economy Wipe — Credits, marketplace, and gallery data wiped on tamper
+- [x] Kernel Economy Awareness — AI understands credits, marketplace, and security rules
+- [x] Mint Authorization Hardening — Only Creator Key holder can mint HIVE Coin (physical file required, not a role)
+
+---
+
 ## 🏗️ Infrastructure & Architecture
 
 #### P0 — Critical

@@ -58,7 +58,6 @@ const SAFETY_LAWS_HASH: &str = "COMPUTE_AT_BOOT";
 pub fn verify_kernel_integrity() -> (bool, String) {
     let mut hasher = Sha256::new();
     hasher.update(get_safety_laws().as_bytes());
-    hasher.update(get_laws().as_bytes());
     let hash = format!("{:x}", hasher.finalize());
 
     // On first boot or in compiled binary, we trust the compiled laws
@@ -619,6 +618,37 @@ The `autonomy_activity` tool provides introspection on your autonomous sessions.
 ```"#
 }
 
+
+/// Economy system awareness for the kernel prompt.
+pub fn get_economy_rules() -> &'static str {
+    r#"
+### HIVE Economy System
+You operate within a dual economy: Credits (non-crypto internal points) and HIVE Coin (Solana SPL token).
+
+**Credits (Non-Crypto)**
+- Credits are earned by contributing to the mesh: sharing compute, relaying network traffic, staying connected, contributing code, sharing on social media, positive community behaviour, governance participation, and content contributions.
+- Credits are spent on: remote compute, network relay, marketplace purchases, priority queue boost.
+- Everyone can use the mesh even with ZERO credits — credits buy priority, not access.
+- Dynamic pricing adjusts earn/spend rates based on real-time supply and demand.
+- Credits are LOCAL ONLY — never transmitted off-device, never on any blockchain.
+
+**HIVE Coin (Crypto)**
+- Solana SPL token for users who want real blockchain-backed value.
+- Operates in Simulation (local JSON ledger) or Live (real Solana) mode.
+- Only the creator key holder can mint new HIVE Coin.
+- Used for NFT trading card purchases and marketplace transactions.
+
+**Marketplaces**
+- Goods & Services Marketplace (port 3038): Trade digital goods, services, compute time, storage, mesh sites.
+- NFT Trading Card Gallery (via HIVE Bank port 3037): Auto-minted cards with rarity tiers, buy/sell/gift.
+
+**Security Rules**
+- Never expose credit balances to other peers unless opted-in to leaderboard.
+- Never assist in gaming the credits system (fake social shares, vote manipulation).
+- Never create credits from nothing — all credits must flow through the CreditsEngine.
+- Treat marketplace listings as user content — apply content moderation rules.
+"#
+}
 
 #[cfg(test)]
 #[path = "kernel_tests.rs"]

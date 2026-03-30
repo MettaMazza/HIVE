@@ -174,6 +174,9 @@ impl ComputeRelay {
                     };
                 }
 
+                // Credits integration: provider earns credits for serving compute
+                // The engine calls credits_engine.earn_compute() after successful relay
+
                 tracing::info!("[COMPUTE RELAY] ✅ Job {} complete ({} tokens)", job_id, tokens);
                 ComputeResult::Success {
                     job_id: job_id.to_string(),

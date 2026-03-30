@@ -64,8 +64,8 @@ impl ReasoningRouter {
     /// Create from environment variables.
     pub fn from_env() -> Option<Self> {
         let enabled = std::env::var("HIVE_ROUTER_ENABLED")
-            .map(|v| !(v == "0" || v.eq_ignore_ascii_case("false")))
-            .unwrap_or(true);
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
 
         if !enabled {
             return None;

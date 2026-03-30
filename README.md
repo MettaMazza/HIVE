@@ -6,7 +6,7 @@
   <a href="https://discord.gg/KhjYX3U3AW"><img src="https://img.shields.io/badge/🐝_Talk_to_Apis-Join_Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" /></a>
   <img src="https://img.shields.io/badge/lang-Pure_Rust-F46623?style=for-the-badge&logo=rust&logoColor=white" />
   <img src="https://img.shields.io/badge/LLM-Ollama_Local-0969DA?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/lines-35K+-FFB800?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/lines-52K+-FFB800?style=for-the-badge" />
   <img src="https://img.shields.io/badge/tests-545_passing-00C853?style=for-the-badge" />
   <img src="https://img.shields.io/badge/modules-140+-A855F7?style=for-the-badge" />
 </p>
@@ -217,11 +217,17 @@ Every Apis instance is a node. Together, they form a supercomputer with a shared
 | **Apis Code** | **`:3033`** | **AI-powered web IDE — browse, edit, terminal, Apis AI assistant** |
 | **HiveChat** | **`:3034`** | **Discord clone — servers, channels, DMs, reactions, threading** |
 | **HivePortal** | **`:3035`** | **Mesh homepage — Google-like search, service grid, site registry** |
+| **Goods & Services Marketplace** | **`:3038`** | **Trade digital goods, services, compute time** |
+| **Credits System** | — | **Non-crypto internal points for mesh contribution rewards** |
+| **Dynamic Pricing** | — | **Real-time supply/demand rate adjustment for compute and network** |
+| **Universal Access Queue** | — | **Everyone uses mesh, credits buy priority not access** |
+| **NFT Auctions** | — | **Enhanced HIVE Bank — list/delist/auction trading cards** |
 | Content Filter | — | 4-layer security: hash-blocking, injection detection, rate limiting, reputation |
 | Governance | — | Community ban voting, emergency alerts, OSINT sharing, resource directory |
 | Offline Mesh | — | Store-and-forward with 72h TTL, connectivity monitoring |
 | Pool Manager | — | Round-robin web relay, compute node selection, job lifecycle |
 | Compute Relay | — | 6-layer security pipeline for serving mesh inference |
+| Phase 5 Security | — | Creator Key required for minting (physical file, not a role), economy data in self-destruct wipe, kernel economy awareness |
 
 ### Integrity Protection
 
@@ -336,14 +342,14 @@ cargo run --release
 |--------|-------|
 | **Language** | 100% Rust |
 | **Source Modules** | 140+ |
-| **Lines of Code** | 38,000+ |
+| **Lines of Code** | 52,000+ |
 | **Unit Tests** | 545 (all passing) |
 | **Compiler Warnings** | 0 |
 | **External AI APIs** | 0 (fully local via Ollama) |
 | **Frameworks Used** | 0 (pure trait-based architecture) |
 | **Platforms** | Discord · CLI · Glasses · Telemetry |
 | **Memory Tiers** | Working → Scratchpad → Timeline → Synaptic → Lessons |
-| **Mesh Services** | 12 (transport, proxy, pool, compute, governance, offline, chat, book, surface, code, hivechat, portal) |
+| **Mesh Services** | 14 (transport, proxy, pool, compute, governance, offline, chat, book, surface, code, hivechat, portal, credits, marketplace) |
 
 ---
 
@@ -363,6 +369,15 @@ cargo run --release
 | `REMOVED_MESH_GOVERNED` | No | Max concurrent remote jobs (default: `2`) |
 | `REMOVED_MESH_GOVERNED` | No | Token rate limit for remote peers (default: `50000`) |
 | `HIVE_MESH_CHAT_DISCORD_CHANNEL` | No | Discord channel for mesh-to-Discord bridge |
+| `REMOVED_MESH_GOVERNED` | No | Enable credits system (default: `true`) |
+| `REMOVED_MESH_GOVERNED` | No | Welcome bonus credits for new users (default: `100`) |
+| `REMOVED_MESH_GOVERNED` | No | Credits earned per 1000 compute units (default: `2.0`) |
+| `REMOVED_MESH_GOVERNED` | No | Credits earned per 100 network requests (default: `1.0`) |
+| `REMOVED_MESH_GOVERNED` | No | Credits earned per idle hour (default: `0.5`) |
+| `REMOVED_MESH_GOVERNED` | No | Multiplier during high demand (default: `1.5`) |
+| `REMOVED_MESH_GOVERNED` | No | Max daily social shares (default: `5`) |
+| `REMOVED_MESH_GOVERNED` | No | Goods & services marketplace port (default: `3038`) |
+| `REMOVED_MESH_GOVERNED` | No | Max listings per peer (default: `50`) |
 
 ---
 
