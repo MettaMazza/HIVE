@@ -215,6 +215,11 @@ impl DocumentComposer {
                     headless: true,
                     sandbox: false,
                     idle_browser_timeout: std::time::Duration::from_secs(30),
+                    path: if cfg!(target_os = "macos") {
+                        Some(std::path::PathBuf::from("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"))
+                    } else {
+                        None
+                    },
                     ..Default::default()
                 }) {
                     Ok(b) => {
