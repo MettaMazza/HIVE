@@ -72,6 +72,11 @@ install_docker() {
     case "$OS" in
         Darwin)
             log "🍎 macOS detected"
+            if ! command -v brew &>/dev/null; then
+                log "Installing Homebrew first (required for Docker install)..."
+                /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+                eval "$(/opt/homebrew/bin/brew shellenv)" 2>/dev/null || true
+            fi
             if command -v brew &>/dev/null; then
                 log "Installing Docker via Homebrew..."
                 brew install --cask docker
@@ -84,7 +89,7 @@ install_docker() {
                 echo ""
                 exit 0
             else
-                error "Homebrew not found. Install Docker Desktop manually:"
+                error "Could not install Homebrew. Install Docker Desktop manually:"
                 error "  https://docs.docker.com/desktop/install/mac-install/"
                 exit 1
             fi
