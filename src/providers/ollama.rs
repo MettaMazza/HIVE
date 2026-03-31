@@ -174,9 +174,12 @@ impl Provider for OllamaProvider {
         let mut messages = Vec::new();
 
         // Format the securely-scoped history FIRST
-        // Individual messages are capped to prevent one massive response from bloating all subsequent calls.
+        // Individual history messages are capped to prevent one massive response from bloating all subsequent calls.
         // Full messages remain in working memory & disk — only the LLM prompt copy is capped.
-        const HISTORY_MSG_CAP: usize = 8000;
+        let history_msg_cap: usize = std::env::var("HIVE_HISTORY_MSG_CAP")
+            .unwrap_or_else(|_| "8000".to_string())
+            .parse()
+            .unwrap_or(8000);
         for event in history {
             let role = if event.author_name == self.system_name {
                 "assistant"
@@ -210,9 +213,9 @@ impl Provider for OllamaProvider {
             };
 
             // Cap oversized history messages to prevent prompt bloat from prior mega-responses.
-            let capped_content = if content.len() > HISTORY_MSG_CAP {
-                let truncated: String = content.chars().take(HISTORY_MSG_CAP).collect();
-                format!("{}...\n[Message truncated from {} to {} chars for context efficiency. Full version retained in memory.]", truncated, content.len(), HISTORY_MSG_CAP)
+            let capped_content = if content.len() > history_msg_cap {
+                let truncated: String = content.chars().take(history_msg_cap).collect();
+                format!("{}...\n[Message truncated from {} to {} chars for context efficiency. Full version retained in memory.]", truncated, content.len(), history_msg_cap)
             } else {
                 content
             };

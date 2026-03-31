@@ -101,12 +101,17 @@ impl WorkingMemory {
             }
         }
 
-        // HARD CAP: Retain only the most recent 100 messages (50 conversational turns).
+        // HARD CAP: Retain only the most recent messages (configurable via HIVE_WORKING_MEMORY_CAP, default 100).
         // Prevents unbounded System Prompt growth, KV Cache explosion, and massive latency creep.
         // Data is not permanently lost; `memory::autosave` and `memory::timeline` retain full persistence.
-        if history.len() > 100 {
-            let start = history.len() - 100;
-            tracing::debug!("[MEMORY:Working] get_history: capping {} events to 100 (scope='{}')", history.len(), requesting_scope.to_key());
+        let cap = std::env::var("HIVE_WORKING_MEMORY_CAP")
+            .unwrap_or_else(|_| "100".to_string())
+            .parse::<usize>()
+            .unwrap_or(100);
+
+        if history.len() > cap {
+            let start = history.len() - cap;
+            tracing::debug!("[MEMORY:Working] get_history: capping {} events to {} (scope='{}')", history.len(), cap, requesting_scope.to_key());
             history = history[start..].to_vec();
         }
 
