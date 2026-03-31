@@ -110,7 +110,7 @@ impl WorkingMemory {
             history = history[start..].to_vec();
         }
 
-        tracing::trace!("[MEMORY:Working] get_history: scope='{}' returning {} events", requesting_scope.to_key(), history.len());
+        tracing::info!("[MEMORY:Working] get_history: scope='{}' returning {} events (total_vec_size={})", requesting_scope.to_key(), history.len(), r.len());
         history
     }
     
@@ -191,9 +191,24 @@ impl WorkingMemory {
     
     /// Clears the working memory transcript (called internally by Autosave)
     pub async fn clear(&self, scope: &Scope) {
-        tracing::debug!("[MEMORY:Working] Clearing working memory for scope='{}'", scope.to_key());
         let mut w = self.events.write().await;
+        let before_count = w.len();
+        let matching_count = w.iter().filter(|e| e.scope == *scope).count();
+        
+        // Diagnostic: log scopes of first 5 events to see what we're comparing against
+        let sample_scopes: Vec<String> = w.iter().take(5).map(|e| e.scope.to_key()).collect();
+        tracing::warn!(
+            "[MEMORY:Working] CLEAR called — scope='{}' | before={} | matching={} | sample_scopes={:?}",
+            scope.to_key(), before_count, matching_count, sample_scopes
+        );
+        
         w.retain(|e| e.scope != *scope); // Remove events for this scope
+        
+        let after_count = w.len();
+        tracing::warn!(
+            "[MEMORY:Working] CLEAR complete — after={} | removed={}",
+            after_count, before_count - after_count
+        );
         
         let mut tc = self.token_count.write().await;
         // Simple reset for now. In a robust system, we'd recount the remaining events.
