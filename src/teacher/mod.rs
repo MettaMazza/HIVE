@@ -104,7 +104,7 @@ impl Teacher {
             training_lock: Arc::new(Mutex::new(false)),
             golden_count: Arc::new(AtomicUsize::new(initial_golden)),
             preference_count: Arc::new(AtomicUsize::new(initial_preference)),
-            auto_train_enabled: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            auto_train_enabled: Arc::new(std::sync::atomic::AtomicBool::new(false)), // OFF until 122B model download complete
         }
     }
 

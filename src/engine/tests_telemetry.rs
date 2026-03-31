@@ -168,8 +168,8 @@
         let mut engine = engine;
         engine.capabilities = Arc::new(caps);
         
-        // auto_train_enabled defaults to true (enabled by default since v4)
-        assert!(engine.teacher.auto_train_enabled.load(Ordering::SeqCst));
+        // auto_train_enabled defaults to false (OFF until 122B model download complete)
+        assert!(!engine.teacher.auto_train_enabled.load(Ordering::SeqCst));
 
         let sender = engine.event_sender.as_ref().unwrap().clone();
         
@@ -191,8 +191,8 @@
 
         sleep(Duration::from_millis(300)).await;
         
-        // It should have toggled to false
-        assert!(!train_flag.load(Ordering::SeqCst));
+        // It should have toggled to true
+        assert!(train_flag.load(Ordering::SeqCst));
     }
 
     #[test]
