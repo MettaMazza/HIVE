@@ -64,8 +64,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN useradd -m -s /bin/bash hive
 WORKDIR /home/hive
 
-# Copy HIVE binary
+# Copy HIVE binary (both to PATH and to target/ for upgrade.sh compatibility)
 COPY --from=builder /build/target/release/HIVE /usr/local/bin/hive
+RUN mkdir -p target/release && cp /usr/local/bin/hive target/release/HIVE
 
 # Copy configuration files
 COPY .env.example .env
@@ -79,11 +80,20 @@ COPY src/computer/flux_server.py src/computer/flux_server.py
 # Copy source code so codebase_read can inspect the engine
 COPY src/ src/
 
+# Copy build manifest for self-recompilation support
+COPY Cargo.toml Cargo.lock ./
+COPY upgrade.sh ./
+
+# Copy cached dependency artifacts from builder (so cargo build only recompiles HIVE src)
+COPY --from=builder /build/target/release/deps target/release/deps
+COPY --from=builder /build/target/release/build target/release/build
+COPY --from=builder /usr/local/cargo/registry /usr/local/cargo/registry
+
 # Create required directories and copy training scripts to working dir
 RUN mkdir -p memory .hive training logs && \
     chown -R hive:hive /home/hive
 COPY training/*.py training/
-RUN chown -R hive:hive /home/hive/training
+RUN chown -R hive:hive /home/hive/training /home/hive/target
 
 # ── Entrypoint script ──────────────────────────────────────────────
 COPY <<'ENTRYPOINT' /usr/local/bin/start-hive.sh

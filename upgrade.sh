@@ -2,6 +2,12 @@
 echo "[UPGRADE_DAEMON] Engaging 3-second biological sleep to allow the Rust binary to fully terminate natively..."
 sleep 3
 
+# Detect Docker
+IS_DOCKER=false
+if [ -f /.dockerenv ] || grep -q docker /proc/1/cgroup 2>/dev/null; then
+    IS_DOCKER=true
+fi
+
 # Back up the current working binary for rollback
 HIVE_DIR="$(cd "$(dirname "$0")" && pwd)"
 BACKUP_PATH="$HIVE_DIR/target/release/HIVE_rollback"
@@ -13,6 +19,12 @@ fi
 echo "[UPGRADE_DAEMON] Overwriting target physical execution strings natively..."
 cp HIVE_next target/release/HIVE
 rm HIVE_next
+
+# In Docker, also update the PATH binary
+if [ "$IS_DOCKER" = true ] && [ -w /usr/local/bin/hive ]; then
+    cp target/release/HIVE /usr/local/bin/hive
+    echo "[UPGRADE_DAEMON] Updated /usr/local/bin/hive for Docker"
+fi
 
 echo "[UPGRADE_DAEMON] Rewiring active bounds natively and reviving HIVE..."
 
@@ -62,6 +74,11 @@ if [ "$HEALTHY" = false ]; then
         echo "[UPGRADE_DAEMON] 🔄 ROLLING BACK to previous binary..."
         cp "$BACKUP_PATH" "$HIVE_DIR/target/release/HIVE"
 
+        # In Docker, also rollback the PATH binary
+        if [ "$IS_DOCKER" = true ] && [ -w /usr/local/bin/hive ]; then
+            cp "$BACKUP_PATH" /usr/local/bin/hive
+        fi
+
         # Remove the bad resume.json so the rollback doesn't try to resume into a broken state
         rm -f "$HIVE_DIR/memory/core/resume.json"
 
@@ -71,13 +88,15 @@ if [ "$HEALTHY" = false ]; then
         ROLLBACK_PID=$!
         echo "[UPGRADE_DAEMON] 🔄 Rollback binary launched (PID: $ROLLBACK_PID)"
 
-        # Open a terminal for visibility
-        osascript -e "
-        tell application \"Terminal\"
-            activate
-            do script \"echo '[UPGRADE_DAEMON] ⚠️  ROLLBACK ACTIVE — previous binary restored. Check logs for failure cause.' && tail -f '$HIVE_DIR/logs/hive.$(date -u +%Y-%m-%d).log'\"
-        end tell
-        "
+        # Open a terminal for visibility (macOS only — skip in Docker)
+        if [ "$IS_DOCKER" = false ] && command -v osascript &>/dev/null; then
+            osascript -e "
+            tell application \"Terminal\"
+                activate
+                do script \"echo '[UPGRADE_DAEMON] ⚠️  ROLLBACK ACTIVE — previous binary restored. Check logs for failure cause.' && tail -f '$HIVE_DIR/logs/hive.$(date -u +%Y-%m-%d).log'\"
+            end tell
+            "
+        fi
     else
         echo "[UPGRADE_DAEMON] ❌ No rollback binary available — manual intervention required"
     fi
@@ -85,13 +104,15 @@ else
     # Clean up backup after successful deployment
     echo "[UPGRADE_DAEMON] ✅ Deployment verified. Keeping rollback binary for safety."
 
-    # Open a terminal for visibility
-    osascript -e "
-    tell application \"Terminal\"
-        activate
-        do script \"echo '[UPGRADE_DAEMON] ✅ HIVE upgraded and verified successfully.' && tail -f '$HIVE_DIR/logs/hive.$(date -u +%Y-%m-%d).log'\"
-    end tell
-    "
+    # Open a terminal for visibility (macOS only — skip in Docker)
+    if [ "$IS_DOCKER" = false ] && command -v osascript &>/dev/null; then
+        osascript -e "
+        tell application \"Terminal\"
+            activate
+            do script \"echo '[UPGRADE_DAEMON] ✅ HIVE upgraded and verified successfully.' && tail -f '$HIVE_DIR/logs/hive.$(date -u +%Y-%m-%d).log'\"
+        end tell
+        "
+    fi
 fi
 
 echo "[UPGRADE_DAEMON] Done."
