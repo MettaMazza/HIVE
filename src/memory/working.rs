@@ -110,7 +110,8 @@ impl WorkingMemory {
             history = history[start..].to_vec();
         }
 
-        tracing::info!("[MEMORY:Working] get_history: scope='{}' returning {} events (total_vec_size={})", requesting_scope.to_key(), history.len(), r.len());
+        let ptr_addr = Arc::as_ptr(&self.events) as usize;
+        tracing::info!("[MEMORY:Working] get_history: scope='{}' returning {} events (total_vec_size={}) | vec_ptr=0x{:x}", requesting_scope.to_key(), history.len(), r.len(), ptr_addr);
         history
     }
     
@@ -197,9 +198,10 @@ impl WorkingMemory {
         
         // Diagnostic: log scopes of first 5 events to see what we're comparing against
         let sample_scopes: Vec<String> = w.iter().take(5).map(|e| e.scope.to_key()).collect();
+        let ptr_addr = Arc::as_ptr(&self.events) as usize;
         tracing::warn!(
-            "[MEMORY:Working] CLEAR called — scope='{}' | before={} | matching={} | sample_scopes={:?}",
-            scope.to_key(), before_count, matching_count, sample_scopes
+            "[MEMORY:Working] CLEAR called — scope='{}' | before={} | matching={} | sample_scopes={:?} | vec_ptr=0x{:x}",
+            scope.to_key(), before_count, matching_count, sample_scopes, ptr_addr
         );
         
         w.retain(|e| e.scope != *scope); // Remove events for this scope
