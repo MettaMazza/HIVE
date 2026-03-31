@@ -79,9 +79,11 @@ COPY src/computer/flux_server.py src/computer/flux_server.py
 # Copy source code so codebase_read can inspect the engine
 COPY src/ src/
 
-# Create required directories
-RUN mkdir -p memory .hive training && \
+# Create required directories and copy training scripts to working dir
+RUN mkdir -p memory .hive training logs && \
     chown -R hive:hive /home/hive
+COPY training/*.py training/
+RUN chown -R hive:hive /home/hive/training
 
 # ── Entrypoint script ──────────────────────────────────────────────
 COPY <<'ENTRYPOINT' /usr/local/bin/start-hive.sh
