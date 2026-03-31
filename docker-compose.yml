@@ -33,6 +33,7 @@ services:
     volumes:
       - hive-memory:/home/hive/memory       # Persistent memory
       - hive-data:/home/hive/.hive           # Keys and config
+      - ./models:/home/hive/models:ro        # Kokoro TTS model files (read-only)
 
     environment:
       - HIVE_AUTO_OPEN=false

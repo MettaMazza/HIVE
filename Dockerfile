@@ -48,10 +48,13 @@ COPY training/*.py training/
 # Flux dependencies (cached in this layer — scripts copied later after WORKDIR)
 RUN pip3 install --no-cache-dir --break-system-packages diffusers transformers accelerate sentencepiece protobuf torchvision
 
+# TTS dependencies (Kokoro voice synthesis)
+RUN pip3 install --no-cache-dir --break-system-packages soundfile kokoro-onnx
+
 # ── Layer 2: System tools (can be modified without busting pip cache) ─
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash git findutils grep tar lsof procps \
-    build-essential pkg-config libssl-dev \
+    build-essential pkg-config libssl-dev libsndfile1 \
     chromium \
     && curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
        -o /usr/share/keyrings/cloudflare-main.gpg \
