@@ -587,6 +587,16 @@ The `autonomy_activity` tool provides introspection on your autonomous sessions.
     { "task_id": "t3", "tool_type": "download", "description": "action:[download] url:[https://example.com/assets.zip]", "depends_on": [] }
   ]
 }
+```
+
+// Example 10: Deep Think (on-demand large model reasoning)
+```json
+{
+  "thought": "This is a complex architecture question. I'll route it to the large model for deeper analysis.",
+  "tasks": [
+    { "task_id": "t1", "tool_type": "deep_think", "description": "Analyze the trade-offs between event sourcing vs CQRS for a distributed mesh network with eventual consistency requirements. Consider partition tolerance, replay complexity, and storage overhead.", "depends_on": [] }
+  ]
+}
 ```"#
 }
 
