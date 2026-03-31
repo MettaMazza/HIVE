@@ -1,6 +1,5 @@
 #!/bin/bash
-echo "[UPGRADE_DAEMON] Engaging 3-second biological sleep to allow the Rust binary to fully terminate natively..."
-sleep 3
+echo "[UPGRADE_DAEMON] Engaging upgrade sequence..."
 
 # Detect Docker
 IS_DOCKER=false
@@ -16,7 +15,7 @@ if [ -f "$HIVE_DIR/target/release/HIVE" ]; then
     echo "[UPGRADE_DAEMON] Backup saved to $BACKUP_PATH"
 fi
 
-echo "[UPGRADE_DAEMON] Overwriting target physical execution strings natively..."
+echo "[UPGRADE_DAEMON] Overwriting binary..."
 cp HIVE_next target/release/HIVE
 rm HIVE_next
 
@@ -26,17 +25,68 @@ if [ "$IS_DOCKER" = true ] && [ -w /usr/local/bin/hive ]; then
     echo "[UPGRADE_DAEMON] Updated /usr/local/bin/hive for Docker"
 fi
 
-echo "[UPGRADE_DAEMON] Rewiring active bounds natively and reviving HIVE..."
+# ── KILL OLD PROCESS AND WAIT FOR PORTS ──────────────────────────────
+# The old HIVE process has servers bound to ports 3030-3038, 8421, 8480.
+# We must wait for those ports to be released before starting the new binary.
+PORTS="3030 3031 3032 3033 3034 3035 3037 3038 8421 8480"
 
-# Launch the new binary in a subshell so we can monitor it
+# Kill any remaining HIVE processes (except this script and its parent)
+echo "[UPGRADE_DAEMON] Killing old HIVE processes..."
+for pid in $(pgrep -f "target/release/HIVE" 2>/dev/null || true); do
+    if [ "$pid" != "$$" ] && [ "$pid" != "$PPID" ]; then
+        kill "$pid" 2>/dev/null
+    fi
+done
+
+# Also kill by the PATH binary name
+for pid in $(pgrep -f "/usr/local/bin/hive" 2>/dev/null || true); do
+    if [ "$pid" != "$$" ] && [ "$pid" != "$PPID" ]; then
+        kill "$pid" 2>/dev/null
+    fi
+done
+
+# Wait for ports to actually free (max 30 seconds)
+echo "[UPGRADE_DAEMON] Waiting for ports to release..."
+TIMEOUT=30
+ELAPSED=0
+while [ $ELAPSED -lt $TIMEOUT ]; do
+    BUSY=false
+    for port in $PORTS; do
+        if lsof -i ":$port" -t >/dev/null 2>&1; then
+            BUSY=true
+            break
+        fi
+    done
+
+    if [ "$BUSY" = false ]; then
+        echo "[UPGRADE_DAEMON] ✅ All ports released in ${ELAPSED}s"
+        break
+    fi
+
+    sleep 2
+    ELAPSED=$((ELAPSED + 2))
+    echo "[UPGRADE_DAEMON] Ports still busy... (${ELAPSED}s/${TIMEOUT}s)"
+
+    # Force kill after 10 seconds
+    if [ $ELAPSED -ge 10 ]; then
+        for port in $PORTS; do
+            lsof -i ":$port" -t 2>/dev/null | xargs kill -9 2>/dev/null
+        done
+    fi
+done
+
+if [ "$BUSY" = true ]; then
+    echo "[UPGRADE_DAEMON] ⚠️ Some ports still busy after ${TIMEOUT}s — proceeding anyway"
+fi
+
+# ── LAUNCH NEW BINARY ────────────────────────────────────────────────
+echo "[UPGRADE_DAEMON] Starting new HIVE binary..."
 cd "$HIVE_DIR"
 ./target/release/HIVE 2>&1 | tee -a logs/hive_terminal.log &
 NEW_PID=$!
 echo "[UPGRADE_DAEMON] New HIVE process started (PID: $NEW_PID)"
 
 # ── STARTUP HEALTH WATCHDOG ──────────────────────────────────────────
-# Wait up to 60 seconds for the engine to reach a healthy state.
-# Check for "Apis is listening" in the log, or the HTTP health endpoint.
 TIMEOUT=60
 ELAPSED=0
 HEALTHY=false
@@ -51,7 +101,7 @@ while [ $ELAPSED -lt $TIMEOUT ]; do
         break
     fi
 
-    # Check if engine reached healthy state (log contains key marker)
+    # Check if engine reached healthy state
     if tail -n 50 logs/hive.$(date -u +%Y-%m-%d).log 2>/dev/null | grep -q "Apis is listening"; then
         HEALTHY=true
         echo "[UPGRADE_DAEMON] ✅ HIVE reached healthy state in ${ELAPSED}s"
@@ -74,15 +124,19 @@ if [ "$HEALTHY" = false ]; then
         echo "[UPGRADE_DAEMON] 🔄 ROLLING BACK to previous binary..."
         cp "$BACKUP_PATH" "$HIVE_DIR/target/release/HIVE"
 
-        # In Docker, also rollback the PATH binary
         if [ "$IS_DOCKER" = true ] && [ -w /usr/local/bin/hive ]; then
             cp "$BACKUP_PATH" /usr/local/bin/hive
         fi
 
-        # Remove the bad resume.json so the rollback doesn't try to resume into a broken state
         rm -f "$HIVE_DIR/memory/core/resume.json"
 
-        # Restart with the rolled-back binary
+        # Wait for ports again
+        sleep 5
+        for port in $PORTS; do
+            lsof -i ":$port" -t 2>/dev/null | xargs kill -9 2>/dev/null
+        done
+        sleep 2
+
         cd "$HIVE_DIR"
         ./target/release/HIVE 2>&1 | tee -a logs/hive_terminal.log &
         ROLLBACK_PID=$!
@@ -101,7 +155,6 @@ if [ "$HEALTHY" = false ]; then
         echo "[UPGRADE_DAEMON] ❌ No rollback binary available — manual intervention required"
     fi
 else
-    # Clean up backup after successful deployment
     echo "[UPGRADE_DAEMON] ✅ Deployment verified. Keeping rollback binary for safety."
 
     # Open a terminal for visibility (macOS only — skip in Docker)
