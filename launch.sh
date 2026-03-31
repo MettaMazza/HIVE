@@ -64,13 +64,19 @@ fi
 if [ "$1" = "rebuild" ]; then
     banner
     log "Rebuilding HIVE from source..."
+    # Kill Flux server if running
+    lsof -ti:8490 | xargs kill 2>/dev/null || true
+    if [ -f /tmp/hive_flux.pid ]; then
+        kill "$(cat /tmp/hive_flux.pid)" 2>/dev/null || true
+        rm -f /tmp/hive_flux.pid
+    fi
     docker compose down 2>/dev/null || true
-    docker compose build
-    log "✅ Rebuild complete. Run ./launch.sh to start."
-    exit 0
+    # Fall through to the main launch flow (build + start + flux + browser)
 fi
 
-banner
+if [ "$1" != "rebuild" ]; then
+    banner
+fi
 
 # ── Step 1: Check/Install Docker ────────────────────────────────────
 install_docker() {
@@ -240,9 +246,11 @@ if [ -f "$FLUX_SCRIPT" ]; then
     if [ -z "$PYTHON_BIN" ]; then
         PYTHON_BIN="python3"
     fi
-    # Kill any existing Flux server
+    # Kill any existing Flux server (port-based, more reliable than PID files)
+    lsof -ti:8490 | xargs kill 2>/dev/null || true
     if [ -f /tmp/hive_flux.pid ]; then
         kill "$(cat /tmp/hive_flux.pid)" 2>/dev/null || true
+        rm -f /tmp/hive_flux.pid
     fi
     # Start Flux server in background
     "$PYTHON_BIN" "$FLUX_SCRIPT" &
