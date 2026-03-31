@@ -137,7 +137,11 @@ pub async fn execute_operate_turing_grid(
             let format_tag = extract_tag(&description, "format:").unwrap_or("text".to_string());
             let format_str = format_tag.split_whitespace().next().unwrap_or("text").to_string();
             let content = if let Some(idx) = description.find("content:") {
-                description[idx + 8..].trim().to_string()
+                let raw = description[idx + 8..].trim().to_string();
+                // Strip hidden control characters that cause SyntaxError in Python
+                raw.chars()
+                    .filter(|c| !c.is_control() || *c == '\n' || *c == '\t' || *c == '\r')
+                    .collect::<String>()
             } else {
                 return ToolResult {
                     task_id,

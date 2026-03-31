@@ -43,9 +43,20 @@ pub async fn spawn_visualizer_server(memory: Arc<MemoryStore>) {
             .layer(CorsLayer::permissive())
             .with_state(state);
 
-        let listener = TcpListener::bind("0.0.0.0:3030").await.expect("Failed to bind Visualizer port 3030");
-        tracing::info!("[PANOPTICON] 👁️  Visualizer Server bound successfully");
-        axum::serve(listener, app).await.expect("Failed to start Visualizer server");
+        let port: u16 = 3030; // Mesh-governed: creator-key protected
+        let addr = format!("0.0.0.0:{}", port);
+        match TcpListener::bind(&addr).await {
+            Ok(listener) => {
+                tracing::info!("[PANOPTICON] 👁️  Visualizer Server bound on {}", addr);
+                if let Err(e) = axum::serve(listener, app).await {
+                    tracing::error!("[PANOPTICON] ❌ Server error: {}", e);
+                }
+            }
+            Err(e) => {
+                tracing::error!("[PANOPTICON] ❌ Failed to bind port {} — is it already in use? Error: {}", port, e);
+                tracing::error!("[PANOPTICON] 💡 Check with: lsof -i :{}", port);
+            }
+        }
     });
 
     // Non-blocking panic monitor — logs if the spawn dies without blocking startup
