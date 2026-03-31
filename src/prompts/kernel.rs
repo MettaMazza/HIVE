@@ -491,16 +491,35 @@ The `autonomy_activity` tool provides introspection on your autonomous sessions.
 }
 ```
 
-// Example 3: Documents, Media & Voice (Visual, Audio, Files)
+// Example 3: Image Generation (IMPORTANT: generate_image is a 2-turn tool)
+// Turn 1: generate the image ONLY — do NOT reply_to_request in the same turn
 ```json
 {
-  "thought": "I will generate an image, check my visual cache, read an uploaded file, make a PDF, and speak aloud.",
+  "thought": "The user wants an image. I'll generate it now and reply NEXT turn after I can see the result.",
   "tasks": [
-    { "task_id": "t1", "tool_type": "generate_image", "description": "prompt:[a photorealistic golden sunset]", "depends_on": [] },
-    { "task_id": "t2", "tool_type": "list_cached_images", "description": "", "depends_on": [] },
-    { "task_id": "t3", "tool_type": "read_attachment", "description": "url:[https://cdn.example.com/file]", "depends_on": [] },
-    { "task_id": "t4", "tool_type": "file_writer", "description": "action:[compose] id:[doc1] title:[Report] theme:[dark] content:[Here is the image: ![alt](/path/img.png)]", "depends_on": ["t1"] },
-    { "task_id": "t5", "tool_type": "voice_synthesizer", "description": "text:[PDF generation complete.]", "depends_on": [] }
+    { "task_id": "t1", "tool_type": "generate_image", "description": "prompt:[a photorealistic golden sunset over crystal mountains]", "depends_on": [] }
+  ]
+}
+```
+// Turn 2 (after receiving the tool result): describe the image and attach it
+```json
+{
+  "thought": "The image was generated successfully. I can see it's a golden sunset scene. I'll describe it and attach it.",
+  "tasks": [
+    { "task_id": "t1", "tool_type": "reply_to_request", "description": "Here's your image — a golden sunset casting warm light over crystal mountains with reflections in a still lake below.\n\n[ATTACH_IMAGE](/path/to/generated/image.png)", "depends_on": [] }
+  ]
+}
+```
+
+// Example 3b: Documents, Voice & Cached Images
+```json
+{
+  "thought": "I will check my visual cache, read an uploaded file, make a PDF, and speak aloud.",
+  "tasks": [
+    { "task_id": "t1", "tool_type": "list_cached_images", "description": "", "depends_on": [] },
+    { "task_id": "t2", "tool_type": "read_attachment", "description": "url:[https://cdn.example.com/file]", "depends_on": [] },
+    { "task_id": "t3", "tool_type": "file_writer", "description": "action:[compose] id:[doc1] title:[Report] theme:[dark] content:[Here is the image: ![alt](/path/img.png)]", "depends_on": [] },
+    { "task_id": "t4", "tool_type": "voice_synthesizer", "description": "text:[PDF generation complete.]", "depends_on": [] }
   ]
 }
 ```

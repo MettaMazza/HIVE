@@ -58,7 +58,7 @@ pub async fn execute_generate_image(
                     tokens_used: 0,
                     status: ToolStatus::Success,
                     output: format!(
-                        "Image generated successfully.{} YOU MUST include this EXACT tag in your human conversational response to display it to the user:\n\n[ATTACH_IMAGE]({})\n\nIf you do not include this, the user will not see the image.",
+                        "Image generated successfully.{} DO NOT reply in the same turn as this tool — wait for the next turn so you can see and describe the result. Include this EXACT tag in your reply to display it:\n\n[ATTACH_IMAGE]({})\n\nDescribe what the image looks like in 1-2 sentences so the user knows what was generated.",
                         mint_msg, path
                     ),
                 };
@@ -119,7 +119,7 @@ pub async fn execute_generate_image(
                     tokens_used: 0,
                     status: ToolStatus::Success,
                     output: format!(
-                        "Image generated successfully.{} YOU MUST include this EXACT tag in your human conversational response to display it to the user:\n\n[ATTACH_IMAGE]({})\n\nIf you do not include this, the user will not see the image.",
+                        "Image generated successfully.{} DO NOT reply in the same turn as this tool — wait for the next turn so you can see and describe the result. Include this EXACT tag in your reply to display it:\n\n[ATTACH_IMAGE]({})\n\nDescribe what the image looks like in 1-2 sentences so the user knows what was generated.",
                         mint_msg, path
                     ),
                 }
