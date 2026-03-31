@@ -144,7 +144,10 @@ pub async fn execute_react_loop(
         tracing::debug!("[REACT] === Turn {} === (observer_attempts={}, completed_tools={})",
             current_turn, observer_attempts, completed_tools.len());
 
-        if current_turn > 1 && current_turn % checkpoint_interval == 1 {
+        // Checkpoint: ask user to continue or wrap up (skip during autonomy —
+        // autonomy runs continuously until Apis calls reply_to_request)
+        let is_autonomy = event.author_id == "apis_autonomy" || event.author_id == "system_welcome" || event.author_id == "system_resume";
+        if !is_autonomy && current_turn > 1 && current_turn % checkpoint_interval == 1 {
             let platform_name = event.platform.split(':').next().unwrap_or("");
             let channel_id: u64 = event.platform.split(':').nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
             if let Some(platform) = platforms.get(platform_name) {
