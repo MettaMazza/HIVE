@@ -50,7 +50,7 @@ RUN pip3 install --no-cache-dir --break-system-packages diffusers transformers a
 
 # ── Layer 2: System tools (can be modified without busting pip cache) ─
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash git cargo rustc findutils grep tar lsof procps \
+    bash git findutils grep tar lsof procps \
     chromium \
     && curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
        -o /usr/share/keyrings/cloudflare-main.gpg \
@@ -59,6 +59,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get update \
     && apt-get install -y --no-install-recommends cloudflared \
     && rm -rf /var/lib/apt/lists/*
+
+# Copy Rust toolchain from builder (Debian repos have 1.85; we need 1.88+)
+COPY --from=builder /usr/local/cargo /usr/local/cargo
+COPY --from=builder /usr/local/rustup /usr/local/rustup
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:$PATH
 
 # Create hive user for security
 RUN useradd -m -s /bin/bash hive
