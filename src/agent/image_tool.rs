@@ -162,6 +162,7 @@ pub async fn execute_generate_image(
 /// Try to generate via the Flux HTTP server (host-side, like Ollama).
 /// Returns None if server is unreachable (fall back to subprocess).
 /// Returns Some(Ok(path)) on success, Some(Err(msg)) on server error.
+/// The server returns base64-encoded PNG — we decode and write locally.
 async fn try_flux_http(
     base_url: &str,
     prompt: &str,
@@ -169,6 +170,8 @@ async fn try_flux_http(
     width: &str,
     height: &str,
 ) -> Option<Result<String, String>> {
+    use base64::Engine as _;
+
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
         .connect_timeout(std::time::Duration::from_secs(2))
@@ -178,7 +181,6 @@ async fn try_flux_http(
     let url = format!("{}/generate", base_url.trim_end_matches('/'));
     let body = serde_json::json!({
         "prompt": prompt,
-        "output_path": output_path,
         "width": width.parse::<u32>().unwrap_or(1024),
         "height": height.parse::<u32>().unwrap_or(1024),
     });
@@ -197,11 +199,23 @@ async fn try_flux_http(
     if response.status().is_success() {
         match response.json::<serde_json::Value>().await {
             Ok(json) => {
-                let path = json.get("path")
-                    .and_then(|p| p.as_str())
-                    .unwrap_or(output_path)
-                    .to_string();
-                Some(Ok(path))
+                if let Some(b64) = json.get("image_base64").and_then(|v| v.as_str()) {
+                    // Decode base64 and write to local filesystem
+                    match base64::engine::general_purpose::STANDARD.decode(b64) {
+                        Ok(bytes) => {
+                            if let Some(parent) = std::path::Path::new(output_path).parent() {
+                                let _ = tokio::fs::create_dir_all(parent).await;
+                            }
+                            match tokio::fs::write(output_path, &bytes).await {
+                                Ok(()) => Some(Ok(output_path.to_string())),
+                                Err(e) => Some(Err(format!("Failed to write image: {}", e))),
+                            }
+                        }
+                        Err(e) => Some(Err(format!("Failed to decode base64: {}", e))),
+                    }
+                } else {
+                    Some(Err("Server response missing image_base64 field".into()))
+                }
             }
             Err(e) => Some(Err(format!("Failed to parse response: {}", e))),
         }

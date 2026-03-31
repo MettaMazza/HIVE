@@ -3,6 +3,9 @@
 Flux Image Generation Server — runs on HOST alongside Ollama.
 Docker calls this via http://host.docker.internal:8490/generate
 
+The server generates images and returns them as base64 in the HTTP response.
+The caller (Rust image tool) writes the bytes to its own filesystem.
+
 Usage:
     python3 src/computer/flux_server.py
 
@@ -12,6 +15,8 @@ import sys
 import os
 import json
 import time
+import base64
+import io
 import torch
 import warnings
 import threading
@@ -55,7 +60,6 @@ class FluxHandler(BaseHTTPRequestHandler):
             return
 
         prompt = req.get("prompt", "")
-        output_path = req.get("output_path", f"/tmp/flux-{int(time.time()*1000)}.png")
         width = int(req.get("width", 1024))
         height = int(req.get("height", 1024))
 
@@ -73,14 +77,22 @@ class FluxHandler(BaseHTTPRequestHandler):
                 generator=torch.Generator("cpu").manual_seed(0)
             ).images[0]
 
-            os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-            image.save(output_path)
-            print(f"[FLUX SERVER] ✅ Saved to {output_path}", flush=True)
+            # Encode to PNG bytes in memory — no filesystem writes needed
+            buf = io.BytesIO()
+            image.save(buf, format="PNG")
+            image_bytes = buf.getvalue()
+            image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+            print(f"[FLUX SERVER] ✅ Generated ({len(image_bytes)} bytes)", flush=True)
 
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "ok", "path": output_path}).encode())
+            self.wfile.write(json.dumps({
+                "status": "ok",
+                "image_base64": image_b64,
+                "size_bytes": len(image_bytes),
+            }).encode())
         except Exception as e:
             print(f"[FLUX SERVER] ❌ Error: {e}", flush=True)
             self.send_response(500)
