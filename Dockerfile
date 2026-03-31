@@ -46,7 +46,7 @@ RUN pip3 install --no-cache-dir --break-system-packages -r training/requirements
 COPY training/*.py training/
 
 # Flux dependencies (cached in this layer — scripts copied later after WORKDIR)
-RUN pip3 install --no-cache-dir --break-system-packages diffusers transformers accelerate sentencepiece protobuf
+RUN pip3 install --no-cache-dir --break-system-packages diffusers transformers accelerate sentencepiece protobuf torchvision
 
 # ── Layer 2: System tools (can be modified without busting pip cache) ─
 RUN apt-get update && apt-get install -y --no-install-recommends \
