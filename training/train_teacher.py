@@ -26,8 +26,10 @@ from collections import Counter
 
 # ─── Configuration ───────────────────────────────────────────────────────────
 
-MLX_BASE_MODEL = os.environ.get("HIVE_TRAINING_MODEL_MLX", "mlx-community/Qwen3.5-35B-A3B-4bit")
-TORCH_BASE_MODEL = os.environ.get("HIVE_TRAINING_MODEL_TORCH", "Qwen/Qwen3.5-35B-A3B")
+# Training uses the 122B model as the teacher — the bigger brain trains the smaller.
+# The 35B runs inference via Ollama. The 122B runs training via MLX LoRA.
+MLX_BASE_MODEL = "mlx-community/Qwen3.5-122B-A10B-4bit"
+TORCH_BASE_MODEL = "Qwen/Qwen3.5-35B-A3B"  # Torch fallback (Linux/Windows)
 MAX_SEQ_LEN = 16384
 LORA_R = 8
 LORA_ALPHA = 8
