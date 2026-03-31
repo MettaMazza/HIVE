@@ -17,3 +17,4 @@
 !build.rs
 !training/*.py
 !training/requirements*.txt
+!upgrade.sh
