@@ -52,6 +52,7 @@ pub mod opencode;
 pub mod wallet_tool;
 pub mod credits_tool;
 pub mod nft_tool;
+pub mod deep_think_tool;
 
 pub mod tool_registry;
 

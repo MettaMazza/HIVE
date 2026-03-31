@@ -358,6 +358,13 @@ pub fn dispatch_native_tool(
         return Some(handle);
     }
 
+    if tool_type == "deep_think" {
+        let handle = tokio::spawn(async move {
+            crate::agent::deep_think_tool::execute_deep_think(task_id, desc, tx_clone).await
+        });
+        return Some(handle);
+    }
+
     if tool_type == "download" {
         let handle = tokio::spawn(async move {
             crate::agent::download_tool::execute_download(task_id, desc, tx_clone).await

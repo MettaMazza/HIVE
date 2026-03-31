@@ -424,6 +424,14 @@ pub(crate) fn build_default_registries() -> (HashMap<String, ToolTemplate>, Hash
         };
         registry.insert(nft.name.clone(), nft);
 
+        // Deep Think — on-demand large model reasoning
+        let deep_think = ToolTemplate {
+            name: "deep_think".into(),
+            system_prompt: "Route a complex problem to the large reasoning model for deeper analysis. Use this when you need heavyweight reasoning — complex code architecture, mathematical proofs, multi-step logic, deep scientific analysis, or any problem where your fast model needs a second opinion. Description format: state the problem or question clearly. The large model's response is returned as the tool output.".into(),
+            tools: vec![],
+        };
+        registry.insert(deep_think.name.clone(), deep_think);
+
         // Discord-only tools
         discord_tools.insert(channel_reader.name.clone(), channel_reader);
         discord_tools.insert(emoji_react.name.clone(), emoji_react);
