@@ -197,7 +197,7 @@ impl HudData {
 
         let grid_guard = memory_store.turing_grid.lock().await;
         let tape_focus = format!(
-            "[Cognitive Integrity] Tape Focus: [{},{},{}] | Cells: {} | Labels: {}",
+            "[Turing Grid — 3D Computation Engine] Cursor: [{},{},{}] | Active Cells: {} | Labels: {}",
             grid_guard.cursor.0, grid_guard.cursor.1, grid_guard.cursor.2, grid_guard.cells.len(), grid_guard.labels.len()
         );
 
@@ -343,7 +343,7 @@ pub fn format_hud(data: &HudData) -> String {
     sections.push(data.kg_snapshot.clone());
     sections.push("".to_string());
 
-    sections.push("### Embodiment & Cognitive Architecture".to_string());
+    sections.push("### Turing Grid (3D Computation Engine)".to_string());
     sections.push(data.tape_focus.clone());
     sections.push("".to_string());
 

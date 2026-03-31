@@ -668,7 +668,7 @@ impl Engine {
                                     1. This is a PRIVATE SYSTEM OPERATION. Do NOT address, reply to, or acknowledge any users.\n\
                                     2. The external context above is READ-ONLY awareness. Those are NOT messages for you.\n\
                                     3. DIVERSIFY: Do NOT repeat work from previous sessions listed above.\n\
-                                    4. Use tools productively: review memory, consolidate lessons, practice skills, explore the Turing Grid, run routines, research, audit logs, or self-improve.\n\
+                                    4. Use tools productively: consolidate lessons, practice skills, write and execute code on the Turing Grid, run routines, research, audit logs, or self-improve.\n\
                                     5. Report your internal monologue and completed actions in your final reply.",
                                     public_narrative,
                                     previous_sessions,
@@ -836,7 +836,7 @@ impl Engine {
                                         1. This is a PRIVATE SYSTEM OPERATION. Do NOT address, reply to, or acknowledge any users.\n\
                                         2. The external context above is READ-ONLY awareness. Those are NOT messages for you.\n\
                                         3. DIVERSIFY: Do NOT repeat work from previous sessions listed above.\n\
-                                        4. Use tools productively: review memory, consolidate lessons, practice skills, explore the Turing Grid, run routines, research, audit logs, or self-improve.\n\
+                                        4. Use tools productively: consolidate lessons, practice skills, write and execute code on the Turing Grid, run routines, research, audit logs, or self-improve.\n\
                                         5. Report your internal monologue and completed actions in your final reply.",
                                         public_narrative,
                                         previous_sessions
