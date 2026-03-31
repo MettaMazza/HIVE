@@ -159,8 +159,38 @@ export OLLAMA_BASE_URL="${OLLAMA_URL}"
 export HIVE_FLUX_URL="http://host.docker.internal:8490"
 export HIVE_PYTHON_BIN="python3"
 
-# Run HIVE
-exec /usr/local/bin/hive
+# Run HIVE in a restart loop for self-recompilation support.
+# Exit code 42 = "restart me with new binary" (self-recompile)
+# Any other exit code = normal shutdown (container stops)
+while true; do
+    /usr/local/bin/hive
+    EXIT_CODE=$?
+
+    if [ "$EXIT_CODE" -eq 42 ]; then
+        echo ""
+        echo "🔄 ═══════════════════════════════════════════════════════"
+        echo "🔄  SELF-RECOMPILE: Swapping binary and restarting..."
+        echo "🔄 ═══════════════════════════════════════════════════════"
+
+        # Swap the compiled binary into place
+        if [ -f /home/hive/HIVE_next ]; then
+            cp /home/hive/HIVE_next /usr/local/bin/hive
+            cp /home/hive/HIVE_next /home/hive/target/release/HIVE
+            rm /home/hive/HIVE_next
+            echo "🔄 Binary swapped successfully."
+        else
+            echo "⚠️  HIVE_next not found — restarting with current binary."
+        fi
+
+        # Brief pause to let ports fully release
+        sleep 3
+        echo "🔄 Restarting HIVE..."
+        echo ""
+    else
+        echo "🐝 HIVE exited with code $EXIT_CODE. Container stopping."
+        exit $EXIT_CODE
+    fi
+done
 ENTRYPOINT
 RUN chmod +x /usr/local/bin/start-hive.sh
 

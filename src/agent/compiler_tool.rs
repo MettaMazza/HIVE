@@ -127,13 +127,20 @@ pub async fn execute_compiler(
                     let _ = std::fs::write("memory/core/resume.json", serde_json::to_string_pretty(&resume).unwrap_or_default());
                     tracing::info!("[UPGRADE_DAEMON] Resume state saved to memory/core/resume.json");
                     
-                    telemetry!(telemetry_tx, "  🔄 Engaging detached upgrade script and gracefully exiting physical process...\n".into());
-                    
-                    // Spawn script fully detached
-                    let _ = tokio::process::Command::new("bash")
-                        .arg("upgrade.sh")
-                        .spawn();
-                    
+                    telemetry!(telemetry_tx, "  🔄 Preparing hot-swap and graceful restart...\n".into());
+
+                    // Detect Docker — in Docker, we exit with code 42 and let the
+                    // entrypoint restart loop handle the binary swap.
+                    // On native macOS, we spawn upgrade.sh as before.
+                    let is_docker = std::path::Path::new("/.dockerenv").exists();
+
+                    if !is_docker {
+                        // Native: spawn detached upgrade script
+                        let _ = tokio::process::Command::new("bash")
+                            .arg("upgrade.sh")
+                            .spawn();
+                    }
+
                     // ── PRE-LOG RECOMPILE TO AUTONOMY ACTIVITY ──────────────
                     // The normal session logger in core.rs runs AFTER the ReAct
                     // loop returns, but process::exit kills us before that.
@@ -160,14 +167,14 @@ pub async fn execute_compiler(
                         tracing::info!("[UPGRADE_DAEMON] Pre-logged recompile to autonomy activity.jsonl");
                     }
 
-                    // Allow any pending replies, telemetry, and disk flushes to complete
-                    // before killing the process. Without this, concurrent tasks like
-                    // reply_to_request get killed mid-flight.
+                    // Allow pending replies and disk flushes to complete
                     tracing::warn!("[UPGRADE_DAEMON] Flushing pending operations before exit (5s grace)...");
                     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                     
-                    // Terminate the host natively
-                    std::process::exit(0);
+                    // Exit with code 42 in Docker (entrypoint restart loop),
+                    // or 0 on native (upgrade.sh handles restart)
+                    let exit_code = if is_docker { 42 } else { 0 };
+                    std::process::exit(exit_code);
                 } else {
                     telemetry!(telemetry_tx, "  ❌ Compilation blocked by Rust compiler errors.\n".into());
                     return ToolResult { 
