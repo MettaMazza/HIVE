@@ -25,12 +25,15 @@ pub async fn execute_compiler(
         // blocking .await on infinite tasks, incorrect concurrency, etc.)
         telemetry!(telemetry_tx, "  🧪 Running test suite before compilation (safety gate)...\n".into());
 
-        match tokio::process::Command::new("cargo")
-            .arg("test")
-            .output()
-            .await
-        {
-            Ok(test_output) => {
+        let test_result = tokio::time::timeout(
+            std::time::Duration::from_secs(600),
+            tokio::process::Command::new("cargo")
+                .args(["test", "--lib", "--release"])
+                .output()
+        ).await;
+
+        match test_result {
+            Ok(Ok(test_output)) => {
                 if !test_output.status.success() {
                     let stderr = String::from_utf8_lossy(&test_output.stderr);
                     let stdout = String::from_utf8_lossy(&test_output.stdout);
@@ -44,13 +47,22 @@ pub async fn execute_compiler(
                 }
                 telemetry!(telemetry_tx, "  ✅ All tests passed. Proceeding to compilation.\n".into());
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 telemetry!(telemetry_tx, "  ❌ Failed to run test suite — recompile ABORTED.\n".into());
                 return ToolResult {
                     task_id,
                     output: format!("RECOMPILE ABORTED: Could not run cargo test: {}", e),
                     tokens_used: 0,
                     status: ToolStatus::Failed("Test Runner Failure".into()),
+                };
+            }
+            Err(_) => {
+                telemetry!(telemetry_tx, "  ❌ Test suite timed out (10min) — recompile ABORTED.\n".into());
+                return ToolResult {
+                    task_id,
+                    output: "RECOMPILE ABORTED: Test suite timed out after 10 minutes. This may indicate a hanging test or missing dependencies.".into(),
+                    tokens_used: 0,
+                    status: ToolStatus::Failed("Test Timeout".into()),
                 };
             }
         }
