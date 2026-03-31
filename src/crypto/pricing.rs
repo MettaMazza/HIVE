@@ -83,18 +83,15 @@ pub struct PricingConfig {
 }
 
 impl PricingConfig {
-    pub fn from_env() -> Self {
+    /// Mesh-governed pricing thresholds — not per-node configurable.
+    pub fn mesh_defaults() -> Self {
         Self {
-            high_threshold: env_f64("REMOVED_MESH_GOVERNEDHIGH_THRESHOLD", 0.8),
-            moderate_threshold: env_f64("REMOVED_MESH_GOVERNEDMODERATE_THRESHOLD", 0.5),
-            high_multiplier: env_f64("REMOVED_MESH_GOVERNED", 1.5),
-            moderate_multiplier: env_f64("REMOVED_MESH_GOVERNED", 1.2),
+            high_threshold: 0.8,
+            moderate_threshold: 0.5,
+            high_multiplier: 1.5,
+            moderate_multiplier: 1.2,
         }
     }
-}
-
-fn env_f64(key: &str, default: f64) -> f64 {
-    std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
 }
 
 /// The Dynamic Pricing Engine.
@@ -109,7 +106,7 @@ pub struct DynamicPricing {
 
 impl DynamicPricing {
     pub fn new() -> Self {
-        let config = PricingConfig::from_env();
+        let config = PricingConfig::mesh_defaults();
         let now = chrono::Utc::now().to_rfc3339();
 
         Self {

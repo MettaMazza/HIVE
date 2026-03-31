@@ -30,7 +30,7 @@
         let memory = Arc::new(MemoryStore::default());
         let (tx, mut _rx) = mpsc::channel(100);
 
-        let agent_mgr = Arc::new(crate::agent::AgentManager::new(provider.clone(), memory.clone()));
+        let agent_mgr = Arc::new(crate::agent::AgentManager::new(provider.clone(), memory.clone(), Arc::new(crate::config::AppConfig::default())));
         let capabilities = Arc::new(AgentCapabilities::default());
 
         let spec = SubAgentSpec {
@@ -71,7 +71,7 @@
         let provider: Arc<dyn Provider> = Arc::new(mock);
         let memory = Arc::new(MemoryStore::default());
         let (tx, mut _rx) = mpsc::channel(100);
-        let agent_mgr = Arc::new(crate::agent::AgentManager::new(provider.clone(), memory.clone()));
+        let agent_mgr = Arc::new(crate::agent::AgentManager::new(provider.clone(), memory.clone(), Arc::new(crate::config::AppConfig::default())));
         let capabilities = Arc::new(AgentCapabilities::default());
 
         let spec = SubAgentSpec {
@@ -112,7 +112,7 @@
         let provider: Arc<dyn Provider> = Arc::new(mock);
         let memory = Arc::new(MemoryStore::default());
         let (tx, mut _rx) = mpsc::channel(100);
-        let agent_mgr = Arc::new(crate::agent::AgentManager::new(provider.clone(), memory.clone()));
+        let agent_mgr = Arc::new(crate::agent::AgentManager::new(provider.clone(), memory.clone(), Arc::new(crate::config::AppConfig::default())));
         let capabilities = Arc::new(AgentCapabilities::default());
 
         let spec = SubAgentSpec {

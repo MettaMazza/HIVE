@@ -80,30 +80,66 @@ impl Teacher {
                             let backend = std::env::var("HIVE_TRAINING_BACKEND")
                                 .unwrap_or_else(|_| "auto".to_string());
 
-                            tokio::spawn(async move {
-                                let output = tokio::process::Command::new(&python_bin)
-                                    .arg("training/train_teacher.py")
-                                    .arg("--micro")
-                                    .arg("--stack")
-                                    .arg("--backend")
-                                    .arg(&backend)
-                                    .arg("--examples")
-                                    .arg(current_count.to_string())
-                                    .output()
-                                    .await;
+                            let in_docker = std::path::Path::new("/.dockerenv").exists();
 
-                                match output {
-                                    Ok(result) => {
-                                        let stdout = String::from_utf8_lossy(&result.stdout);
-                                        let stderr = String::from_utf8_lossy(&result.stderr);
-                                        if result.status.success() {
-                                            tracing::info!("[TEACHER] ✅ ORPO alignment complete:\n{}", stdout);
-                                        } else {
-                                            tracing::error!("[TEACHER] ❌ ORPO alignment failed (exit {}):\nstdout: {}\nstderr: {}",
-                                                result.status, stdout, stderr);
+                            tokio::spawn(async move {
+                                if in_docker {
+                                    // Docker: call host training server
+                                    let train_url = std::env::var("HIVE_TRAINING_URL")
+                                        .unwrap_or_else(|_| "http://host.docker.internal:8491".to_string());
+
+                                    let payload = serde_json::json!({
+                                        "micro": true,
+                                        "stack": true,
+                                        "backend": backend,
+                                        "examples": current_count,
+                                    });
+
+                                    match reqwest::Client::new()
+                                        .post(format!("{}/train", train_url))
+                                        .json(&payload)
+                                        .timeout(std::time::Duration::from_secs(3600))
+                                        .send()
+                                        .await
+                                    {
+                                        Ok(resp) => {
+                                            let body: serde_json::Value = resp.json().await.unwrap_or_default();
+                                            let status = body["status"].as_str().unwrap_or("unknown");
+                                            if status == "success" {
+                                                tracing::info!("[TEACHER] ✅ ORPO alignment complete (host):\n{}",
+                                                    body["stdout"].as_str().unwrap_or(""));
+                                            } else {
+                                                tracing::error!("[TEACHER] ❌ ORPO alignment failed (host): {}",
+                                                    body["stderr"].as_str().unwrap_or("unknown error"));
+                                            }
                                         }
+                                        Err(e) => tracing::error!("[TEACHER] ❌ Failed to reach host training server: {}", e),
                                     }
-                                    Err(e) => tracing::error!("[TEACHER] ❌ Failed to spawn ORPO training: {}", e),
+                                } else {
+                                    // Native: run subprocess directly
+                                    match tokio::process::Command::new(&python_bin)
+                                        .arg("training/train_teacher.py")
+                                        .arg("--micro")
+                                        .arg("--stack")
+                                        .arg("--backend")
+                                        .arg(&backend)
+                                        .arg("--examples")
+                                        .arg(current_count.to_string())
+                                        .output()
+                                        .await
+                                    {
+                                        Ok(result) => {
+                                            let stdout = String::from_utf8_lossy(&result.stdout);
+                                            let stderr = String::from_utf8_lossy(&result.stderr);
+                                            if result.status.success() {
+                                                tracing::info!("[TEACHER] ✅ ORPO alignment complete:\n{}", stdout);
+                                            } else {
+                                                tracing::error!("[TEACHER] ❌ ORPO alignment failed (exit {}):\nstdout: {}\nstderr: {}",
+                                                    result.status, stdout, stderr);
+                                            }
+                                        }
+                                        Err(e) => tracing::error!("[TEACHER] ❌ Failed to spawn ORPO training: {}", e),
+                                    }
                                 }
                             });
                         }

@@ -94,14 +94,14 @@ pub struct QueueConfig {
 }
 
 impl QueueConfig {
-    pub fn from_env() -> Self {
+    /// Mesh-governed queue rules — not per-node configurable.
+    /// Allowing nodes to change concurrency limits or priority duration
+    /// would let them game queue position.
+    pub fn mesh_defaults() -> Self {
         Self {
-            free_tier_max_concurrent: std::env::var("REMOVED_MESH_GOVERNED")
-                .ok().and_then(|v| v.parse().ok()).unwrap_or(3),
-            priority_duration_secs: std::env::var("REMOVED_MESH_GOVERNED")
-                .ok().and_then(|v| v.parse().ok()).unwrap_or(300),
-            reputation_boost_threshold: std::env::var("REMOVED_MESH_GOVERNED")
-                .ok().and_then(|v| v.parse().ok()).unwrap_or(0.8),
+            free_tier_max_concurrent: 3,
+            priority_duration_secs: 300,
+            reputation_boost_threshold: 0.8,
         }
     }
 }
@@ -120,7 +120,7 @@ pub struct AccessQueue {
 
 impl AccessQueue {
     pub fn new() -> Self {
-        let config = QueueConfig::from_env();
+        let config = QueueConfig::mesh_defaults();
         tracing::info!("[QUEUE] 🎫 Universal access queue initialised (free_max_concurrent={})",
             config.free_tier_max_concurrent);
 

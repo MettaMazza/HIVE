@@ -61,9 +61,7 @@ struct SearchReq {
 }
 
 pub async fn spawn_apis_code_server() {
-    let port: u16 = std::env::var("REMOVED_MESH_GOVERNED")
-        .ok().and_then(|v| v.parse().ok())
-        .unwrap_or(3033);
+    let port: u16 = 3033; // Mesh-governed: creator-key protected
 
     let workspace = std::env::var("HIVE_CODE_WORKSPACE")
         .unwrap_or_else(|_| ".".to_string());
@@ -564,8 +562,7 @@ async fn api_publish_site(State(state): State<CodeState>, Json(req): Json<Publis
     }
 
     // Register with HivePortal
-    let portal_port: u16 = std::env::var("REMOVED_MESH_GOVERNED")
-        .ok().and_then(|v| v.parse().ok()).unwrap_or(3035);
+    let portal_port: u16 = 3035; // Mesh-governed
 
     let client = reqwest::Client::new();
     let result = client.post(format!("http://0.0.0.0:{}/api/sites", portal_port))

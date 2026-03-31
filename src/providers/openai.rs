@@ -47,10 +47,11 @@ pub struct OpenAiProvider {
     api_key: String,
     model: String,
     base_url: String,
+    system_name: String,
 }
 
 impl OpenAiProvider {
-    pub fn new() -> Result<Self, ProviderError> {
+    pub fn new(timeout_secs: u64, system_name: String) -> Result<Self, ProviderError> {
         let api_key = std::env::var("OPENAI_API_KEY")
             .map_err(|_| ProviderError::ConnectionError("OPENAI_API_KEY not set".into()))?;
         let model = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o".into());
@@ -59,25 +60,27 @@ impl OpenAiProvider {
         
         Ok(Self {
             client: Client::builder()
-                .timeout(std::time::Duration::from_secs(300))
+                .timeout(std::time::Duration::from_secs(timeout_secs))
                 .build()
                 .unwrap_or_else(|_| Client::new()),
             api_key,
             model,
             base_url,
+            system_name,
         })
     }
 
     /// Create with explicit parameters (used by xAI/Grok which shares the OpenAI API format)
-    pub fn with_config(api_key: String, model: String, base_url: String) -> Self {
+    pub fn with_config(api_key: String, model: String, base_url: String, timeout_secs: u64, system_name: String) -> Self {
         Self {
             client: Client::builder()
-                .timeout(std::time::Duration::from_secs(300))
+                .timeout(std::time::Duration::from_secs(timeout_secs))
                 .build()
                 .unwrap_or_else(|_| Client::new()),
             api_key,
             model,
             base_url,
+            system_name,
         }
     }
 }
@@ -104,7 +107,7 @@ impl Provider for OpenAiProvider {
         // History
         const HISTORY_MSG_CAP: usize = 8000;
         for event in history {
-            let role = if event.author_name == "Apis" { "assistant" } else { "user" };
+            let role = if event.author_name == self.system_name { "assistant" } else { "user" };
             let content = if role == "user" {
                 format!("[AUTHOR: {} -> APIS]: {}", event.author_name, event.content)
             } else {
@@ -230,6 +233,8 @@ mod tests {
             "test-key".into(),
             "gpt-4o".into(),
             mock_server.uri(),
+            30,
+            "Apis".into(),
         );
 
         let mock_response = "data: {\"choices\":[{\"delta\":{\"content\":\"Hello from GPT!\"}}]}\n\ndata: [DONE]\n";
@@ -262,6 +267,8 @@ mod tests {
             "test-key".into(),
             "gpt-4o".into(),
             mock_server.uri(),
+            30,
+            "Apis".into(),
         );
 
         Mock::given(method("POST"))

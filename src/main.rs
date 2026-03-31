@@ -11,6 +11,7 @@ pub mod teacher;
 pub mod computer;
 pub mod voice;
 pub mod server;
+pub mod config;
 pub mod network;
 pub mod crypto;
 
@@ -39,6 +40,11 @@ fn get_reader() -> Box<dyn AsyncBufRead + Unpin + Send + Sync> {
 
 #[cfg(not(tarpaulin_include))]
 pub async fn run_app() {
+    dotenv::dotenv().ok(); // Load .env file manually first
+
+    // ── Global Configuration ───────────────────────────────────────
+    let config = crate::config::AppConfig::load_from_env();
+
     // ── Master Rotating Log ─────────────────────────────────────────────
     // Daily rotation with max 7 rotated files (+ current = 8 on disk).
     // All subsystem logs ([ENGINE:*], [MEMORY:*], [AGENT:*], etc.) merge
@@ -48,7 +54,7 @@ pub async fn run_app() {
         .filename_prefix("hive")
         .filename_suffix("log")
         .max_log_files(8)
-        .build("logs")
+        .build(&config.logs_dir)
         .expect("Failed to create log appender");
 
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
@@ -67,8 +73,7 @@ pub async fn run_app() {
 
     tracing::info!("Starting HIVE initialization sequence...");
     let reader = get_reader();
-    
-    dotenv::dotenv().ok(); // Load .env file manually
+    tracing::info!("[CONFIG] System parameters loaded. Identity: '{}'", config.system_name);
 
     // ── Auto-start Flux image generation server ────────────────────────
     // Runs as a background process alongside HIVE, like Ollama.
@@ -106,47 +111,54 @@ pub async fn run_app() {
 
     let discord_token = std::env::var("DISCORD_TOKEN").unwrap_or_default();
 
-    // 1. Initialize Core Storage Systems First
-    let memory_store = Arc::new(crate::memory::MemoryStore::default());
+    let memory_store = Arc::new(crate::memory::MemoryStore::new(Some(std::path::PathBuf::from(&config.storage_root))));
     let stop_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let provider: Arc<dyn Provider> = match std::env::var("HIVE_PROVIDER").unwrap_or_else(|_| "ollama".into()).to_lowercase().as_str() {
+    // Create the model handle and base URL early — shared with Discord handler for /model command
+    let ollama_base_url = std::env::var("HIVE_OLLAMA_URL")
+        .unwrap_or_else(|_| "http://localhost:11434".to_string());
+
+    let (provider, model_handle): (Arc<dyn Provider>, Arc<tokio::sync::RwLock<String>>) = match std::env::var("HIVE_PROVIDER").unwrap_or_else(|_| "ollama".into()).to_lowercase().as_str() {
         "openai" | "gpt" => {
             tracing::info!("[PROVIDER] Using OpenAI API provider");
-            Arc::new(crate::providers::openai::OpenAiProvider::new().expect("Failed to init OpenAI provider — is OPENAI_API_KEY set?"))
+            let model_name = std::env::var("HIVE_MODEL").unwrap_or_else(|_| "gpt-4".into());
+            (Arc::new(crate::providers::openai::OpenAiProvider::new(config.timeout_inference_secs, config.system_name.clone()).expect("Failed to init OpenAI provider — is OPENAI_API_KEY set?")),
+             Arc::new(tokio::sync::RwLock::new(model_name)))
         }
         "anthropic" | "claude" => {
             tracing::info!("[PROVIDER] Using Anthropic Claude API provider");
-            Arc::new(crate::providers::anthropic::AnthropicProvider::new().expect("Failed to init Anthropic provider — is ANTHROPIC_API_KEY set?"))
+            let model_name = std::env::var("HIVE_MODEL").unwrap_or_else(|_| "claude-3".into());
+            (Arc::new(crate::providers::anthropic::AnthropicProvider::new(config.timeout_inference_secs, config.system_name.clone()).expect("Failed to init Anthropic provider — is ANTHROPIC_API_KEY set?")),
+             Arc::new(tokio::sync::RwLock::new(model_name)))
         }
         "gemini" | "google" => {
             tracing::info!("[PROVIDER] Using Google Gemini API provider");
-            Arc::new(crate::providers::gemini::GeminiProvider::new().expect("Failed to init Gemini provider — is GEMINI_API_KEY set?"))
+            let model_name = std::env::var("HIVE_MODEL").unwrap_or_else(|_| "gemini-pro".into());
+            (Arc::new(crate::providers::gemini::GeminiProvider::new(config.timeout_inference_secs, config.system_name.clone()).expect("Failed to init Gemini provider — is GEMINI_API_KEY set?")),
+             Arc::new(tokio::sync::RwLock::new(model_name)))
         }
         "xai" | "grok" => {
             tracing::info!("[PROVIDER] Using xAI Grok API provider");
-            Arc::new(crate::providers::xai::XaiProvider::new().expect("Failed to init xAI provider — is XAI_API_KEY set?"))
+            let model_name = std::env::var("HIVE_MODEL").unwrap_or_else(|_| "grok-1".into());
+            (Arc::new(crate::providers::xai::XaiProvider::new(config.timeout_inference_secs, config.system_name.clone()).expect("Failed to init xAI provider — is XAI_API_KEY set?")),
+             Arc::new(tokio::sync::RwLock::new(model_name)))
         }
         _ => {
             tracing::info!("[PROVIDER] Using local Ollama provider");
-            let mut ollama = OllamaProvider::new();
+            let mut ollama = OllamaProvider::new(config.system_name.clone());
             ollama.set_stop_flag(stop_flag.clone());
-            Arc::new(ollama)
+            let handle = ollama.model_handle();
+            (Arc::new(ollama), handle)
         }
     };
     
     // 2. Initialize Agent Manager to gather Native Tolls (Tools)
-    let agent_manager = crate::agent::AgentManager::new(provider.clone(), memory_store.clone());
+    let agent_manager = crate::agent::AgentManager::new(provider.clone(), memory_store.clone(), config.clone());
     let native_tools = agent_manager.get_tool_names();
 
     // 3. Inject Dynamic Tool Tooling into Capabilities 
     let capabilities = AgentCapabilities {
         admin_users: {
-            let mut admins: Vec<String> = std::env::var("HIVE_ADMIN_USERS")
-                .unwrap_or_default()
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
+            let mut admins = config.admin_users.clone();
             // System-level users: always present regardless of env config
             if !admins.contains(&"local_admin".to_string()) {
                 admins.push("local_admin".into());
@@ -156,23 +168,29 @@ pub async fn run_app() {
             }
             admins
         },
-        has_terminal_access: true,
+        has_terminal_access: config.allow_terminal,
         has_internet_access: true,
-        admin_tools: vec![
-            "run_bash_command".into(),
-            "process_manager".into(),
-            "file_system_operator".into(),
-            "download".into(),
-        ],
+        admin_tools: {
+            let mut tools = vec!["download".into()];
+            if config.allow_terminal {
+                tools.push("run_bash_command".into());
+                tools.push("process_manager".into());
+            }
+            if config.allow_file_system {
+                tools.push("file_system_operator".into());
+            }
+            tools
+        },
         default_tools: native_tools, // <-- Dynamically Assigned 
     };
 
     // 4. Build the engine with our defined platforms and injected contexts
     let glasses_model = std::env::var("HIVE_GLASSES_MODEL").unwrap_or_else(|_| "qwen3.5:35b".into());
     tracing::info!("[PROVIDER] Glasses platform using model: {} (set HIVE_GLASSES_MODEL to override)", glasses_model);
-    let glasses_provider: Arc<dyn crate::providers::Provider> = Arc::new(OllamaProvider::with_model(&glasses_model));
+    let glasses_provider: Arc<dyn crate::providers::Provider> = Arc::new(OllamaProvider::with_model(&glasses_model, config.system_name.clone()));
     let mut engine = EngineBuilder::new()
-        .with_platform(Box::new(DiscordPlatform::new(discord_token, memory_store.clone(), Arc::new(capabilities.clone()))))
+        .with_config(config.clone())
+        .with_platform(Box::new(DiscordPlatform::new(discord_token, memory_store.clone(), Arc::new(capabilities.clone()), model_handle, ollama_base_url)))
         .with_platform(Box::new(CliPlatform::new(reader)))
         .with_platform(Box::new(GlassesPlatform::new()))
         .with_provider(provider)
@@ -314,7 +332,7 @@ pub async fn run_app() {
     let pool_manager = Arc::new(crate::network::pool::PoolManager::new(pool_peer_id.clone()));
     {
         // Spawn compute relay (serves inference for the mesh)
-        let relay_config = crate::network::compute_relay::ComputeRelayConfig::from_env();
+        let relay_config = crate::network::compute_relay::ComputeRelayConfig::mesh_defaults();
         let _compute_relay = Arc::new(crate::network::compute_relay::ComputeRelay::new(
             relay_config,
             content_filter.clone(),
@@ -392,9 +410,7 @@ pub async fn run_app() {
             .map(|v| v != "false" && v != "0")
             .unwrap_or(true);
         if auto_open {
-            let portal_port: u16 = std::env::var("REMOVED_MESH_GOVERNED")
-                .ok().and_then(|v| v.parse().ok())
-                .unwrap_or(3035);
+            let portal_port: u16 = 3035; // Mesh-governed
             tokio::spawn(async move {
                 // Small delay to ensure servers are bound
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;

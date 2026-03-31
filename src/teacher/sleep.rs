@@ -269,34 +269,100 @@ impl SleepCycle {
 
         tracing::info!("💤 [SLEEP] Launching training: backend={}, python={}", training_backend, python_bin);
 
-        let output = tokio::process::Command::new(&python_bin)
-            .arg("training/train_teacher.py")
-            .arg("--micro")
-            .arg("--stack")
-            .arg("--backend")
-            .arg(&training_backend)
-            .arg("--examples")
-            .arg(selected_count.to_string())
-            .arg("--lr")
-            .arg(self.config.micro_lr.to_string())
-            .arg("--epochs")
-            .arg(self.config.micro_epochs.to_string())
-            .arg("--max-seq-len")
-            .arg(self.config.micro_max_seq_len.to_string())
-            .output()
-            .await
-            .map_err(|e| format!("Failed to execute training script '{}': {}", python_bin, e))?;
+        let in_docker = std::path::Path::new("/.dockerenv").exists();
+
+        let (stdout, stderr) = if in_docker {
+            // ── DOCKER: Call the host's training server via HTTP ──
+            // Training needs Metal/MLX/GPU — the host machine has it.
+            // Same pattern as Ollama (inference) and Flux (images).
+            let train_url = std::env::var("HIVE_TRAINING_URL")
+                .unwrap_or_else(|_| "http://host.docker.internal:8491".to_string());
+
+            tracing::info!("💤 [SLEEP] Docker detected — calling host training server at {}", train_url);
+
+            let payload = serde_json::json!({
+                "micro": true,
+                "stack": true,
+                "backend": training_backend,
+                "examples": selected_count,
+                "lr": self.config.micro_lr,
+                "epochs": self.config.micro_epochs,
+                "max_seq_len": self.config.micro_max_seq_len,
+            });
+
+            let client = reqwest::Client::new();
+            let resp = match client.post(format!("{}/train", train_url))
+                .json(&payload)
+                .timeout(std::time::Duration::from_secs(3600))
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    self.teacher.release_training_lock().await;
+                    return Err(format!(
+                        "Failed to reach host training server at {}: {}. \
+                         Make sure train_server.py is running on the host (started by launch.sh).",
+                        train_url, e
+                    ));
+                }
+            };
+
+            let status = resp.status();
+            let body: serde_json::Value = resp.json().await.unwrap_or_default();
+
+            let out = body["stdout"].as_str().unwrap_or("").to_string();
+            let err = body["stderr"].as_str().unwrap_or("").to_string();
+            let train_status = body["status"].as_str().unwrap_or("unknown");
+
+            if !status.is_success() || train_status != "success" {
+                tracing::error!("💤 [SLEEP] ❌ Host training failed (status={}, server={}):\nstdout: {}\nstderr: {}",
+                    status, train_status, out, err);
+                self.teacher.release_training_lock().await;
+                return Err(format!("Host training failed ({}): {}", train_status, err));
+            }
+
+            (out, err)
+        } else {
+            // ── NATIVE: Run training subprocess directly (MLX/Metal) ──
+            let training_future = tokio::process::Command::new(&python_bin)
+                .arg("training/train_teacher.py")
+                .arg("--micro")
+                .arg("--stack")
+                .arg("--backend")
+                .arg(&training_backend)
+                .arg("--examples")
+                .arg(selected_count.to_string())
+                .arg("--lr")
+                .arg(self.config.micro_lr.to_string())
+                .arg("--epochs")
+                .arg(self.config.micro_epochs.to_string())
+                .arg("--max-seq-len")
+                .arg(self.config.micro_max_seq_len.to_string())
+                .output();
+
+            let output = match training_future.await {
+                Ok(o) => o,
+                Err(e) => {
+                    self.teacher.release_training_lock().await;
+                    return Err(format!("Failed to execute training script '{}': {}", python_bin, e));
+                }
+            };
+
+            let out = String::from_utf8_lossy(&output.stdout).to_string();
+            let err = String::from_utf8_lossy(&output.stderr).to_string();
+
+            if !output.status.success() {
+                tracing::error!("💤 [SLEEP] ❌ Training failed (exit {}):\nstdout: {}\nstderr: {}",
+                    output.status, out, err);
+                self.teacher.release_training_lock().await;
+                return Err(format!("Micro-training failed (exit {}): {}", output.status, err));
+            }
+
+            (out, err)
+        };
 
         let duration = start.elapsed().as_secs_f64();
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-
-        if !output.status.success() {
-            tracing::error!("💤 [SLEEP] ❌ Training failed (exit {}):\nstdout: {}\nstderr: {}",
-                output.status, stdout, stderr);
-            self.teacher.release_training_lock().await;
-            return Err(format!("Micro-training failed (exit {}): {}", output.status, stderr));
-        }
 
         // Log training output on success
         if !stdout.is_empty() {

@@ -11,6 +11,10 @@ pub enum InteractionAction {
     Tending { user_id: u64 },
     Proxy { user_id: u64, target_channel: u64, message: String },
     AiComs { user_id: u64 },
+    NewSession { user_id: u64, user_name: String, channel_id: u64, guild_id: Option<u64> },
+    KillAll { user_id: u64 },
+    ModelSwap { user_id: u64, model_name: String },
+    ModelAutocomplete,
     TtsGenerate { message_id: u64, content: String, has_audio: bool },
     Continue { message_id: u64, wants_continue: bool, allowed_user_id: String, clicker_user_id: u64 },
     Ignore,
@@ -56,7 +60,34 @@ pub fn decode_interaction(interaction: &Interaction) -> InteractionAction {
             "aicoms" => return InteractionAction::AiComs {
                 user_id: command.user.id.get(),
             },
+            "new" => return InteractionAction::NewSession {
+                user_id: command.user.id.get(),
+                user_name: command.user.name.clone(),
+                channel_id: command.channel_id.get(),
+                guild_id: command.guild_id.map(|g| g.get()),
+            },
+            "killall" => return InteractionAction::KillAll {
+                user_id: command.user.id.get(),
+            },
+            "model" => {
+                let mut model_name = String::new();
+                for option in &command.data.options {
+                    if option.name == "name" {
+                        if let serenity::model::application::CommandDataOptionValue::String(val) = &option.value {
+                            model_name = val.clone();
+                        }
+                    }
+                }
+                return InteractionAction::ModelSwap {
+                    user_id: command.user.id.get(),
+                    model_name,
+                };
+            }
             _ => {}
+        }
+    } else if let Interaction::Autocomplete(autocomplete) = interaction {
+        if autocomplete.data.name == "model" {
+            return InteractionAction::ModelAutocomplete;
         }
     } else if let Interaction::Component(component) = interaction {
         let custom_id = component.data.custom_id.as_str();
@@ -364,6 +395,150 @@ pub async fn handle_interaction(handler: &super::Handler, ctx: Context, interact
                     tracing::error!("Cannot respond to slash command: {why}");
                 }
                 tracing::info!("[AICOMS] Toggled to {} by user {}", if !current { "ON" } else { "OFF" }, user_id);
+            }
+        }
+        InteractionAction::NewSession { user_id, user_name, channel_id, guild_id } => {
+            if let Interaction::Command(command) = &interaction {
+                let scope = if guild_id.is_none() {
+                    Scope::Private { user_id: user_id.to_string() }
+                } else {
+                    Scope::Public { channel_id: channel_id.to_string(), user_id: user_id.to_string() }
+                };
+
+                let memory = handler.memory.clone();
+                let _ = memory.check_and_trigger_autosave(&scope).await;
+                memory.working.clear(&scope).await;
+
+                // Send a telemetry "processing" embed so the user sees activity
+                let embed = serenity::builder::CreateEmbed::new()
+                    .description("```\n🔄 New session starting...\n```")
+                    .footer(serenity::builder::CreateEmbedFooter::new("🐝 Resetting..."))
+                    .color(0x5865F2);
+                let thinking_msg_id = if let Ok(sent_msg) = serenity::model::id::ChannelId::new(channel_id)
+                    .send_message(&ctx.http, serenity::builder::CreateMessage::new().embed(embed)).await {
+                    let mid = sent_msg.id.get();
+                    let (tx, rx) = tokio::sync::watch::channel(Some("🔄 New session starting...".to_string()));
+                    {
+                        let mut map = handler.active_telemetry.lock().await;
+                        map.insert(mid, tx);
+                    }
+                    crate::platforms::telemetry::spawn_telemetry_loop(
+                        ctx.http.clone(),
+                        serenity::model::id::ChannelId::new(channel_id),
+                        mid, rx,
+                    );
+                    Some(mid.to_string())
+                } else {
+                    None
+                };
+
+                let platform_id = format!("discord:{}:{}:0", channel_id, thinking_msg_id.unwrap_or_default());
+
+                let continuity_event = Event {
+                    platform: platform_id,
+                    scope: scope.clone(),
+                    author_name: "System".to_string(),
+                    author_id: "system_welcome".into(),
+                    content: format!(
+                        "*** NEW SESSION ***\n\n\
+                        User {} initiated a new session via /new.\n\
+                        Previous conversation has been archived to persistent memory.\n\
+                        You are now operating in a fresh context window.\n\
+                        Greet them warmly and ask what they'd like to work on.",
+                        user_name
+                    ),
+                    timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                    message_index: None,
+                };
+                // Add to memory AND send through event_sender so the engine processes it
+                memory.add_event(continuity_event.clone()).await;
+                let _ = handler.event_sender.send(continuity_event).await;
+
+                let data = CreateInteractionResponseMessage::new()
+                    .content("🔄 **Session saved and reset.** Starting fresh — Apis is ready for a new conversation.")
+                    .ephemeral(true);
+                let builder = CreateInteractionResponse::Message(data);
+                let _ = command.create_response(&ctx.http, builder).await;
+                tracing::info!("[SESSION] /new triggered by {} via slash command — working memory archived and cleared.", user_name);
+            }
+        }
+        InteractionAction::KillAll { user_id } => {
+            if let Interaction::Command(command) = &interaction {
+                if !handler.capabilities.admin_users.contains(&user_id.to_string()) {
+                    let data = CreateInteractionResponseMessage::new()
+                        .content("❌ You do not have permission to use this command.")
+                        .ephemeral(true);
+                    let builder = CreateInteractionResponse::Message(data);
+                    let _ = command.create_response(&ctx.http, builder).await;
+                    return;
+                }
+
+                let data = CreateInteractionResponseMessage::new()
+                    .content("☠️ **KILLALL** — Shutting down all HIVE processes. Container will stop.")
+                    .ephemeral(false);
+                let builder = CreateInteractionResponse::Message(data);
+                let _ = command.create_response(&ctx.http, builder).await;
+                tracing::warn!("[KILLALL] ☠️ Emergency shutdown initiated by user {}", user_id);
+
+                // Brief pause to ensure Discord response is delivered
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                std::process::exit(0);
+            }
+        }
+        InteractionAction::ModelSwap { user_id, model_name } => {
+            if let Interaction::Command(command) = &interaction {
+                if !handler.capabilities.admin_users.contains(&user_id.to_string()) {
+                    let data = CreateInteractionResponseMessage::new()
+                        .content("❌ You do not have permission to use this command.")
+                        .ephemeral(true);
+                    let builder = CreateInteractionResponse::Message(data);
+                    let _ = command.create_response(&ctx.http, builder).await;
+                    return;
+                }
+
+                let old_model = handler.model_handle.read().await.clone();
+                *handler.model_handle.write().await = model_name.clone();
+                tracing::info!("[PROVIDER] 🔄 Model swapped via /model: {} → {}", old_model, model_name);
+
+                let data = CreateInteractionResponseMessage::new()
+                    .content(format!("🔄 **Model swapped:** `{}` → `{}`\nNext inference will use the new model.", old_model, model_name));
+                let builder = CreateInteractionResponse::Message(data);
+                let _ = command.create_response(&ctx.http, builder).await;
+            }
+        }
+        InteractionAction::ModelAutocomplete => {
+            if let Interaction::Autocomplete(autocomplete) = &interaction {
+                let mut choices = Vec::new();
+
+                // Query Ollama for available models
+                let url = format!("{}/api/tags", handler.ollama_base_url);
+                if let Ok(res) = reqwest::Client::new().get(&url).send().await {
+                    if let Ok(body) = res.json::<serde_json::Value>().await {
+                        if let Some(models) = body["models"].as_array() {
+                            let partial = autocomplete.data.options.iter()
+                                .find(|o| o.name == "name")
+                                .and_then(|o| match &o.value {
+                                    serenity::model::application::CommandDataOptionValue::String(s) => Some(s.as_str()),
+                                    _ => None,
+                                })
+                                .unwrap_or("");
+
+                            for m in models.iter().take(25) {
+                                if let Some(name) = m["name"].as_str() {
+                                    if partial.is_empty() || name.to_lowercase().contains(&partial.to_lowercase()) {
+                                        choices.push(serenity::builder::AutocompleteChoice::new(name, name.to_string()));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                let _ = autocomplete.create_response(&ctx.http,
+                    CreateInteractionResponse::Autocomplete(
+                        serenity::builder::CreateAutocompleteResponse::new().set_choices(choices)
+                    )
+                ).await;
             }
         }
         InteractionAction::Ignore => {}

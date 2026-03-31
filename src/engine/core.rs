@@ -43,6 +43,7 @@ pub struct Engine {
     pub reasoning_router: Option<Arc<crate::providers::reasoning_router::ReasoningRouter>>,
     pub capabilities: Arc<AgentCapabilities>,
     pub memory: Arc<MemoryStore>,
+    pub config: Arc<crate::config::AppConfig>,
     pub agent: Arc<AgentManager>,
     pub teacher: Arc<Teacher>,
     pub sleep_cycle: Arc<SleepCycle>,
@@ -95,7 +96,7 @@ impl Engine {
     ) -> Self {
         Self::with_platform_providers(
             platforms, provider, HashMap::new(),
-            capabilities, memory, agent, teacher, drives, outreach_gate, inbox,
+            capabilities, memory, agent.config.clone(), agent, teacher, drives, outreach_gate, inbox,
             event_sender, event_receiver,
         )
     }
@@ -107,6 +108,7 @@ impl Engine {
         platform_providers: HashMap<String, Arc<dyn Provider>>,
         capabilities: Arc<AgentCapabilities>,
         memory: Arc<MemoryStore>,
+        config: Arc<crate::config::AppConfig>,
         agent: Arc<AgentManager>,
         teacher: Arc<Teacher>,
         drives: Arc<drives::DriveSystem>,
@@ -155,7 +157,7 @@ impl Engine {
         let observer_provider: Arc<dyn Provider> = match std::env::var("HIVE_OBSERVER_MODEL") {
             Ok(model) if !model.is_empty() => {
                 tracing::info!("[ENGINE] 🕵️ Observer using dedicated model: {} (set HIVE_OBSERVER_MODEL to change)", model);
-                Arc::new(crate::providers::ollama::OllamaProvider::with_model(&model))
+                Arc::new(crate::providers::ollama::OllamaProvider::with_model(&model, config.system_name.clone()))
             }
             _ => {
                 tracing::info!("[ENGINE] 🕵️ Observer using main model (set HIVE_OBSERVER_MODEL for a lighter audit model)");
@@ -171,7 +173,7 @@ impl Engine {
             platforms, provider, platform_providers: Arc::new(platform_providers),
             observer_provider,
             reasoning_router,
-            capabilities, memory, agent, teacher, sleep_cycle, drives, outreach_gate, inbox, event_sender, event_receiver,
+            capabilities, memory, config, agent, teacher, sleep_cycle, drives, outreach_gate, inbox, event_sender, event_receiver,
             concurrency_semaphore: Arc::new(Semaphore::new(max_parallel)),
             scope_locks: Arc::new(RwLock::new(HashMap::new())),
             mesh: None,
@@ -280,6 +282,7 @@ impl Engine {
             }
         }
         
+        let default_sleep_interval = self.config.sleep_interval_secs;
         drop(sender);
 
         tracing::info!("HIVE is active. Apis is listening.");
@@ -537,6 +540,7 @@ impl Engine {
                 let sleep_cycle_pre = self.sleep_cycle.clone();
                 let observer_provider_bg = self.observer_provider.clone();
                 let router_bg = self.reasoning_router.clone();
+                let sleep_interval_bg = default_sleep_interval;
 
                 active_autonomy_task = Some(tokio::spawn(async move {
                     // Acquire concurrency permit — waits if all slots are busy
@@ -607,8 +611,8 @@ impl Engine {
                     let apis_event = Event {
                         platform: response.platform.clone(),
                         scope: response.target_scope.clone(),
-                        author_name: "Apis".to_string(),
-                        author_id: "test".into(),
+                        author_name: agent_bg.config.system_name.clone(),
+                        author_id: format!("system_{}", agent_bg.config.system_name.to_lowercase()),
                         content: response.text.clone(),
             timestamp: Some(chrono::Utc::now().to_rfc3339()),
             message_index: None,
@@ -654,8 +658,8 @@ impl Engine {
                         let memory_clone = memory_bg.clone();
                         let autonomy_handle_bg_inner = autonomy_handle_bg.clone();
                         let handle = tokio::spawn(async move {
-                            tokio::time::sleep(tokio::time::Duration::from_secs(300)).await;
-                            tracing::info!("[AUTONOMY] 🐝 5-minute idle timer fired. Entering Continuous Autonomy mode.");
+                            tokio::time::sleep(tokio::time::Duration::from_secs(sleep_interval_bg)).await;
+                            tracing::info!("[AUTONOMY] 🐝 {}s idle timer fired. Entering Continuous Autonomy mode.", sleep_interval_bg);
                             let public_narrative = memory_clone.get_public_narrative().await;
                             let previous_sessions = load_recent_autonomy_sessions(10).await;
                             let recompile_history = load_recompile_history(5).await;
@@ -663,10 +667,10 @@ impl Engine {
                                 platform: format!("discord:{}:0:autonomy_{}", autonomy_ch, chrono::Utc::now().timestamp()),
                                 scope: Scope::Public {
                                     channel_id: autonomy_ch.clone(),
-                                    user_id: "apis_autonomy".to_string(),
+                                    user_id: format!("system_{}_autonomy", agent_bg.config.system_name.to_lowercase()),
                                 },
-                                author_name: "Apis".to_string(),
-                                author_id: "apis_autonomy".into(),
+                                author_name: agent_bg.config.system_name.clone(),
+                                author_id: format!("system_{}_autonomy", agent_bg.config.system_name.to_lowercase()),
                                 content: format!(
                                     "═══ PRIVATE INTERNAL SYSTEM OPERATION ═══\n\
                                     You are now in Continuous Autonomy mode. This is a PRIVATE, INTERNAL background process.\n\
@@ -730,6 +734,7 @@ impl Engine {
                 let autonomy_ch = self.autonomy_channel.clone();
                 let observer_provider_bg = self.observer_provider.clone();
                 let router_bg = self.reasoning_router.clone();
+                let sleep_interval_bg = default_sleep_interval;
 
                 tokio::spawn(async move {
                     // 1. Acquire per-scope lock — serializes events within the same channel/DM
@@ -777,8 +782,8 @@ impl Engine {
                     let apis_event = Event {
                         platform: response.platform.clone(),
                         scope: response.target_scope.clone(),
-                        author_name: "Apis".to_string(),
-                        author_id: "test".into(),
+                        author_name: agent_bg.config.system_name.clone(),
+                        author_id: format!("system_{}", agent_bg.config.system_name.to_lowercase()),
                         content: response.text.clone(),
             timestamp: Some(chrono::Utc::now().to_rfc3339()),
             message_index: None,
@@ -815,15 +820,15 @@ impl Engine {
                     }
 
                     // 7.5. Spawn Continuous Autonomy timer (5 min)
-                    if event.author_name != "Apis" {
+                    if event.author_name != agent_bg.config.system_name {
                         if let Some(ref sender) = autonomy_sender_bg {
                           if !autonomy_ch.is_empty() {
                             let sender_clone = sender.clone();
                             let memory_clone = memory_bg.clone();
                             let autonomy_handle_bg_inner = autonomy_handle_bg.clone();
                             let handle = tokio::spawn(async move {
-                                tokio::time::sleep(tokio::time::Duration::from_secs(300)).await;
-                                tracing::info!("[AUTONOMY] 🐝 5-minute idle timer fired. Entering Continuous Autonomy mode.");
+                                tokio::time::sleep(tokio::time::Duration::from_secs(sleep_interval_bg)).await;
+                                tracing::info!("[AUTONOMY] 🐝 {}s idle timer fired. Entering Continuous Autonomy mode.", sleep_interval_bg);
                                 
                                 let public_narrative = memory_clone.get_public_narrative().await;
                                 let previous_sessions = load_recent_autonomy_sessions(10).await;
@@ -832,10 +837,10 @@ impl Engine {
                                     platform: format!("discord:{}:0:autonomy_{}", autonomy_ch, chrono::Utc::now().timestamp()),
                                     scope: Scope::Public {
                                         channel_id: autonomy_ch.clone(),
-                                        user_id: "apis_autonomy".to_string(),
+                                        user_id: format!("system_{}_autonomy", agent_bg.config.system_name.to_lowercase()),
                                     },
-                                    author_name: "Apis".to_string(),
-                                    author_id: "apis_autonomy".into(),
+                                    author_name: agent_bg.config.system_name.clone(),
+                                    author_id: format!("system_{}_autonomy", agent_bg.config.system_name.to_lowercase()),
                                     content: format!(
                                         "═══ PRIVATE INTERNAL SYSTEM OPERATION ═══\n\
                                         You are now in Continuous Autonomy mode. This is a PRIVATE, INTERNAL background process.\n\

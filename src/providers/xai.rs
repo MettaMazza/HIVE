@@ -12,7 +12,7 @@ pub struct XaiProvider {
 }
 
 impl XaiProvider {
-    pub fn new() -> Result<Self, ProviderError> {
+    pub fn new(timeout_secs: u64, system_name: String) -> Result<Self, ProviderError> {
         let api_key = std::env::var("XAI_API_KEY")
             .map_err(|_| ProviderError::ConnectionError("XAI_API_KEY not set".into()))?;
         let model = std::env::var("XAI_MODEL")
@@ -23,6 +23,8 @@ impl XaiProvider {
                 api_key,
                 model,
                 "https://api.x.ai/v1".to_string(),
+                timeout_secs,
+                system_name,
             ),
         })
     }
@@ -61,6 +63,8 @@ mod tests {
                 "test-xai-key".into(),
                 "grok-3".into(),
                 mock_server.uri(),
+                30,
+                "Apis".into(),
             ),
         };
 

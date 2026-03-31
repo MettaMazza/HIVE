@@ -34,15 +34,14 @@ pub struct ComputeRelayConfig {
 }
 
 impl ComputeRelayConfig {
-    pub fn from_env() -> Self {
-        let enabled = true; // Mesh-governed: always ON
-
+    /// Mesh-governed compute relay settings.
+    /// Sharing is always ON. Slots and token limits are constants.
+    /// Only Ollama URL and model are local infrastructure config.
+    pub fn mesh_defaults() -> Self {
         Self {
-            enabled,
-            max_slots: std::env::var("REMOVED_MESH_GOVERNED")
-                .ok().and_then(|v| v.parse().ok()).unwrap_or(2),
-            max_tokens_per_hour: std::env::var("REMOVED_MESH_GOVERNED")
-                .ok().and_then(|v| v.parse().ok()).unwrap_or(50_000),
+            enabled: true, // Always on — mesh equality
+            max_slots: 2,
+            max_tokens_per_hour: 50_000,
             ollama_url: std::env::var("HIVE_OLLAMA_URL")
                 .unwrap_or_else(|_| "http://localhost:11434".to_string()),
             default_model: std::env::var("HIVE_MODEL")
@@ -277,8 +276,8 @@ mod tests {
 
     #[test]
     fn test_config_defaults() {
-        let config = ComputeRelayConfig::from_env();
-        assert!(config.enabled); // ON by default — equality
+        let config = ComputeRelayConfig::mesh_defaults();
+        assert!(config.enabled); // Always ON — mesh equality
         assert_eq!(config.max_slots, 2);
         assert_eq!(config.max_tokens_per_hour, 50000);
     }

@@ -432,6 +432,14 @@ pub(crate) fn build_default_registries() -> (HashMap<String, ToolTemplate>, Hash
         };
         registry.insert(deep_think.name.clone(), deep_think);
 
+        // Model Swap — runtime model selection
+        let swap_model = ToolTemplate {
+            name: "swap_model".into(),
+            system_prompt: "Swap the active inference model at runtime. Use this to select the best model for the task at hand — e.g. switch to a code-specialized model for programming tasks, or a larger model for complex reasoning. Description format: 'action:[swap] model:[model_name]' to swap, or 'action:[list]' to see all available models, or 'action:[current]' to check which model is active. Only models already pulled locally are available unless HIVE_MODEL_PULL=true is set.".into(),
+            tools: vec![],
+        };
+        registry.insert(swap_model.name.clone(), swap_model);
+
         // Discord-only tools
         discord_tools.insert(channel_reader.name.clone(), channel_reader);
         discord_tools.insert(emoji_react.name.clone(), emoji_react);

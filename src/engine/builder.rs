@@ -21,6 +21,7 @@ pub struct EngineBuilder {
     capabilities: AgentCapabilities,
     memory: Arc<MemoryStore>,
     agent: Option<Arc<AgentManager>>,
+    config: Option<Arc<crate::config::AppConfig>>,
     project_root: String,
 }
 
@@ -37,6 +38,7 @@ impl EngineBuilder {
             capabilities: AgentCapabilities::default(),
             memory: Arc::new(MemoryStore::new(None)),
             agent: None,
+            config: None,
             project_root,
         }
     }
@@ -73,6 +75,11 @@ impl EngineBuilder {
         self
     }
 
+    pub fn with_config(mut self, config: Arc<crate::config::AppConfig>) -> Self {
+        self.config = Some(config);
+        self
+    }
+
     pub fn build(self) -> Result<Engine, &'static str> {
         tracing::info!("[ENGINE:Builder] ▶ Building Engine (project_root='{}', platforms={})",
             self.project_root, self.platforms.len());
@@ -94,8 +101,9 @@ impl EngineBuilder {
                 s
             },
             None => {
+                let config = self.config.clone().unwrap_or_else(|| Arc::new(crate::config::AppConfig::default()));
                 tracing::debug!("[ENGINE:Builder] Constructing new AgentManager with outreach integration");
-                let mut agent = AgentManager::new(provider.clone(), memory.clone())
+                let mut agent = AgentManager::new(provider.clone(), memory.clone(), config)
                     .with_outreach(drives.clone(), outreach_gate.clone(), inbox.clone())
                     .with_goals(goal_store.clone())
                     .with_forge(tool_forge.clone())
@@ -112,6 +120,7 @@ impl EngineBuilder {
             self.platform_providers,
             Arc::new(self.capabilities),
             memory,
+            agent.config.clone(),
             agent,
             Arc::new(Teacher::new(None)),
             drives,

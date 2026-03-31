@@ -6,7 +6,7 @@ use crate::models::tool::ToolStatus;
 async fn test_agent_manager_registration() {
     let provider = Arc::new(MockProvider::new());
     let memory = Arc::new(MemoryStore::default());
-    let mut agent = AgentManager::new(provider, memory);
+    let mut agent = AgentManager::new(provider, memory, Arc::new(crate::config::AppConfig::default()));
     
     let template = ToolTemplate {
         name: "test_tool".into(),
@@ -26,7 +26,7 @@ async fn test_agent_execute_plan_success() {
         .returning(|_, _, _, _, _, _| Ok("Tool output".to_string()));
 
     let memory = Arc::new(MemoryStore::default());
-    let agent = AgentManager::new(Arc::new(mock_provider), memory);
+    let agent = AgentManager::new(Arc::new(mock_provider), memory, Arc::new(crate::config::AppConfig::default()));
     
     let plan = crate::agent::planner::AgentPlan {
         thought: vec!["I should do research".to_string()],
@@ -57,7 +57,7 @@ async fn test_agent_execute_plan_success() {
 async fn test_agent_execute_plan_tool_not_found() {
     let mock_provider = MockProvider::new();
     let memory = Arc::new(MemoryStore::default());
-    let agent = AgentManager::new(Arc::new(mock_provider), memory);
+    let agent = AgentManager::new(Arc::new(mock_provider), memory, Arc::new(crate::config::AppConfig::default()));
     
     let plan = crate::agent::planner::AgentPlan {
         thought: vec![],
@@ -85,7 +85,7 @@ async fn test_agent_channel_reader() {
     // Without DISCORD_TOKEN, it should gracefully report the missing token.
     let mock_provider = MockProvider::new();
     let memory = Arc::new(MemoryStore::default());
-    let agent = AgentManager::new(Arc::new(mock_provider), memory);
+    let agent = AgentManager::new(Arc::new(mock_provider), memory, Arc::new(crate::config::AppConfig::default()));
     
     let plan = crate::agent::planner::AgentPlan {
         thought: vec![],
@@ -114,7 +114,7 @@ async fn test_agent_channel_reader() {
 async fn test_agent_codebase_list() {
     let mock_provider = MockProvider::new();
     let memory = Arc::new(MemoryStore::default());
-    let agent = AgentManager::new(Arc::new(mock_provider), memory);
+    let agent = AgentManager::new(Arc::new(mock_provider), memory, Arc::new(crate::config::AppConfig::default()));
     
     let plan = crate::agent::planner::AgentPlan {
         thought: vec![],
@@ -138,7 +138,7 @@ async fn test_agent_codebase_list() {
 async fn test_agent_codebase_read() {
     let mock_provider = MockProvider::new();
     let memory = Arc::new(MemoryStore::default());
-    let agent = AgentManager::new(Arc::new(mock_provider), memory);
+    let agent = AgentManager::new(Arc::new(mock_provider), memory, Arc::new(crate::config::AppConfig::default()));
     
     let plan = crate::agent::planner::AgentPlan {
         thought: vec![],
@@ -162,7 +162,7 @@ async fn test_agent_codebase_read() {
 async fn test_agent_codebase_read_security() {
     let mock_provider = MockProvider::new();
     let memory = Arc::new(MemoryStore::default());
-    let agent = AgentManager::new(Arc::new(mock_provider), memory);
+    let agent = AgentManager::new(Arc::new(mock_provider), memory, Arc::new(crate::config::AppConfig::default()));
     
     let plan = crate::agent::planner::AgentPlan {
         thought: vec![],
@@ -186,7 +186,7 @@ async fn test_agent_codebase_read_security() {
 async fn test_agent_web_search() {
     let mock_provider = MockProvider::new();
     let memory = Arc::new(MemoryStore::default());
-    let agent = AgentManager::new(Arc::new(mock_provider), memory);
+    let agent = AgentManager::new(Arc::new(mock_provider), memory, Arc::new(crate::config::AppConfig::default()));
     
     let plan = crate::agent::planner::AgentPlan {
         thought: vec![],
@@ -213,7 +213,7 @@ async fn test_agent_web_search() {
 async fn test_agent_manager_autonomy_filtering() {
     let provider = Arc::new(MockProvider::new());
     let memory = Arc::new(MemoryStore::default());
-    let agent = AgentManager::new(provider, memory);
+    let agent = AgentManager::new(provider, memory, Arc::new(crate::config::AppConfig::default()));
     
     // Test without autonomy - moderation tools SHOULD be present
     let normal_tools = agent.get_available_tools_text(false);

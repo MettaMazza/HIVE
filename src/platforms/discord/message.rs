@@ -303,19 +303,50 @@ pub async fn handle_message(handler: &super::Handler, ctx: Context, msg: Message
             let _ = memory.check_and_trigger_autosave(&scope).await;
             memory.working.clear(&scope).await;
 
+            // Send a telemetry "processing" embed so the user sees activity
+            let embed = serenity::builder::CreateEmbed::new()
+                .description("```\n🔄 New session starting...\n```")
+                .footer(serenity::builder::CreateEmbedFooter::new("🐝 Resetting..."))
+                .color(0x5865F2);
+            let thinking_msg_id = if let Ok(sent_msg) = serenity::model::id::ChannelId::new(channel_id)
+                .send_message(&ctx.http, serenity::builder::CreateMessage::new().embed(embed)).await {
+                let mid = sent_msg.id.get();
+                let (tx, rx) = tokio::sync::watch::channel(Some("🔄 New session starting...".to_string()));
+                {
+                    let mut map = handler.active_telemetry.lock().await;
+                    map.insert(mid, tx);
+                }
+                crate::platforms::telemetry::spawn_telemetry_loop(
+                    ctx.http.clone(),
+                    serenity::model::id::ChannelId::new(channel_id),
+                    mid, rx,
+                );
+                Some(mid.to_string())
+            } else {
+                None
+            };
+
+            let platform_id = format!("discord:{}:{}:0", channel_id, thinking_msg_id.unwrap_or_default());
+
             let continuity_event = Event {
-                platform: "system:session".to_string(),
+                platform: platform_id,
                 scope: scope.clone(),
                 author_name: "System".to_string(),
-                author_id: "system".into(),
+                author_id: "system_welcome".into(),
                 content: format!(
-                    "*** NEW SESSION ***\n\n                    User {} initiated a new session via /new.\n                    Previous conversation has been archived to persistent memory.\n                    You are now operating in a fresh context window.\n                    Greet them warmly and ask what they'd like to work on.",
+                    "*** NEW SESSION ***\n\n\
+                    User {} initiated a new session via /new.\n\
+                    Previous conversation has been archived to persistent memory.\n\
+                    You are now operating in a fresh context window.\n\
+                    Greet them warmly and ask what they'd like to work on.",
                     user_name
                 ),
                 timestamp: Some(chrono::Utc::now().to_rfc3339()),
                 message_index: None,
             };
-            memory.add_event(continuity_event).await;
+            // Add to memory AND send through event_sender so the engine processes it
+            memory.add_event(continuity_event.clone()).await;
+            let _ = handler.event_sender.send(continuity_event).await;
 
             let _ = msg.reply(&ctx.http, "🔄 **Session saved and reset.** Starting fresh — Apis is ready for a new conversation.").await;
             tracing::info!("[SESSION] /new triggered by {} — working memory archived and cleared.", user_name);

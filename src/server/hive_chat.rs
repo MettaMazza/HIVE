@@ -156,11 +156,13 @@ impl ChatStore {
             channels.push(ch);
         }
 
+        let system_name = std::env::var("HIVE_SYSTEM_NAME").unwrap_or_else(|_| "Apis".into());
+
         let welcome = ChatMessage {
             id: uuid::Uuid::new_v4().to_string(),
             channel_id: "hive-general".to_string(),
             author_id: "system".to_string(),
-            author_name: "🐝 Apis".to_string(),
+            author_name: format!("🐝 {}", system_name),
             content: "Welcome to HiveChat! This is the decentralised replacement for Discord. Every message here is peer-to-peer — no corporate servers, no data mining, no censorship.\n\nCreate new servers, invite peers, and chat freely. Your conversations belong to you.".to_string(),
             timestamp: chrono::Utc::now().to_rfc3339(),
             reactions: HashMap::new(),
@@ -366,9 +368,7 @@ struct LinkDiscordReq { discord_username: String }
 struct MessagesQuery { limit: Option<usize> }
 
 pub async fn spawn_hive_chat_server() {
-    let port: u16 = std::env::var("REMOVED_MESH_GOVERNED")
-        .ok().and_then(|v| v.parse().ok())
-        .unwrap_or(3034);
+    let port: u16 = 3034; // Mesh-governed: creator-key protected
 
     let local_peer_id = std::env::var("HIVE_MESH_CHAT_NAME")
         .unwrap_or_else(|_| "local".to_string());

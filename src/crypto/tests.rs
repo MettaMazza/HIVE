@@ -199,7 +199,7 @@ mod solana_simulation_tests {
     #[test]
     fn test_mint_and_check_balance() {
         let (ks, client, _dir) = setup();
-        let creator_pubkey = ks.create_wallet("creator", WalletRole::Creator).unwrap();
+        let _creator_pubkey = ks.create_wallet("creator", WalletRole::Creator).unwrap();
         let user_pubkey = ks.create_wallet("user1", WalletRole::User).unwrap();
 
         // Mint 100 HIVE to user
@@ -217,7 +217,7 @@ mod solana_simulation_tests {
     #[test]
     fn test_transfer_between_wallets() {
         let (ks, client, _dir) = setup();
-        let creator_pubkey = ks.create_wallet("creator", WalletRole::Creator).unwrap();
+        let _creator_pubkey = ks.create_wallet("creator", WalletRole::Creator).unwrap();
         let alice_pubkey = ks.create_wallet("alice", WalletRole::User).unwrap();
         let bob_pubkey = ks.create_wallet("bob", WalletRole::User).unwrap();
 
@@ -238,7 +238,7 @@ mod solana_simulation_tests {
     #[test]
     fn test_overdraft_rejected() {
         let (ks, client, _dir) = setup();
-        let creator_pubkey = ks.create_wallet("creator", WalletRole::Creator).unwrap();
+        let _creator_pubkey = ks.create_wallet("creator", WalletRole::Creator).unwrap();
         let alice_pubkey = ks.create_wallet("alice", WalletRole::User).unwrap();
         let bob_pubkey = ks.create_wallet("bob", WalletRole::User).unwrap();
 
@@ -293,7 +293,7 @@ mod solana_simulation_tests {
     #[test]
     fn test_transaction_history() {
         let (ks, client, _dir) = setup();
-        let creator_pubkey = ks.create_wallet("creator", WalletRole::Creator).unwrap();
+        let _creator_pubkey = ks.create_wallet("creator", WalletRole::Creator).unwrap();
         let user_pubkey = ks.create_wallet("user", WalletRole::User).unwrap();
 
         client.mint_hive(&ks, "creator", &user_pubkey, 100.0).unwrap();
@@ -325,7 +325,7 @@ mod solana_simulation_tests {
         );
 
         // Create and mint
-        let creator_pubkey = ks.create_wallet("creator", WalletRole::Creator).unwrap();
+        let _creator_pubkey = ks.create_wallet("creator", WalletRole::Creator).unwrap();
         let user_pubkey = ks.create_wallet("user", WalletRole::User).unwrap();
         {
             let client = HiveSolanaClient::new_with_config(

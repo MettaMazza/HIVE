@@ -113,7 +113,7 @@ pub async fn execute_react_loop(
     let mut context_from_agent = String::new();
     #[allow(unused_assignments)]
     let mut final_response_text = String::new();
-    let checkpoint_interval = 15;
+    let checkpoint_interval = agent.config.limit_loop_iters as usize;
     let mut current_turn = 0;
     let mut observer_attempts = 0;
     let mut all_rejections: Vec<(String, String, String)> = Vec::new();
@@ -458,8 +458,8 @@ pub async fn execute_react_loop(
                 let dispatch_event = crate::models::message::Event {
                     platform: outbound_res.platform,
                     scope: outbound_res.target_scope,
-                    author_id: "apis".into(),
-                    author_name: "Apis".to_string(),
+                    author_id: agent.config.system_name.to_lowercase(),
+                    author_name: agent.config.system_name.clone(),
                     content: mock_json,
             timestamp: Some(chrono::Utc::now().to_rfc3339()),
             message_index: None,
@@ -481,14 +481,14 @@ pub async fn execute_react_loop(
 
                 // For LLM context, cap large outputs to prevent extreme prompt bloat.
                 // Since HIVE runs on high-performance M3 Ultra hardware, we allow
-                // a generous 100KB limit for tool outputs in the reasoning loop.
-                const LLM_CONTEXT_CAP: usize = 200_000;
-                let display_output = if res.output.len() > LLM_CONTEXT_CAP {
+                // a generous limit (default ~32KB bytes depending on generation tokens).
+                let llm_context_cap = (agent.config.limit_generation_tokens as usize).max(4096) * 4;
+                let display_output = if res.output.len() > llm_context_cap {
                     // Safe UTF-8 truncation: Find the nearest char boundary at or below the cap
                     let safe_boundary = res.output
                         .char_indices()
                         .map(|(i, _)| i)
-                        .filter(|&i| i <= LLM_CONTEXT_CAP)
+                        .filter(|&i| i <= llm_context_cap)
                         .last()
                         .unwrap_or(0);
 
@@ -759,7 +759,7 @@ pub async fn execute_react_loop(
         let internal_event = Event {
             platform: event.platform.clone(),
             scope: event.scope.clone(),
-            author_name: "Apis (Internal Timeline)".to_string(),
+            author_name: format!("{} (Internal Timeline)", agent.config.system_name),
             author_id: "internal".into(),
             content: format!("[INTERNAL THOUGHT PROCESS & TOOL RESULTS]\n{}", context_from_agent.trim()),
             timestamp: Some(chrono::Utc::now().to_rfc3339()),

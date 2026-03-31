@@ -54,6 +54,7 @@ pub mod wallet_tool;
 pub mod credits_tool;
 pub mod nft_tool;
 pub mod deep_think_tool;
+pub mod model_tool;
 
 pub mod tool_registry;
 
@@ -62,6 +63,7 @@ pub struct AgentManager {
     discord_tools: HashMap<String, ToolTemplate>,
     provider: Arc<dyn Provider>,
     memory: Arc<MemoryStore>,
+    pub config: Arc<crate::config::AppConfig>,
     pub composer: Arc<crate::computer::document::DocumentComposer>,
     pub drives: Option<Arc<crate::engine::drives::DriveSystem>>,
     pub outreach_gate: Option<Arc<crate::engine::outreach::OutreachGate>>,
@@ -72,7 +74,7 @@ pub struct AgentManager {
 }
 
 impl AgentManager {
-    pub fn new(provider: Arc<dyn Provider>, memory: Arc<MemoryStore>) -> Self {
+    pub fn new(provider: Arc<dyn Provider>, memory: Arc<MemoryStore>, config: Arc<crate::config::AppConfig>) -> Self {
         let (registry, discord_tools) = tool_registry::build_default_registries();
 
         Self {
@@ -80,6 +82,7 @@ impl AgentManager {
             discord_tools,
             provider,
             memory,
+            config,
             composer: Arc::new(crate::computer::document::DocumentComposer::new()),
             drives: None,
             outreach_gate: None,

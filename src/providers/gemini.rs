@@ -67,10 +67,11 @@ pub struct GeminiProvider {
     client: Client,
     api_key: String,
     model: String,
+    system_name: String,
 }
 
 impl GeminiProvider {
-    pub fn new() -> Result<Self, ProviderError> {
+    pub fn new(timeout_secs: u64, system_name: String) -> Result<Self, ProviderError> {
         let api_key = std::env::var("GEMINI_API_KEY")
             .map_err(|_| ProviderError::ConnectionError("GEMINI_API_KEY not set".into()))?;
         let model = std::env::var("GEMINI_MODEL")
@@ -78,11 +79,12 @@ impl GeminiProvider {
 
         Ok(Self {
             client: Client::builder()
-                .timeout(std::time::Duration::from_secs(300))
+                .timeout(std::time::Duration::from_secs(timeout_secs))
                 .build()
                 .unwrap_or_else(|_| Client::new()),
             api_key,
             model,
+            system_name,
         })
     }
 }
@@ -103,7 +105,7 @@ impl Provider for GeminiProvider {
         // History
         const HISTORY_MSG_CAP: usize = 8000;
         for event in history {
-            let role = if event.author_name == "Apis" { "model" } else { "user" };
+            let role = if event.author_name == self.system_name { "model" } else { "user" };
             let content = if role == "user" {
                 format!("[AUTHOR: {} -> APIS]: {}", event.author_name, event.content)
             } else {

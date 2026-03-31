@@ -35,14 +35,15 @@ pub async fn execute_deep_think(
 
     tracing::info!("[DEEP_THINK] 🧠 Sending to {} ({} chars)", model, desc.len());
 
-    let provider = OllamaProvider::with_model(&model);
+    let system_name = std::env::var("HIVE_SYSTEM_NAME").unwrap_or_else(|_| "Apis".into());
+    let provider = OllamaProvider::with_model(&model, system_name.clone());
 
     let system_prompt = "You are a deep reasoning assistant. Think carefully and thoroughly about the problem presented. Provide a clear, well-structured analysis. Be precise and thorough.";
 
     let event = crate::models::message::Event {
         platform: "system:deep_think".into(),
         scope: crate::models::scope::Scope::Private { user_id: "deep_think".into() },
-        author_name: "Apis".into(),
+        author_name: system_name,
         author_id: "apis_deep_think".into(),
         content: desc.clone(),
         timestamp: Some(chrono::Utc::now().to_rfc3339()),

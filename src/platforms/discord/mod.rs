@@ -36,6 +36,8 @@ pub struct Handler {
     pub(crate) bot_debounce: BotDebounceBuffer,
     pub(crate) memory: Arc<crate::memory::MemoryStore>,
     pub(crate) capabilities: Arc<crate::models::capabilities::AgentCapabilities>,
+    pub(crate) model_handle: Arc<tokio::sync::RwLock<String>>,
+    pub(crate) ollama_base_url: String,
 }
 
 #[async_trait]
@@ -79,12 +81,31 @@ impl EventHandler for Handler {
             .description("ADMIN ONLY: Toggle bot-to-bot (AI) communications")
             .default_member_permissions(serenity::model::Permissions::ADMINISTRATOR);
 
+        let command_new = serenity::builder::CreateCommand::new("new")
+            .description("Start a fresh conversation session (archives current context)");
+
+        let command_killall = serenity::builder::CreateCommand::new("killall")
+            .description("ADMIN ONLY: Emergency shutdown — kills all HIVE processes")
+            .default_member_permissions(serenity::model::Permissions::ADMINISTRATOR);
+
+        let command_model = serenity::builder::CreateCommand::new("model")
+            .description("ADMIN ONLY: Swap the active inference model")
+            .add_option(serenity::builder::CreateCommandOption::new(
+                serenity::model::application::CommandOptionType::String,
+                "name",
+                "Model name (e.g. qwen3.5:122b)"
+            ).required(true).set_autocomplete(true))
+            .default_member_permissions(serenity::model::Permissions::ADMINISTRATOR);
+
         let _ = serenity::model::application::Command::create_global_command(&ctx.http, command_clean).await;
         let _ = serenity::model::application::Command::create_global_command(&ctx.http, command_clear).await;
         let _ = serenity::model::application::Command::create_global_command(&ctx.http, command_sweep).await;
         let _ = serenity::model::application::Command::create_global_command(&ctx.http, command_tending).await;
         let _ = serenity::model::application::Command::create_global_command(&ctx.http, command_proxy).await;
         let _ = serenity::model::application::Command::create_global_command(&ctx.http, command_aicoms).await;
+        let _ = serenity::model::application::Command::create_global_command(&ctx.http, command_new).await;
+        let _ = serenity::model::application::Command::create_global_command(&ctx.http, command_killall).await;
+        let _ = serenity::model::application::Command::create_global_command(&ctx.http, command_model).await;
     }
 
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
@@ -105,11 +126,21 @@ impl EventHandler for Handler {
         let user_id = new_member.user.id.get();
         let display_name = new_member.display_name().to_string();
 
-        // Use HIVE_WELCOME_CHANNEL if set, otherwise fall back to HIVE_CHAT_CHANNEL
-        let welcome_channel_id: Option<u64> = std::env::var("HIVE_WELCOME_CHANNEL")
-            .or_else(|_| std::env::var("HIVE_CHAT_CHANNEL"))
-            .ok()
-            .and_then(|v| v.parse().ok());
+        // Priority: guild system channel → HIVE_WELCOME_CHANNEL → HIVE_CHAT_CHANNEL
+        // The guild system channel is what Discord designates for welcome messages —
+        // this is the channel the new user actually sees when they join.
+        let guild_system_channel = new_member.guild_id
+            .to_partial_guild(&ctx.http).await.ok()
+            .and_then(|g| g.system_channel_id)
+            .map(|ch| ch.get());
+
+        let welcome_channel_id: Option<u64> = guild_system_channel
+            .or_else(|| std::env::var("HIVE_WELCOME_CHANNEL")
+                .ok()
+                .and_then(|v| v.parse().ok()))
+            .or_else(|| std::env::var("HIVE_CHAT_CHANNEL")
+                .ok()
+                .and_then(|v| v.parse().ok()));
 
         let Some(channel_id) = welcome_channel_id else {
             tracing::warn!("[WELCOME] No system channel or HIVE_CHAT_CHANNEL set — cannot welcome {}", user_name);
@@ -192,11 +223,13 @@ pub struct DiscordPlatform {
     bot_debounce: BotDebounceBuffer,
     memory: Arc<crate::memory::MemoryStore>,
     capabilities: Arc<crate::models::capabilities::AgentCapabilities>,
+    model_handle: Arc<tokio::sync::RwLock<String>>,
+    ollama_base_url: String,
     session_telemetry: Arc<Mutex<std::collections::HashMap<String, u64>>>,
 }
 
 impl DiscordPlatform {
-    pub fn new(token: String, memory: Arc<crate::memory::MemoryStore>, capabilities: Arc<crate::models::capabilities::AgentCapabilities>) -> Self {
+    pub fn new(token: String, memory: Arc<crate::memory::MemoryStore>, capabilities: Arc<crate::models::capabilities::AgentCapabilities>, model_handle: Arc<tokio::sync::RwLock<String>>, ollama_base_url: String) -> Self {
         Self { 
             token,
             http: Mutex::new(None),
@@ -208,6 +241,8 @@ impl DiscordPlatform {
             bot_debounce: Arc::new(Mutex::new(std::collections::HashMap::new())),
             memory,
             capabilities,
+            model_handle,
+            ollama_base_url,
             session_telemetry: Arc::new(Mutex::new(std::collections::HashMap::new())),
         }
     }
@@ -236,6 +271,8 @@ impl Platform for DiscordPlatform {
             bot_debounce: self.bot_debounce.clone(),
             memory: self.memory.clone(),
             capabilities: self.capabilities.clone(),
+            model_handle: self.model_handle.clone(),
+            ollama_base_url: self.ollama_base_url.clone(),
         };
 
         let mut client = Client::builder(&self.token, intents)
@@ -468,13 +505,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_discord_name() {
-        let discord = DiscordPlatform::new("".to_string(), Arc::new(crate::memory::MemoryStore::default()), Arc::new(crate::models::capabilities::AgentCapabilities::default()));
+        let discord = DiscordPlatform::new("".to_string(), Arc::new(crate::memory::MemoryStore::default()), Arc::new(crate::models::capabilities::AgentCapabilities::default()), Arc::new(tokio::sync::RwLock::new(String::new())), String::new());
         assert_eq!(discord.name(), "discord");
     }
 
     #[tokio::test]
     async fn test_discord_send_invalid_platform_id() {
-        let discord = DiscordPlatform::new("".to_string(), Arc::new(crate::memory::MemoryStore::default()), Arc::new(crate::models::capabilities::AgentCapabilities::default()));
+        let discord = DiscordPlatform::new("".to_string(), Arc::new(crate::memory::MemoryStore::default()), Arc::new(crate::models::capabilities::AgentCapabilities::default()), Arc::new(tokio::sync::RwLock::new(String::new())), String::new());
         let res = Response {
             platform: "discord".to_string(),
             target_scope: Scope::Public { channel_id: "123".to_string(), user_id: "user".to_string() },
@@ -487,7 +524,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_discord_send_uninitialized_http() {
-        let discord = DiscordPlatform::new("".to_string(), Arc::new(crate::memory::MemoryStore::default()), Arc::new(crate::models::capabilities::AgentCapabilities::default()));
+        let discord = DiscordPlatform::new("".to_string(), Arc::new(crate::memory::MemoryStore::default()), Arc::new(crate::models::capabilities::AgentCapabilities::default()), Arc::new(tokio::sync::RwLock::new(String::new())), String::new());
         let res = Response {
             platform: "discord:1234:5678".to_string(),
             target_scope: Scope::Public { channel_id: "123".to_string(), user_id: "user".to_string() },

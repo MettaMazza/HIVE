@@ -71,6 +71,8 @@ impl ReasoningRouter {
             return None;
         }
 
+        let system_name = std::env::var("HIVE_SYSTEM_NAME").unwrap_or_else(|_| "Apis".into());
+
         let router_model = std::env::var("HIVE_ROUTER_MODEL")
             .unwrap_or_else(|_| "qwen3.5:9b".into());
         let low_model = std::env::var("HIVE_LOW_MODEL")
@@ -91,18 +93,18 @@ impl ReasoningRouter {
         tracing::info!("[ROUTER]   medium = {}", medium_model);
         tracing::info!("[ROUTER]   high = {}", high_model);
 
-        let classifier: Arc<dyn Provider> = Arc::new(OllamaProvider::with_model(&router_model));
+        let classifier: Arc<dyn Provider> = Arc::new(OllamaProvider::with_model(&router_model, system_name.clone()));
 
         // Share provider instances when models overlap (saves memory)
         let low_provider: Arc<dyn Provider> = if low_model == router_model {
             classifier.clone()
         } else {
-            Arc::new(OllamaProvider::with_model(&low_model))
+            Arc::new(OllamaProvider::with_model(&low_model, system_name.clone()))
         };
 
-        let medium_provider: Arc<dyn Provider> = Arc::new(OllamaProvider::with_model(&medium_model));
+        let medium_provider: Arc<dyn Provider> = Arc::new(OllamaProvider::with_model(&medium_model, system_name.clone()));
 
-        let high_provider: Arc<dyn Provider> = Arc::new(OllamaProvider::with_model(&high_model));
+        let high_provider: Arc<dyn Provider> = Arc::new(OllamaProvider::with_model(&high_model, system_name.clone()));
 
         Some(Self {
             classifier,

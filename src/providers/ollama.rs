@@ -2,6 +2,7 @@
 use std::sync::Arc;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 
@@ -110,7 +111,8 @@ struct OllamaRequest {
 pub struct OllamaProvider {
     client: Client,
     endpoint: String,
-    model: String,
+    model: Arc<RwLock<String>>,
+    system_name: String,
     /// External stop flag — checked during streaming to abort long generations.
     stop_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
@@ -118,16 +120,16 @@ pub struct OllamaProvider {
 impl OllamaProvider {
     /// Connects to a local Ollama instance.
     /// Model defaults to `qwen3.5:35b` but can be overridden via `HIVE_MODEL` env var.
-    pub fn new() -> Self {
+    pub fn new(system_name: String) -> Self {
         let model = std::env::var("HIVE_MODEL")
             .or_else(|_| std::env::var("OLLAMA_MODEL"))
             .unwrap_or_else(|_| "qwen3.5:35b".into());
-        Self::with_model(&model)
+        Self::with_model(&model, system_name)
     }
 
     /// Creates an OllamaProvider targeting a specific model.
     /// Use this for platform-specific model routing (e.g., `qwen3.5:9b` for glasses).
-    pub fn with_model(model: &str) -> Self {
+    pub fn with_model(model: &str, system_name: String) -> Self {
         let base_url = std::env::var("HIVE_OLLAMA_URL")
             .unwrap_or_else(|_| "http://localhost:11434".to_string());
         let endpoint = format!("{}/api/chat", base_url);
@@ -137,7 +139,8 @@ impl OllamaProvider {
                 .build()
                 .unwrap_or_else(|_| Client::new()),
             endpoint,
-            model: model.to_string(),
+            model: Arc::new(RwLock::new(model.to_string())),
+            system_name,
             stop_flag: None,
         }
     }
@@ -146,11 +149,17 @@ impl OllamaProvider {
     pub fn set_stop_flag(&mut self, flag: Arc<std::sync::atomic::AtomicBool>) {
         self.stop_flag = Some(flag);
     }
+
+    /// Get a shared handle to the model name RwLock.
+    /// Used to share model state with Discord handler for /model slash command.
+    pub fn model_handle(&self) -> Arc<RwLock<String>> {
+        self.model.clone()
+    }
 }
 
 #[async_trait]
 impl Provider for OllamaProvider {
-    #[tracing::instrument(skip(self, system_prompt, history, new_event, agent_context, telemetry_tx, max_tokens), fields(model=%self.model, user=%new_event.author_name))]
+    #[tracing::instrument(skip(self, system_prompt, history, new_event, agent_context, telemetry_tx, max_tokens), fields(user=%new_event.author_name))]
     async fn generate(
         &self,
         system_prompt: &str,
@@ -160,6 +169,8 @@ impl Provider for OllamaProvider {
         telemetry_tx: Option<mpsc::Sender<String>>,
         max_tokens: Option<u32>,
     ) -> Result<String, ProviderError> {
+        // Read model name once at the start — avoids holding the RwLock across awaits
+        let model_name = self.model.read().await.clone();
         let mut messages = Vec::new();
 
         // Format the securely-scoped history FIRST
@@ -167,7 +178,7 @@ impl Provider for OllamaProvider {
         // Full messages remain in working memory & disk — only the LLM prompt copy is capped.
         const HISTORY_MSG_CAP: usize = 8000;
         for event in history {
-            let role = if event.author_name == "Apis" {
+            let role = if event.author_name == self.system_name {
                 "assistant"
             } else {
                 "user"
@@ -273,10 +284,10 @@ impl Provider for OllamaProvider {
 
         // Detect call type for per-call Ollama parameter tuning.
         let is_audit = agent_context.contains("[=== INTERNAL ENGINE INSTRUCTION: SWITCH TO AUDIT MODE ===]");
-        let is_internal = new_event.platform.starts_with("system:");
+        let is_internal = new_event.platform.starts_with("system:") || new_event.platform == "sleep";
 
         let payload = OllamaRequest {
-            model: self.model.clone(),
+            model: model_name.clone(),
             messages,
             stream: true,
             keep_alive: -1,
@@ -432,7 +443,7 @@ impl Provider for OllamaProvider {
         let total_time = start_time.elapsed();
         let metrics = crate::engine::telemetry::LatencyMetrics {
             timestamp: chrono::Utc::now().to_rfc3339(),
-            model: self.model.clone(),
+            model: model_name.clone(),
             prompt_bytes,
             history_len: history.len(),
             ttft_ms: ttft_duration.as_millis() as u64,

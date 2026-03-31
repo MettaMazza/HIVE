@@ -84,11 +84,9 @@ pub struct OfflineMesh {
 impl OfflineMesh {
     /// Create a new offline mesh manager.
     pub fn new() -> Self {
-        let max_queue = std::env::var("REMOVED_MESH_GOVERNED")
-            .ok().and_then(|v| v.parse().ok()).unwrap_or(1000);
-
-        let default_ttl = std::env::var("REMOVED_MESH_GOVERNED")
-            .ok().and_then(|v| v.parse().ok()).unwrap_or(72); // 3 days default
+        // Mesh-governed constants. Not per-node configurable.
+        let max_queue: usize = 1000;
+        let default_ttl: u32 = 72; // 3 days
 
         tracing::info!("[OFFLINE MESH] 📴 Store-and-forward ready (max_queue={}, ttl={}h)", max_queue, default_ttl);
 

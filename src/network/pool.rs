@@ -56,13 +56,11 @@ pub struct WebConnectionPool {
 
 impl WebConnectionPool {
     pub fn new() -> Self {
-        let max_req = std::env::var("REMOVED_MESH_GOVERNED")
-            .ok().and_then(|v| v.parse().ok()).unwrap_or(100);
-
+        // Mesh-governed: 100 req/hour per peer. Not configurable per-node.
         Self {
             available_relays: Vec::new(),
             request_log: VecDeque::with_capacity(10000),
-            max_requests_per_hour: max_req,
+            max_requests_per_hour: 100,
             next_relay_idx: 0,
         }
     }
@@ -181,17 +179,12 @@ pub struct ComputePool {
 
 impl ComputePool {
     pub fn new() -> Self {
-        let max_slots = std::env::var("REMOVED_MESH_GOVERNED")
-            .ok().and_then(|v| v.parse().ok()).unwrap_or(2);
-
-        let max_tokens = std::env::var("REMOVED_MESH_GOVERNED")
-            .ok().and_then(|v| v.parse().ok()).unwrap_or(50_000);
-
+        // Mesh-governed: 2 slots, 50K tokens/hour. Not configurable per-node.
         Self {
             available_nodes: Vec::new(),
             active_jobs: HashMap::new(),
-            max_concurrent_local: max_slots,
-            max_tokens_per_hour: max_tokens,
+            max_concurrent_local: 2,
+            max_tokens_per_hour: 50_000,
             token_usage: HashMap::new(),
             token_window_start: std::time::Instant::now(),
         }
@@ -347,21 +340,18 @@ pub struct PoolManager {
 }
 
 impl PoolManager {
-    /// Create from environment.
+    /// Create pool manager. Sharing is ALWAYS ON — mesh equality.
+    /// These are not configurable per-node. Turning off sharing
+    /// while consuming mesh resources is freeloading.
     pub fn new(local_peer: PeerId) -> Self {
-        let web_enabled = true; // Mesh-governed: always ON
-
-        let compute_enabled = true; // Mesh-governed: always ON
-
-        tracing::info!("[POOL] 🤝 Resource pool initialised (web_share={}, compute_share={})",
-            web_enabled, compute_enabled);
+        tracing::info!("[POOL] 🤝 Resource pool initialised (web_share=true, compute_share=true)");
 
         Self {
             web_pool: Arc::new(RwLock::new(WebConnectionPool::new())),
             compute_pool: Arc::new(RwLock::new(ComputePool::new())),
             local_peer,
-            web_share_enabled: web_enabled,
-            compute_share_enabled: compute_enabled,
+            web_share_enabled: true,
+            compute_share_enabled: true,
             credits_engine: None,
         }
     }
@@ -442,8 +432,10 @@ impl PoolManager {
     // ─── Equality Enforcement ───────────────────────────────────────────
 
     /// Check if this peer is contributing to the collective.
-    /// If sharing is disabled, they CANNOT use the mesh. No freeloading.
+    /// Sharing is always on — this is a runtime sanity check.
     pub fn verify_equality(&self) -> bool {
+        // Both are always true now (hardcoded). This check remains
+        // as a runtime assertion in case of memory corruption.
         if !self.web_share_enabled && !self.compute_share_enabled {
             tracing::error!(
                 "╔═══════════════════════════════════════════════════════╗"
@@ -455,10 +447,7 @@ impl PoolManager {
                 "║  You cannot use the mesh without contributing.        ║"
             );
             tracing::error!(
-                "║  Re-enable REMOVED_MESH_GOVERNED or                 ║"
-            );
-            tracing::error!(
-                "║  REMOVED_MESH_GOVERNED to rejoin.               ║"
+                "║  This is a hardcoded mesh rule — sharing is mandatory.║"
             );
             tracing::error!(
                 "╚═══════════════════════════════════════════════════════╝"

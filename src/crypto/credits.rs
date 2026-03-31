@@ -199,34 +199,31 @@ pub struct CreditConfig {
 }
 
 impl CreditConfig {
-    pub fn from_env() -> Self {
+    /// Mesh-governed credit rates. These are CONSTANTS — not configurable
+    /// per-node. Allowing individual nodes to set their own earn/spend rates
+    /// would break mesh fairness (equivalent to printing your own money).
+    /// Changes to these values must go through mesh governance, not .env.
+    pub fn mesh_defaults() -> Self {
         Self {
-            welcome_bonus: env_f64("REMOVED_MESH_GOVERNED", 100.0),
-            compute_earn_per_1k: env_f64("REMOVED_MESH_GOVERNED", 2.0),
-            network_earn_per_100: env_f64("REMOVED_MESH_GOVERNED", 1.0),
-            idle_earn_per_hour: env_f64("REMOVED_MESH_GOVERNED", 0.5),
-            code_contribution_base: env_f64("REMOVED_MESH_GOVERNED", 10.0),
-            social_share_earn: env_f64("REMOVED_MESH_GOVERNED", 3.0),
-            social_share_max_per_day: env_u32("REMOVED_MESH_GOVERNED", 5),
-            community_vote_earn: env_f64("REMOVED_MESH_GOVERNED", 1.0),
-            governance_vote_earn: env_f64("REMOVED_MESH_GOVERNED", 2.0),
-            content_contribution_earn: env_f64("REMOVED_MESH_GOVERNED", 2.0),
-            compute_cost_per_1k: env_f64("REMOVED_MESH_GOVERNED", 1.0),
-            network_cost_per_100: env_f64("REMOVED_MESH_GOVERNED", 0.5),
-            priority_boost_cost: env_f64("REMOVED_MESH_GOVERNED", 5.0),
-            high_demand_multiplier: env_f64("REMOVED_MESH_GOVERNED", 1.5),
-            moderate_demand_multiplier: env_f64("REMOVED_MESH_GOVERNED", 1.2),
+            welcome_bonus: 100.0,
+            compute_earn_per_1k: 2.0,
+            network_earn_per_100: 1.0,
+            idle_earn_per_hour: 0.5,
+            code_contribution_base: 10.0,
+            social_share_earn: 3.0,
+            social_share_max_per_day: 5,
+            community_vote_earn: 1.0,
+            governance_vote_earn: 2.0,
+            content_contribution_earn: 2.0,
+            compute_cost_per_1k: 1.0,
+            network_cost_per_100: 0.5,
+            priority_boost_cost: 5.0,
+            high_demand_multiplier: 1.5,
+            moderate_demand_multiplier: 1.2,
         }
     }
 }
 
-fn env_f64(key: &str, default: f64) -> f64 {
-    std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
-}
-
-fn env_u32(key: &str, default: u32) -> u32 {
-    std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
-}
 
 // ─── Credit Ledger ──────────────────────────────────────────────────
 
@@ -285,7 +282,7 @@ impl CreditsEngine {
     pub fn new() -> Self {
         Self {
             ledger_path: PathBuf::from("data/credits/ledger.json"),
-            config: CreditConfig::from_env(),
+            config: CreditConfig::mesh_defaults(),
         }
     }
 
@@ -293,7 +290,7 @@ impl CreditsEngine {
     pub fn new_with_path(path: PathBuf) -> Self {
         Self {
             ledger_path: path,
-            config: CreditConfig::from_env(),
+            config: CreditConfig::mesh_defaults(),
         }
     }
 

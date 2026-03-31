@@ -56,6 +56,13 @@ if [ "$1" = "stop" ]; then
         rm -f /tmp/hive_flux.pid
         log "🎨 Flux server stopped."
     fi
+    # Kill Training server if running
+    if [ -f /tmp/hive_train.pid ]; then
+        kill "$(cat /tmp/hive_train.pid)" 2>/dev/null || true
+        rm -f /tmp/hive_train.pid
+        log "🧠 Training server stopped."
+    fi
+    lsof -ti:8491 | xargs kill 2>/dev/null || true
     docker compose down 2>/dev/null || docker-compose down 2>/dev/null || true
     log "✅ HIVE stopped."
     exit 0
@@ -69,6 +76,12 @@ if [ "$1" = "rebuild" ]; then
     if [ -f /tmp/hive_flux.pid ]; then
         kill "$(cat /tmp/hive_flux.pid)" 2>/dev/null || true
         rm -f /tmp/hive_flux.pid
+    fi
+    # Kill Training server if running
+    lsof -ti:8491 | xargs kill 2>/dev/null || true
+    if [ -f /tmp/hive_train.pid ]; then
+        kill "$(cat /tmp/hive_train.pid)" 2>/dev/null || true
+        rm -f /tmp/hive_train.pid
     fi
     docker compose down 2>/dev/null || true
     # Fall through to the main launch flow (build + start + flux + browser)
@@ -256,6 +269,23 @@ if [ -f "$FLUX_SCRIPT" ]; then
     "$PYTHON_BIN" "$FLUX_SCRIPT" &
     echo $! > /tmp/hive_flux.pid
     log "🎨 Flux server starting on http://localhost:8490 (host GPU)"
+fi
+
+# ── Step 4.6: Start Training server on HOST (MLX/Metal) ─────────────
+# Training needs MLX/Metal for LoRA fine-tuning — runs on the host.
+# Docker calls this via http://host.docker.internal:8491/train
+TRAIN_SCRIPT="training/train_server.py"
+if [ -f "$TRAIN_SCRIPT" ]; then
+    # Kill any existing training server
+    lsof -ti:8491 | xargs kill 2>/dev/null || true
+    if [ -f /tmp/hive_train.pid ]; then
+        kill "$(cat /tmp/hive_train.pid)" 2>/dev/null || true
+        rm -f /tmp/hive_train.pid
+    fi
+    # Start training server in background
+    "$PYTHON_BIN" "$TRAIN_SCRIPT" &
+    echo $! > /tmp/hive_train.pid
+    log "🧠 Training server starting on http://localhost:8491 (host MLX/Metal)"
 fi
 
 $COMPOSE_CMD up -d --build

@@ -329,6 +329,8 @@ mod tests {
         unsafe {
             std::env::set_var("HIVE_PYTHON_BIN", mock_python.to_string_lossy().to_string());
             std::env::set_var("HIVE_CACHE_DIR", temp_cache_dir.to_string_lossy().to_string());
+            // Point flux HTTP away from any real server to avoid test pollution
+            std::env::set_var("HIVE_FLUX_URL", "http://127.0.0.1:1");
         }
 
         // Also make prompt long to hit truncation logic
@@ -370,6 +372,7 @@ mod tests {
         unsafe {
             std::env::remove_var("HIVE_PYTHON_BIN");
             std::env::remove_var("HIVE_CACHE_DIR");
+            std::env::remove_var("HIVE_FLUX_URL");
         }
         let _ = tokio::fs::remove_dir_all(temp_dir).await;
     }

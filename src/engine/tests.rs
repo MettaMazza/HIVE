@@ -54,6 +54,7 @@
         async fn start(&self, _: mpsc::Sender<Event>) -> Result<(), crate::platforms::PlatformError> { Ok(()) }
         async fn send(&self, _: Response) -> Result<(), crate::platforms::PlatformError> { Ok(()) }
     }
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_engine_routing_with_mock_provider() {
         // Setup the mock provider
         let mut mock_provider = MockProvider::new();

@@ -7,7 +7,7 @@
     async fn test_provider_success() {
         let mock_server = MockServer::start().await;
         
-        let mut provider = OllamaProvider::new();
+        let mut provider = OllamaProvider::new("Apis".into());
         provider.endpoint = format!("{}/api/chat", mock_server.uri());
 
         let mock_response = "{\"message\": {\"role\": \"assistant\", \"content\": \"Sure, here's your context.\"}, \"done\": true}\n";
@@ -42,7 +42,7 @@
     async fn test_provider_http_error() {
         let mock_server = MockServer::start().await;
         
-        let mut provider = OllamaProvider::new();
+        let mut provider = OllamaProvider::new("Apis".into());
         provider.endpoint = format!("{}/api/chat", mock_server.uri());
 
         Mock::given(method("POST"))
@@ -66,7 +66,7 @@
 
     #[tokio::test]
     async fn test_provider_connection_error() {
-        let mut provider = OllamaProvider::new();
+        let mut provider = OllamaProvider::new("Apis".into());
         provider.endpoint = "http://invalid.domain.that.does.not.exist:1234/api/chat".into();
 
         let res = provider.generate("sys", &[], &Event {
@@ -85,7 +85,7 @@
     #[tokio::test]
     async fn test_provider_parse_error() {
         let mock_server = MockServer::start().await;
-        let mut provider = OllamaProvider::new();
+        let mut provider = OllamaProvider::new("Apis".into());
         provider.endpoint = format!("{}/api/chat", mock_server.uri());
 
         Mock::given(method("POST"))
@@ -110,7 +110,7 @@
     #[tokio::test]
     async fn test_provider_early_eof() {
         let mock_server = MockServer::start().await;
-        let mut provider = OllamaProvider::new();
+        let mut provider = OllamaProvider::new("Apis".into());
         provider.endpoint = format!("{}/api/chat", mock_server.uri());
 
         Mock::given(method("POST"))
@@ -136,7 +136,7 @@
     #[tokio::test]
     async fn test_provider_reasoning_telemetry() {
         let mock_server = MockServer::start().await;
-        let mut provider = OllamaProvider::new();
+        let mut provider = OllamaProvider::new("Apis".into());
         provider.endpoint = format!("{}/api/chat", mock_server.uri());
 
         let mock_response = "{\"message\": {\"role\": \"assistant\", \"thinking\": \"I am thinking...\", \"content\": \"Final answer\"}, \"done\": true}\n";
@@ -167,7 +167,7 @@
     #[tokio::test]
     async fn test_provider_missing_content() {
         let mock_server = MockServer::start().await;
-        let mut provider = OllamaProvider::new();
+        let mut provider = OllamaProvider::new("Apis".into());
         provider.endpoint = format!("{}/api/chat", mock_server.uri());
 
         let mock_response = "{\"message\": {\"role\": \"assistant\"}, \"done\": true}\n";
@@ -194,7 +194,7 @@
     #[tokio::test]
     async fn test_ollama_stream_fragmented() {
         let mock_server = MockServer::start().await;
-        let mut provider = OllamaProvider::new();
+        let mut provider = OllamaProvider::new("Apis".into());
         provider.endpoint = format!("{}/api/chat", mock_server.uri());
 
         let mock_response = "{\"message\": {\"role\": \"assistant\", \"content\": \"part1\"}}\n{\"message\": {\"content\": \" part2\"}}\n{\"message\": {\"content\": \" done!\"}, \"done\": true}\n";
@@ -221,7 +221,7 @@
     #[tokio::test]
     async fn test_ollama_stream_disconnect() {
         let mock_server = MockServer::start().await;
-        let mut provider = OllamaProvider::new();
+        let mut provider = OllamaProvider::new("Apis".into());
         provider.endpoint = format!("{}/api/chat", mock_server.uri());
 
         Mock::given(method("POST"))

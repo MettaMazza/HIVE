@@ -41,22 +41,13 @@ impl Rarity {
         }
     }
 
-    /// Price in HIVE Coin (human-readable).
+    /// Price in HIVE Coin (human-readable). Mesh-governed — not per-node configurable.
     pub fn price(&self) -> f64 {
-        let common = std::env::var("REMOVED_MESH_GOVERNED")
-            .ok().and_then(|v| v.parse().ok()).unwrap_or(10.0);
-        let uncommon = std::env::var("REMOVED_MESH_GOVERNED")
-            .ok().and_then(|v| v.parse().ok()).unwrap_or(25.0);
-        let rare = std::env::var("REMOVED_MESH_GOVERNED")
-            .ok().and_then(|v| v.parse().ok()).unwrap_or(50.0);
-        let legendary = std::env::var("REMOVED_MESH_GOVERNED")
-            .ok().and_then(|v| v.parse().ok()).unwrap_or(100.0);
-
         match self {
-            Rarity::Common => common,
-            Rarity::Uncommon => uncommon,
-            Rarity::Rare => rare,
-            Rarity::Legendary => legendary,
+            Rarity::Common => 10.0,
+            Rarity::Uncommon => 25.0,
+            Rarity::Rare => 50.0,
+            Rarity::Legendary => 100.0,
         }
     }
 

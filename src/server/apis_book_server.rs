@@ -35,10 +35,7 @@ struct FeedQuery {
 }
 
 pub async fn spawn_apis_book_server(book: Arc<ApisBook>) {
-    let port: u16 = std::env::var("REMOVED_MESH_GOVERNED")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(3031);
+    let port: u16 = 3031; // Mesh-governed: creator-key protected
 
     if !book.enabled {
         tracing::info!("[APIS-BOOK] Dashboard disabled");

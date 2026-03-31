@@ -83,9 +83,7 @@ struct NftDelistRequest {
 }
 
 pub async fn spawn_hive_bank_server() {
-    let port: u16 = std::env::var("REMOVED_MESH_GOVERNED")
-        .ok().and_then(|v| v.parse().ok())
-        .unwrap_or(3037);
+    let port: u16 = 3037; // Mesh-governed: creator-key protected
 
     let wallet_secret = std::env::var("HIVE_WALLET_SECRET").unwrap_or_else(|_| {
         let fallback = std::env::var("DISCORD_TOKEN")

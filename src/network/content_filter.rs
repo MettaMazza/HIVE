@@ -122,11 +122,9 @@ pub struct ContentFilter {
 impl ContentFilter {
     /// Create a new content filter with default settings.
     pub fn new() -> Self {
-        let rate_limit = std::env::var("REMOVED_MESH_GOVERNED")
-            .ok().and_then(|v| v.parse().ok()).unwrap_or(30); // 30 msgs/min per peer
-
-        let min_reputation = std::env::var("REMOVED_MESH_GOVERNED")
-            .ok().and_then(|v| v.parse().ok()).unwrap_or(10.0);
+        // Mesh-governed: 30 msgs/min, min rep 10.0. Not per-node configurable.
+        let rate_limit: u64 = 30;
+        let min_reputation: f64 = 10.0;
 
         // Compile injection detection patterns
         let injection_patterns = vec![

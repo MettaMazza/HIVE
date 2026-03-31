@@ -69,10 +69,7 @@ struct ReplyRequest {
 }
 
 pub async fn spawn_mesh_social_server(post_store: Arc<PostStore>) {
-    let port: u16 = std::env::var("REMOVED_MESH_GOVERNED")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(3032);
+    let port: u16 = 3032; // Mesh-governed: creator-key protected
 
     let local_peer_id = std::env::var("HIVE_MESH_CHAT_NAME")
         .unwrap_or_else(|_| "Apis".to_string());

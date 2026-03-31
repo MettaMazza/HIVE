@@ -1,15 +1,9 @@
     use super::*;
     use std::sync::Arc;
-    use crate::models::capabilities::AgentCapabilities;
-    use crate::platforms::Platform;
-    use crate::models::message::Response;
-    use crate::providers::MockProvider;
     use crate::models::scope::Scope;
     use crate::models::message::Event;
-    use tokio::sync::mpsc;
-    use tokio::time::{sleep, Duration};
-    use crate::engine::tests::DummyPlatform;
 
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_engine_agent_execution() {
         use crate::providers::MockProvider;
         use crate::engine::tests::DummyPlatform;
@@ -154,7 +148,7 @@
         let engine = EngineBuilder::new()
             .with_platform(Box::new(DummyPlatform))
             .with_provider(Arc::new(mock_provider))
-            .with_memory(crate::memory::MemoryStore::new(Some(test_dir)))
+            .with_memory(Arc::new(crate::memory::MemoryStore::new(Some(test_dir))))
             .build()
             .unwrap();
             
@@ -213,7 +207,7 @@
         let engine = EngineBuilder::new()
             .with_platform(Box::new(DummyPlatform))
             .with_provider(Arc::new(mock_provider))
-            .with_memory(crate::memory::MemoryStore::new(Some(test_dir)))
+            .with_memory(Arc::new(crate::memory::MemoryStore::new(Some(test_dir))))
             .build()
             .unwrap();
 

@@ -388,10 +388,7 @@ struct SearchParams {
 // ─── Main Server Spawn ──────────────────────────────────────────────
 
 pub async fn spawn_hive_marketplace_server() {
-    let port: u16 = std::env::var("REMOVED_MESH_GOVERNED")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(3038);
+    let port: u16 = 3038; // Mesh-governed: creator-key protected
 
     let state = MarketplaceState::new();
 

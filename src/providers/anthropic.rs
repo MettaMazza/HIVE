@@ -41,10 +41,11 @@ pub struct AnthropicProvider {
     client: Client,
     api_key: String,
     model: String,
+    system_name: String,
 }
 
 impl AnthropicProvider {
-    pub fn new() -> Result<Self, ProviderError> {
+    pub fn new(timeout_secs: u64, system_name: String) -> Result<Self, ProviderError> {
         let api_key = std::env::var("ANTHROPIC_API_KEY")
             .map_err(|_| ProviderError::ConnectionError("ANTHROPIC_API_KEY not set".into()))?;
         let model = std::env::var("ANTHROPIC_MODEL")
@@ -52,11 +53,12 @@ impl AnthropicProvider {
 
         Ok(Self {
             client: Client::builder()
-                .timeout(std::time::Duration::from_secs(300))
+                .timeout(std::time::Duration::from_secs(timeout_secs))
                 .build()
                 .unwrap_or_else(|_| Client::new()),
             api_key,
             model,
+            system_name,
         })
     }
 }
@@ -77,7 +79,7 @@ impl Provider for AnthropicProvider {
         // History
         const HISTORY_MSG_CAP: usize = 8000;
         for event in history {
-            let role = if event.author_name == "Apis" { "assistant" } else { "user" };
+            let role = if event.author_name == self.system_name { "assistant" } else { "user" };
             let content = if role == "user" {
                 format!("[AUTHOR: {} -> APIS]: {}", event.author_name, event.content)
             } else {
@@ -180,6 +182,7 @@ mod tests {
             client: Client::new(),
             api_key: "test-key".into(),
             model: "claude-sonnet-4-20250514".into(),
+            system_name: "Apis".into(),
         };
 
         let mock_response = "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"text\":\"Hello from Claude!\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n";

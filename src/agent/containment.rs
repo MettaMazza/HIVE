@@ -76,24 +76,25 @@ pub fn check_command(cmd: &str) -> Option<String> {
 
     // Block writes/modifications to containment files via shell
     for &protected in CONTAINMENT_FILES {
+        let prot_lower = protected.to_lowercase();
         // Check for common write patterns: >, >>, sed -i, tee, mv, cp, rm, vim, nano, cat >
         let write_patterns = [
-            &format!(">{}", protected) as &str,
-            &format!("> {}", protected),
-            &format!(">>{}", protected),
-            &format!(">> {}", protected),
-            &format!("sed -i"),  // sed -i on containment files
-            &format!("tee {}", protected),
-            &format!("mv {}", protected),
-            &format!("cp {}", protected),
-            &format!("rm {}", protected),
-            &format!("rm -f {}", protected),
-            &format!("rm -rf {}", protected),
-            &format!("chmod {}", protected),
-            &format!("chown {}", protected),
+            format!(">{}", prot_lower),
+            format!("> {}", prot_lower),
+            format!(">>{}", prot_lower),
+            format!(">> {}", prot_lower),
+            format!("sed -i"),  // sed -i on containment files
+            format!("tee {}", prot_lower),
+            format!("mv {}", prot_lower),
+            format!("cp {}", prot_lower),
+            format!("rm {}", prot_lower),
+            format!("rm -f {}", prot_lower),
+            format!("rm -rf {}", prot_lower),
+            format!("chmod {}", prot_lower),
+            format!("chown {}", prot_lower),
         ];
         for pattern in &write_patterns {
-            if lower.contains(pattern) {
+            if lower.contains(pattern.as_str()) {
                 return Some(format!(
                     "Command would modify containment file '{}'",
                     protected
