@@ -69,6 +69,10 @@ ENV RUSTUP_HOME=/usr/local/rustup \
 
 # Create hive user for security
 RUN useradd -m -s /bin/bash hive
+
+# Grant hive user ownership of Rust toolchain (needed for self-recompilation)
+RUN chown -R hive:hive /usr/local/cargo /usr/local/rustup
+
 WORKDIR /home/hive
 
 # Copy HIVE binary (both to PATH and to target/ for upgrade.sh compatibility)
