@@ -245,22 +245,32 @@ impl Engine {
                         let message = resume["message"].as_str().unwrap_or("System recompile complete. Resuming.").to_string();
                         
                         if let Some(scope) = scope {
-                            let platform_str = match &scope {
-                                crate::models::scope::Scope::Public { channel_id, user_id } => 
-                                    format!("discord:{}:{}:0", channel_id, user_id),
-                                crate::models::scope::Scope::Private { user_id } => 
+                            // Use a fresh event ID so Discord creates a NEW message
+                            // instead of trying to edit the stale pre-recompile message.
+                            let fresh_id = chrono::Utc::now().timestamp_millis();
+                            let (platform_str, fresh_scope) = match &scope {
+                                crate::models::scope::Scope::Public { channel_id, .. } => (
+                                    format!("discord:{}:{}:0", channel_id, fresh_id),
+                                    crate::models::scope::Scope::Public {
+                                        channel_id: channel_id.clone(),
+                                        user_id: fresh_id.to_string(),
+                                    },
+                                ),
+                                crate::models::scope::Scope::Private { user_id } => (
                                     format!("cli:0:{}:0", user_id),
+                                    scope.clone(),
+                                ),
                             };
                             let event = crate::models::message::Event {
                                 platform: platform_str,
-                                scope,
+                                scope: fresh_scope,
                                 author_name: "System".into(),
                                 author_id: "system_resume".into(),
                                 content: message,
                                 timestamp: Some(chrono::Utc::now().to_rfc3339()),
                                 message_index: None,
                             };
-                            tracing::info!("[RESUME] 🔄 Post-recompile resume detected — injecting synthetic event");
+                            tracing::info!("[RESUME] 🔄 Post-recompile resume detected — injecting fresh event to channel");
                             let _ = sender.send(event).await;
                         }
                     }
