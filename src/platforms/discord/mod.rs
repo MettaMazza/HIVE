@@ -7,6 +7,7 @@ use tokio::sync::mpsc::Sender;
 use serenity::prelude::*;
 use serenity::model::channel::Message;
 use serenity::model::application::Interaction;
+use serenity::model::guild::Member;
 use std::sync::Arc;
 
 use crate::models::message::{Event, Response};
@@ -93,6 +94,91 @@ impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
         message::handle_message(self, ctx, msg).await;
     }
+
+    async fn guild_member_addition(&self, ctx: Context, new_member: Member) {
+        // Don't welcome bots
+        if new_member.user.bot {
+            return;
+        }
+
+        let user_name = new_member.user.name.clone();
+        let user_id = new_member.user.id.get();
+        let display_name = new_member.display_name().to_string();
+
+        // Use HIVE_WELCOME_CHANNEL if set, otherwise fall back to HIVE_CHAT_CHANNEL
+        let welcome_channel_id: Option<u64> = std::env::var("HIVE_WELCOME_CHANNEL")
+            .or_else(|_| std::env::var("HIVE_CHAT_CHANNEL"))
+            .ok()
+            .and_then(|v| v.parse().ok());
+
+        let Some(channel_id) = welcome_channel_id else {
+            tracing::warn!("[WELCOME] No system channel or HIVE_CHAT_CHANNEL set — cannot welcome {}", user_name);
+            return;
+        };
+
+        // Get the #apis channel for the redirect
+        let apis_channel = std::env::var("HIVE_CHAT_CHANNEL")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok());
+
+        let redirect_text = if let Some(ch) = apis_channel {
+            format!(" Come say hello in <#{}> — I'd love to chat!", ch)
+        } else {
+            String::new()
+        };
+
+        tracing::info!("[WELCOME] 🐝 New member joined: {} ({}). Sending welcome via engine.", display_name, user_id);
+
+        // Inject a synthetic event into the engine so Apis generates the welcome
+        let scope = crate::models::scope::Scope::Public {
+            channel_id: channel_id.to_string(),
+            user_id: user_id.to_string(),
+        };
+
+        // Create a "thinking" embed in the welcome channel
+        let embed = serenity::builder::CreateEmbed::new()
+            .description("```\n🐝 Welcoming new member...\n```")
+            .color(0xFFD700);
+        let builder = serenity::builder::CreateMessage::new().embed(embed);
+        let thinking_msg_id = if let Ok(sent) = serenity::model::id::ChannelId::new(channel_id)
+            .send_message(&ctx.http, builder).await {
+            let mid = sent.id.get();
+            let (tx, rx) = tokio::sync::watch::channel(Some("🐝 Welcoming new member...".to_string()));
+            {
+                let mut map = self.active_telemetry.lock().await;
+                map.insert(mid, tx);
+            }
+            crate::platforms::telemetry::spawn_telemetry_loop(
+                ctx.http.clone(),
+                serenity::model::id::ChannelId::new(channel_id),
+                mid, rx,
+            );
+            Some(mid.to_string())
+        } else {
+            None
+        };
+
+        let platform_id = format!("discord:{}:{}:0", channel_id, thinking_msg_id.unwrap_or_default());
+
+        let ev = crate::models::message::Event {
+            platform: platform_id,
+            scope,
+            author_name: "System".into(),
+            author_id: "system_welcome".into(),
+            content: format!(
+                "[SYSTEM EVENT — NEW MEMBER JOINED]\n\n\
+                A new Discord member **{}** (username: {}) has just joined the server!\n\n\
+                Provide a comprehensive but concise introduction about who and what you are. \
+                Be warm and welcoming. Mention key capabilities briefly.{}\n\n\
+                Address them by name. Keep it under 300 words. Do NOT use any tools — just reply directly.",
+                display_name, user_name, redirect_text
+            ),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            message_index: None,
+        };
+
+        let _ = self.event_sender.send(ev).await;
+    }
 }
 
 pub struct DiscordPlatform {
@@ -134,7 +220,10 @@ impl Platform for DiscordPlatform {
     }
     #[cfg(not(tarpaulin_include))]
     async fn start(&self, event_sender: Sender<Event>) -> Result<(), PlatformError> {
-        let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::DIRECT_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
+        let intents = GatewayIntents::GUILD_MESSAGES
+            | GatewayIntents::DIRECT_MESSAGES
+            | GatewayIntents::MESSAGE_CONTENT
+            | GatewayIntents::GUILD_MEMBERS;
         
         let handler = Handler {
             event_sender,
