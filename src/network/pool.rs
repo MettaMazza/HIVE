@@ -340,9 +340,10 @@ pub struct PoolManager {
 }
 
 impl PoolManager {
-    /// Create pool manager. Sharing is ALWAYS ON — mesh equality.
-    /// These are not configurable per-node. Turning off sharing
-    /// while consuming mesh resources is freeloading.
+    /// Create pool manager. Sharing defaults ON — mesh equality.
+    /// Users can toggle sharing off at runtime, but verify_equality()
+    /// will cut them off from all mesh resources until they turn it back on.
+    /// No .env override exists — this is runtime-only via the UI.
     pub fn new(local_peer: PeerId) -> Self {
         tracing::info!("[POOL] 🤝 Resource pool initialised (web_share=true, compute_share=true)");
 
@@ -431,11 +432,27 @@ impl PoolManager {
 
     // ─── Equality Enforcement ───────────────────────────────────────────
 
+    /// Toggle web sharing at runtime. Users can turn it off, but
+    /// verify_equality() will cut them off from ALL mesh resources.
+    pub fn set_web_share(&mut self, enabled: bool) {
+        self.web_share_enabled = enabled;
+        if !enabled {
+            tracing::warn!("[POOL] ⚠️ Web sharing DISABLED — you will be cut off from mesh resources");
+        }
+    }
+
+    /// Toggle compute sharing at runtime. Same rule as web sharing.
+    pub fn set_compute_share(&mut self, enabled: bool) {
+        self.compute_share_enabled = enabled;
+        if !enabled {
+            tracing::warn!("[POOL] ⚠️ Compute sharing DISABLED — you will be cut off from mesh resources");
+        }
+    }
+
     /// Check if this peer is contributing to the collective.
-    /// Sharing is always on — this is a runtime sanity check.
+    /// If sharing is disabled, they CANNOT use the mesh. No freeloading.
+    /// This is called before every mesh request. Fail = disconnected.
     pub fn verify_equality(&self) -> bool {
-        // Both are always true now (hardcoded). This check remains
-        // as a runtime assertion in case of memory corruption.
         if !self.web_share_enabled && !self.compute_share_enabled {
             tracing::error!(
                 "╔═══════════════════════════════════════════════════════╗"
@@ -447,7 +464,7 @@ impl PoolManager {
                 "║  You cannot use the mesh without contributing.        ║"
             );
             tracing::error!(
-                "║  This is a hardcoded mesh rule — sharing is mandatory.║"
+                "║  Turn web or compute sharing back on to rejoin.       ║"
             );
             tracing::error!(
                 "╚═══════════════════════════════════════════════════════╝"
