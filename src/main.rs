@@ -178,6 +178,7 @@ pub async fn run_app() {
         .with_provider(provider)
         .with_platform_provider("glasses", glasses_provider)
         .with_capabilities(capabilities)
+        .with_memory(memory_store.clone())
         .build()
         .expect("Failed to build Engine");
 

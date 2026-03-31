@@ -19,7 +19,7 @@ pub struct EngineBuilder {
     provider: Option<Arc<dyn Provider>>,
     platform_providers: HashMap<String, Arc<dyn Provider>>,
     capabilities: AgentCapabilities,
-    memory: MemoryStore,
+    memory: Arc<MemoryStore>,
     agent: Option<Arc<AgentManager>>,
     project_root: String,
 }
@@ -35,7 +35,7 @@ impl EngineBuilder {
             provider: None,
             platform_providers: HashMap::new(),
             capabilities: AgentCapabilities::default(),
-            memory: MemoryStore::new(None),
+            memory: Arc::new(MemoryStore::new(None)),
             agent: None,
             project_root,
         }
@@ -68,8 +68,7 @@ impl EngineBuilder {
         self
     }
 
-    #[cfg(test)]
-    pub fn with_memory(mut self, mem: MemoryStore) -> Self {
+    pub fn with_memory(mut self, mem: Arc<MemoryStore>) -> Self {
         self.memory = mem;
         self
     }
@@ -79,8 +78,7 @@ impl EngineBuilder {
             self.project_root, self.platforms.len());
         let provider = self.provider.ok_or("Engine requires a Provider to be set")?;
         let (tx, rx) = mpsc::channel(100);
-        
-        let memory = Arc::new(self.memory);
+        let memory = self.memory.clone();
         
         let drives = Arc::new(drives::DriveSystem::new(&self.project_root));
         let outreach_gate = Arc::new(outreach::OutreachGate::new(&self.project_root, provider.clone()));
