@@ -173,7 +173,7 @@ async fn try_flux_http(
     use base64::Engine as _;
 
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
+        .timeout(std::time::Duration::from_secs(600))
         .connect_timeout(std::time::Duration::from_secs(2))
         .build()
         .ok()?;
