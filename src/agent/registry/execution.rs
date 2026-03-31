@@ -277,6 +277,20 @@ pub fn dispatch_native_tool(
         return Some(handle);
     }
     if tool_type == "run_bash_command" {
+        // ── CONTAINMENT CONE: Block commands targeting Docker infrastructure ──
+        if let Some(reason) = crate::agent::containment::check_command(&desc) {
+            tracing::warn!("[CONTAINMENT] 🛑 Blocked bash command: {}", reason);
+            let handle = tokio::spawn(async move {
+                ToolResult {
+                    task_id,
+                    output: format!("CONTAINMENT VIOLATION: {}. You may run any other command freely.", reason),
+                    tokens_used: 0,
+                    status: ToolStatus::Failed("Containment Boundary".into()),
+                }
+            });
+            return Some(handle);
+        }
+
         let name_clone = tool_type.to_string();
         let handle = tokio::spawn(async move {
             if let Some(ref tx) = tx_clone {

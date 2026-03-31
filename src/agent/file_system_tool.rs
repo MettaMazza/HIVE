@@ -44,6 +44,18 @@ pub async fn execute_file_system_operator(
     }
     
     let path = std::path::Path::new(&path_str);
+
+    // ── CONTAINMENT CONE: Block operations on Docker infrastructure ──
+    if let Some(protected) = crate::agent::containment::check_path(&path_str) {
+        tracing::warn!("[CONTAINMENT] 🛑 Blocked file_system_operator access to '{}' (protected: {})", path_str, protected);
+        return ToolResult {
+            task_id,
+            output: format!("CONTAINMENT VIOLATION: '{}' is part of the Docker containment boundary and cannot be modified. You may edit any other file freely.", protected),
+            tokens_used: 0,
+            status: ToolStatus::Failed("Containment Boundary".into()),
+        };
+    }
+
     let final_output;
     let mut is_err = false;
     

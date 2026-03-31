@@ -10,6 +10,7 @@ pub mod planner;
 pub mod tool;
 pub mod preferences;
 pub mod synthesis;
+pub mod containment;
 
 pub mod outreach;
 pub mod skills;
