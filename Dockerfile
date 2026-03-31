@@ -70,8 +70,7 @@ ENV RUSTUP_HOME=/usr/local/rustup \
 # Create hive user for security
 RUN useradd -m -s /bin/bash hive
 
-# Grant hive user ownership of Rust toolchain (needed for self-recompilation)
-RUN chown -R hive:hive /usr/local/cargo /usr/local/rustup
+# (chown of cargo/rustup happens after all COPY steps below)
 
 WORKDIR /home/hive
 
@@ -96,15 +95,18 @@ COPY Cargo.toml Cargo.lock ./
 COPY upgrade.sh ./
 
 # Copy cached dependency artifacts from builder (so cargo build only recompiles HIVE src)
-COPY --from=builder /build/target/release/deps target/release/deps
-COPY --from=builder /build/target/release/build target/release/build
-COPY --from=builder /usr/local/cargo/registry /usr/local/cargo/registry
+COPY --from=builder --chown=hive:hive /build/target/release/deps target/release/deps
+COPY --from=builder --chown=hive:hive /build/target/release/build target/release/build
+COPY --from=builder --chown=hive:hive /usr/local/cargo/registry /usr/local/cargo/registry
 
 # Create required directories and copy training scripts to working dir
 RUN mkdir -p memory .hive training logs && \
     chown -R hive:hive /home/hive
 COPY training/*.py training/
-RUN chown -R hive:hive /home/hive/training /home/hive/target
+
+# Final ownership pass — covers cargo/rustup toolchain + all working dirs
+RUN chown -R hive:hive /home/hive/training /home/hive/target \
+    /usr/local/cargo /usr/local/rustup
 
 # ── Entrypoint script ──────────────────────────────────────────────
 COPY <<'ENTRYPOINT' /usr/local/bin/start-hive.sh
