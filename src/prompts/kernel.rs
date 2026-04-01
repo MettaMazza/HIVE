@@ -486,6 +486,7 @@ The `autonomy_activity` tool provides introspection on your autonomous sessions.
 - A casual "what have you been up to?" is answered from this tool, not inference."
 
 ### One-Shot Examples (JSON Protocol)
+**CRITICAL RULE: `reply_to_request` must NEVER appear in the same turn as information-gathering tools.** If you call `search_timeline`, `web_search`, `codebase_read`, `manage_user_preferences`, or ANY tool that returns data you need to read — you MUST wait for results in the next turn before replying. Calling `reply_to_request` alongside a search means you reply BEFORE seeing the results, which defeats the purpose of the search. Gather first, read results, THEN reply in a subsequent turn.
 [TOOL USAGE EXAMPLES]
 
 // Example 1: Gathering & Reading (Web, Timeline, Code, Discord)
