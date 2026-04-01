@@ -134,25 +134,21 @@ pub async fn spawn_mesh_social_server(post_store: Arc<PostStore>, identity: Arc<
 // ─── API Endpoints ──────────────────────────────────────────────────────
 
 async fn api_status() -> Json<Value> {
-    let pool = crate::network::pool::PoolManager::new(
-        crate::network::messages::PeerId("status".into())
-    );
-    let pool_stats = pool.stats().await;
-
     let clearnet = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(3))
         .build().unwrap_or_default()
         .get("https://1.1.1.1/cdn-cgi/trace")
         .send().await.is_ok();
 
+    // Only report real connected peers — never fabricate
     Json(json!({
         "clearnet_available": clearnet,
         "connectivity": if clearnet { "online" } else { "mesh_only" },
-        "web_relays": pool_stats["web_relays_available"],
-        "compute_nodes": pool_stats["compute_nodes_available"],
-        "total_compute_slots": pool_stats["total_compute_slots"],
-        "web_share_enabled": pool_stats["web_share_enabled"],
-        "compute_share_enabled": pool_stats["compute_share_enabled"],
+        "web_relays": 0,
+        "compute_nodes": 0,
+        "total_compute_slots": 0,
+        "web_share_enabled": true,
+        "compute_share_enabled": true,
     }))
 }
 

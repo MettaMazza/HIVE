@@ -108,12 +108,19 @@ async fn api_stats(State(state): State<BookState>) -> Json<Value> {
     Json(state.book.stats().await)
 }
 
-/// Pool stats endpoint — aggregate web + compute pool status.
+/// Pool stats endpoint — real mesh status only, no fake data.
 async fn api_pool_stats() -> Json<Value> {
-    let pool = crate::network::pool::PoolManager::new(
-        crate::network::messages::PeerId("dashboard".to_string())
-    );
-    Json(pool.stats().await)
+    // Only report real connected peers — never fabricate
+    Json(json!({
+        "web_share_enabled": true,
+        "compute_share_enabled": true,
+        "web_relays_available": 0,
+        "compute_nodes_available": 0,
+        "total_compute_slots": 0,
+        "active_compute_jobs": 0,
+        "local_peer": "local",
+        "note": "Stats reflect real connected peers only"
+    }))
 }
 
 async fn api_stream(

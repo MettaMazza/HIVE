@@ -183,16 +183,18 @@ pub async fn spawn_hive_portal_server(registry: Arc<SiteRegistry>, identity: Arc
 // ─── API Endpoints ──────────────────────────────────────────────────────
 
 async fn api_services() -> Json<Value> {
-    let pool = crate::network::pool::PoolManager::new(
-        crate::network::messages::PeerId("portal".into())
-    );
-    let pool_stats = pool.stats().await;
-
+    // Real connectivity check — no fake stats
     let clearnet = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(3))
         .build().unwrap_or_default()
         .get("https://1.1.1.1/cdn-cgi/trace")
         .send().await.is_ok();
+
+    // Only count REAL connected remote peers — never count self
+    // These will be populated by the mesh loop when peers actually connect
+    let mesh_peers: u32 = 0; // TODO: Wire to real MeshHandlers.book peer count
+    let remote_compute: u32 = 0; // TODO: Wire to real PoolManager compute_nodes
+    let remote_relays: u32 = 0; // TODO: Wire to real PoolManager web_relays
 
     Json(json!({
         "services": [
@@ -208,9 +210,9 @@ async fn api_services() -> Json<Value> {
             {"id":"fileshare","name":"File Share","icon":"📁","desc":"Browse & discover shared files across the mesh","port":3039,"url":"http://localhost:3039","category":"tools"},
         ],
         "connectivity": if clearnet { "online" } else { "mesh_only" },
-        "web_relays": pool_stats["web_relays_available"],
-        "compute_nodes": pool_stats["compute_nodes_available"],
-        "total_compute_slots": pool_stats["total_compute_slots"],
+        "mesh_peers": mesh_peers,
+        "web_relays": remote_relays,
+        "compute_nodes": remote_compute,
     }))
 }
 
@@ -469,7 +471,7 @@ const PORTAL_HTML: &str = r##"<!DOCTYPE html>
         <div class="topbar-right">
             <div class="stat"><span id="user-display" onclick="document.getElementById('identity-modal').style.display='flex'" style="cursor:pointer" title="Change Identity">👤 ...</span></div>
             <div class="stat"><div class="dot" id="conn-dot"></div><span id="conn-text">checking...</span></div>
-            <div class="stat">🖥️ <span id="compute-count">0</span> compute</div>
+            <div class="stat">🖥️ <span id="compute-count">0</span> peers</div>
             <div class="stat">🌐 <span id="relay-count">0</span> relays</div>
         </div>
     </div>
@@ -506,7 +508,7 @@ const PORTAL_HTML: &str = r##"<!DOCTYPE html>
     </div>
 
     <div class="footer">
-        <p>🐝 HIVE v4.7 — The Human Internet Viable Ecosystem</p>
+        <p>🐝 HIVE v5.0 — The Human Internet Viable Ecosystem</p>
         <p>Everything here runs peer-to-peer. You are the internet.</p>
     </div>
 
@@ -537,7 +539,7 @@ async function loadServices() {
         const text = document.getElementById('conn-text');
         if (data.connectivity === 'online') { dot.className='dot dot-g'; text.textContent='online'; }
         else { dot.className='dot dot-r'; text.textContent='mesh only'; }
-        document.getElementById('compute-count').textContent = data.total_compute_slots || 0;
+        document.getElementById('compute-count').textContent = data.mesh_peers || 0;
         document.getElementById('relay-count').textContent = data.web_relays || 0;
 
         // Services grid
