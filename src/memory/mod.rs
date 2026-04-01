@@ -12,6 +12,7 @@ pub mod temporal;
 pub mod scratch;
 pub mod lessons;
 pub mod moderation;
+pub mod vector_index;
 
 pub use working::*;
 pub use autosave::*;
@@ -23,13 +24,14 @@ pub use scratch::*;
 pub mod preferences;
 pub use preferences::*;
 pub use lessons::*;
+pub use vector_index::*;
 
 use std::collections::{HashMap, VecDeque};
 use tokio::sync::{Mutex, RwLock};
 use chrono::Utc;
 use crate::computer::alu::ALU;
 use crate::computer::turing_grid::TuringGrid;
-/// The Unified 5-Tier Memory Store.
+/// The Unified 6-Tier Memory Store.
 #[derive(Debug, Clone)]
 pub struct MemoryStore {
     pub working: WorkingMemory,
@@ -45,6 +47,12 @@ pub struct MemoryStore {
     pub moderation: Arc<moderation::ModerationStore>,
     pub turing_grid: Arc<Mutex<TuringGrid>>,
     pub alu: Arc<ALU>,
+    /// Vector embedding index for semantic memory search
+    pub vector_index: Arc<VectorIndex>,
+    /// Ollama embedding client (None if HIVE_EMBED_MODEL not set)
+    pub embed_client: Option<Arc<crate::providers::embed::EmbedClient>>,
+    /// Base directory for memory persistence
+    pub memory_dir: PathBuf,
     /// Tracks recent active participants in Public channels. Maps channel_id -> Vec<author_name>
     rosters: Arc<RwLock<HashMap<String, Vec<String>>>>,
 }
@@ -76,6 +84,8 @@ impl MemoryStore {
         let timelines = Arc::new(TimelineStore::new(&memory_dir.join("core")));
         let turing_grid = Arc::new(Mutex::new(TuringGrid::new(memory_dir.join("computer_grid.json"))));
         let alu = Arc::new(ALU::new(Some(memory_dir.join("computer_runtime"))));
+        let vector_index = Arc::new(VectorIndex::new(Some(memory_dir.clone())));
+        let embed_client = crate::providers::embed::EmbedClient::from_env().map(Arc::new);
 
         Self {
             working,
@@ -90,6 +100,9 @@ impl MemoryStore {
             timelines,
             turing_grid,
             alu,
+            vector_index,
+            embed_client,
+            memory_dir: memory_dir.clone(),
             activity_stream: Arc::new(RwLock::new(VecDeque::new())),
             rosters: Arc::new(RwLock::new(HashMap::new())),
         }
@@ -100,6 +113,7 @@ impl MemoryStore {
         self.working.load_persisted().await;
         self.synaptic.load().await;
         self.moderation.load().await;
+        self.vector_index.load().await;
         // Init grid logic:
         let grid_path = self.turing_grid.lock().await.persistence_path.clone();
         if let Ok(loaded) = TuringGrid::load(grid_path).await {
@@ -110,6 +124,12 @@ impl MemoryStore {
         }
         let _ = self.alu.init().await;
         self.temporal.write().await.init_and_register_boot().await;
+        if self.embed_client.is_some() {
+            let (t, s, l) = self.vector_index.stats().await;
+            tracing::info!("[MEMORY] 🧠 Vector index: {} timeline, {} synaptic, {} lesson embeddings", t, s, l);
+        } else {
+            tracing::info!("[MEMORY] 🧠 Vector embeddings disabled (set HIVE_EMBED_MODEL to enable)");
+        }
         tracing::info!("[MEMORY] ✅ MemoryStore initialization complete");
     }
 
@@ -160,6 +180,39 @@ impl MemoryStore {
 
         self.working.add_event(event.clone()).await;
         self.timeline.append_event(&event).await;
+
+        // Fire-and-forget vector embedding — never blocks the event pipeline
+        if let Some(ref client) = self.embed_client {
+            if !event.content.starts_with("***") && event.author_name != "System" {
+                let client = client.clone();
+                let index = self.vector_index.clone();
+                let text = format!("{}: {}", event.author_name, event.content);
+                let preview = text.chars().take(200).collect::<String>();
+                let scope_key = event.scope.to_key();
+                let msg_idx = event.message_index.unwrap_or(0);
+                let timestamp = event.timestamp.clone().unwrap_or_default();
+                tokio::spawn(async move {
+                    let entry_id = format!("timeline:{}:{}", scope_key, msg_idx);
+                    if index.contains(&entry_id).await {
+                        return;
+                    }
+                    match client.embed(&text).await {
+                        Ok(vec) => {
+                            index.insert(vector_index::VectorEntry {
+                                id: entry_id,
+                                source: vector_index::SourceType::Timeline,
+                                text_preview: preview,
+                                vector: vec,
+                                timestamp,
+                            }).await;
+                        }
+                        Err(e) => {
+                            tracing::debug!("[EMBED] Timeline embed failed (non-fatal): {}", e);
+                        }
+                    }
+                });
+            }
+        }
     }
 
     /// Fetches a comma-separated list of active participants in a channel

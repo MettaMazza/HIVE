@@ -9,6 +9,7 @@ pub mod anthropic;
 pub mod gemini;
 pub mod xai;
 pub mod reasoning_router;
+pub mod embed;
 
 #[derive(thiserror::Error, Debug)]
 pub enum ProviderError {

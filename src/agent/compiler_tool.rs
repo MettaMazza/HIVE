@@ -20,23 +20,23 @@ pub async fn execute_compiler(
     }
 
     if action == "system_recompile" {
-        // ── SAFETY GATE: Run test suite BEFORE building ──────────────────
-        // This catches logic bugs that compile but break behavior (e.g.
-        // blocking .await on infinite tasks, incorrect concurrency, etc.)
-        telemetry!(telemetry_tx, "  🧪 Running test suite before compilation (safety gate)...\n".into());
+        // ── SAFETY GATE: Run FULL test suite BEFORE building ─────────────
+        // Runs --bin HIVE (all 664+ binary tests) not just --lib (which is near-empty).
+        // This catches logic bugs that compile but break behavior.
+        telemetry!(telemetry_tx, "  🧪 Running full test suite before compilation (safety gate)...\n".into());
 
         let test_result = tokio::time::timeout(
             std::time::Duration::from_secs(600),
             tokio::process::Command::new("cargo")
-                .args(["test", "--lib", "--release"])
+                .args(["test", "--release", "--bin", "HIVE"])
                 .output()
         ).await;
 
         match test_result {
             Ok(Ok(test_output)) => {
+                let stderr = String::from_utf8_lossy(&test_output.stderr);
+                let stdout = String::from_utf8_lossy(&test_output.stdout);
                 if !test_output.status.success() {
-                    let stderr = String::from_utf8_lossy(&test_output.stderr);
-                    let stdout = String::from_utf8_lossy(&test_output.stdout);
                     telemetry!(telemetry_tx, "  ❌ Test suite FAILED — recompile ABORTED.\n".into());
                     return ToolResult {
                         task_id,
@@ -45,7 +45,51 @@ pub async fn execute_compiler(
                         status: ToolStatus::Failed("Tests Failed".into()),
                     };
                 }
-                telemetry!(telemetry_tx, "  ✅ All tests passed. Proceeding to compilation.\n".into());
+
+                // ── WARNING GATE: Check for compiler warnings in test build ──
+                // Warnings indicate dead code, unused variables, or potential bugs.
+                // External dependency warnings (e.g. imap-proto) are excluded.
+                let hive_warnings: Vec<&str> = stderr.lines()
+                    .filter(|line| line.starts_with("warning:") || line.contains("warning["))
+                    .filter(|line| !line.contains("imap-proto") && !line.contains("future-incompat") && !line.contains("generated"))
+                    .collect();
+
+                if !hive_warnings.is_empty() {
+                    telemetry!(telemetry_tx, format!("  ⚠️ {} compiler warning(s) detected — recompile ABORTED.\n", hive_warnings.len()));
+                    // Grab each warning with context lines for diagnostic output
+                    let stderr_lines: Vec<&str> = stderr.lines().collect();
+                    let mut context = String::new();
+                    for (i, line) in stderr_lines.iter().enumerate() {
+                        if (line.starts_with("warning:") || line.contains("warning["))
+                            && !line.contains("imap-proto") && !line.contains("future-incompat") && !line.contains("generated")
+                        {
+                            context.push_str(line);
+                            context.push('\n');
+                            // Include up to 4 context lines after each warning
+                            for j in 1..=4 {
+                                if i + j < stderr_lines.len() {
+                                    context.push_str(stderr_lines[i + j]);
+                                    context.push('\n');
+                                }
+                            }
+                            context.push('\n');
+                        }
+                    }
+                    return ToolResult {
+                        task_id,
+                        output: format!(
+                            "RECOMPILE ABORTED: {} compiler warning(s) detected. All warnings must be fixed before deployment.\n\n\
+                            HOW TO FIX: Read each warning below. Each one tells you the file, line number, and what's wrong.\n\
+                            Common fixes: prefix unused variables with `_`, remove unused imports, delete dead code.\n\n\
+                            Warnings:\n{}",
+                            hive_warnings.len(), context
+                        ),
+                        tokens_used: 0,
+                        status: ToolStatus::Failed("Warnings Present".into()),
+                    };
+                }
+
+                telemetry!(telemetry_tx, "  ✅ All tests passed, zero warnings. Proceeding to compilation.\n".into());
             }
             Ok(Err(e)) => {
                 telemetry!(telemetry_tx, "  ❌ Failed to run test suite — recompile ABORTED.\n".into());
@@ -113,7 +157,27 @@ pub async fn execute_compiler(
                 let stderr = String::from_utf8_lossy(&output.stderr);
 
                 if output.status.success() {
-                    telemetry!(telemetry_tx, "  ✅ Compilation Successful! Preparing binary hot-swap.\n".into());
+                    // ── WARNING GATE: Check build output for HIVE-specific warnings ──
+                    let hive_build_warnings: Vec<&str> = stderr.lines()
+                        .filter(|line| line.starts_with("warning:") || line.contains("warning["))
+                        .filter(|line| !line.contains("imap-proto") && !line.contains("future-incompat") && !line.contains("generated"))
+                        .collect();
+
+                    if !hive_build_warnings.is_empty() {
+                        telemetry!(telemetry_tx, format!("  ⚠️ Build succeeded but {} warning(s) detected — ABORTING hot-swap.\n", hive_build_warnings.len()));
+                        return ToolResult {
+                            task_id,
+                            output: format!(
+                                "BUILD ABORTED: Compilation succeeded but {} warning(s) detected. Fix all warnings before deploying.\n\nWarnings:\n{}",
+                                hive_build_warnings.len(),
+                                hive_build_warnings.join("\n")
+                            ),
+                            tokens_used: 0,
+                            status: ToolStatus::Failed("Warnings Present".into()),
+                        };
+                    }
+
+                    telemetry!(telemetry_tx, "  ✅ Compilation Successful! Zero warnings. Preparing binary hot-swap.\n".into());
                     
                     // Copy the binary explicitly to avoid lock conflicts during the shell script swap
                     let _ = std::fs::copy("target/release/HIVE", "HIVE_next");

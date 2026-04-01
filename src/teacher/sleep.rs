@@ -271,7 +271,7 @@ impl SleepCycle {
 
         let in_docker = std::path::Path::new("/.dockerenv").exists();
 
-        let (stdout, stderr) = if in_docker {
+        let (stdout, _stderr) = if in_docker {
             // ── DOCKER: Call the host's training server via HTTP ──
             // Training needs Metal/MLX/GPU — the host machine has it.
             // Same pattern as Ollama (inference) and Flux (images).

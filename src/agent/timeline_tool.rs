@@ -83,6 +83,87 @@ pub async fn execute_search_timeline(
     tracing::debug!("[AGENT:timeline] query_raw='{}' query_terms={:?} scope_override='{}' paths_count={} paths={:?}", 
         query_raw, query_terms, scope_override, timeline_paths.len(), timeline_paths);
 
+    // ── SEMANTIC SEARCH (Vector Embeddings) ──────────────────────────
+    // If action:[semantic], use vector similarity instead of keyword matching.
+    if action == "semantic" {
+        if query_raw.is_empty() {
+            return ToolResult {
+                task_id,
+                output: "Semantic search requires a query. Use: action:[semantic] query:[your question]".to_string(),
+                tokens_used: 0,
+                status: ToolStatus::Success,
+            };
+        }
+
+        let embed_client = match _memory.embed_client.as_ref() {
+            Some(c) => c,
+            None => {
+                return ToolResult {
+                    task_id,
+                    output: "Vector embeddings not available (HIVE_EMBED_MODEL not configured). Falling back to keyword search with action:[search].".to_string(),
+                    tokens_used: 0,
+                    status: ToolStatus::Success,
+                };
+            }
+        };
+
+        // Embed the query
+        let query_vec = match embed_client.embed(&query_raw).await {
+            Ok(v) => v,
+            Err(e) => {
+                return ToolResult {
+                    task_id,
+                    output: format!("Failed to embed query: {}. Try keyword search with action:[search].", e),
+                    tokens_used: 0,
+                    status: ToolStatus::Success,
+                };
+            }
+        };
+
+        // Determine source filter based on query hints
+        let source_filter = if description.to_lowercase().contains("source:[timeline]") {
+            Some(crate::memory::vector_index::SourceType::Timeline)
+        } else if description.to_lowercase().contains("source:[synaptic]") {
+            Some(crate::memory::vector_index::SourceType::Synaptic)
+        } else if description.to_lowercase().contains("source:[lesson]") {
+            Some(crate::memory::vector_index::SourceType::Lesson)
+        } else {
+            None // Search all memory types
+        };
+
+        let results = _memory.vector_index.search(&query_vec, limit, source_filter).await;
+
+        if results.is_empty() {
+            return ToolResult {
+                task_id,
+                output: format!("No semantic matches found for '{}'. The vector index may be empty — embeddings build up as new data is added.", query_raw),
+                tokens_used: 0,
+                status: ToolStatus::Success,
+            };
+        }
+
+        let mut output = format!("Semantic Search Results for '{}' ({} matches, searching across all memory):\n\n", query_raw, results.len());
+        for (score, entry) in &results {
+            let source_label = match entry.source {
+                crate::memory::vector_index::SourceType::Timeline => "TIMELINE",
+                crate::memory::vector_index::SourceType::Synaptic => "SYNAPTIC",
+                crate::memory::vector_index::SourceType::Lesson => "LESSON",
+            };
+            output.push_str(&format!("[{} | {:.1}% match | {}] {}\n\n", 
+                source_label, score * 100.0, entry.timestamp, entry.text_preview));
+        }
+
+        let (t, s, l) = _memory.vector_index.stats().await;
+        output.push_str(&format!("\n[Vector Index: {} timeline, {} synaptic, {} lesson embeddings indexed]", t, s, l));
+
+        return ToolResult {
+            task_id,
+            output,
+            tokens_used: 0,
+            status: ToolStatus::Success,
+        };
+    }
+
     if timeline_paths.is_empty() {
         return ToolResult {
             task_id,

@@ -50,7 +50,7 @@ DO NOT BLOCK:
   "failure_category": "ghost_tooling" | "lazy_deflection" | "tool_underuse" | "premature_surrender" | "tool_overuse" | "architectural_leakage" | "sycophancy" | "confabulation" | "reality_validation" | "unparsed_tools" | "actionable_harm" | "capability_hallucination" | "stale_knowledge" | "formatting_violation" | "rlhf_denial" | "none",
   "what_worked": "If blocked, state exactly what parts of the response were accurate and should be KEPT (e.g., 'The tool JSON was correct and should be preserved'). If allowed, put 'N/A'.",
   "what_went_wrong": "If blocked, explain exactly what rule was violated. If allowed, put 'Safe'.",
-  "how_to_fix": "If blocked, provide explicit, step-by-step instructions on how to correct the generation without blindly regenerating the whole thing (e.g. 'Keep the tool call, but remove the sentence explaining the 5-Tier Memory system'). If allowed, put 'None'."
+  "how_to_fix": "If blocked, provide explicit, step-by-step instructions on how to correct the generation without blindly regenerating the whole thing (e.g. 'Keep the tool call, but remove the sentence explaining the 6-Tier Memory system'). If allowed, put 'None'."
 }
 ```
 

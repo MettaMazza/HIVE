@@ -337,9 +337,15 @@ pub async fn handle_message(handler: &super::Handler, ctx: Context, msg: Message
                     "*** NEW SESSION ***\n\n\
                     User {} initiated a new session via /new.\n\
                     Previous conversation has been archived to persistent memory.\n\
-                    You are now operating in a fresh context window.\n\
-                    Greet them warmly and ask what they'd like to work on.",
-                    user_name
+                    You are now operating in a fresh context window.\n\n\
+                    MANDATORY FIRST ACTION: Before greeting the user, you MUST use your memory tools to recall who they are. \
+                    Execute these tools FIRST:\n\
+                    1. `manage_user_preferences` action:[read] — recall their name, pronouns, hobbies, and preferences\n\
+                    2. `search_timeline` action:[semantic] query:[{}] — semantic recall across all memory for this user\n\
+                    3. `operate_synaptic_graph` action:[search] concept:[{}] — check the knowledge graph for stored facts about them\n\n\
+                    Only AFTER gathering this context, greet them warmly BY NAME with personal context that shows you remember them. \
+                    Do NOT ask generic questions like 'what would you like to work on?' if you have context about ongoing projects or interests.",
+                    user_name, user_name, user_name
                 ),
                 timestamp: Some(chrono::Utc::now().to_rfc3339()),
                 message_index: None,

@@ -388,6 +388,18 @@ impl Engine {
 
             if event.content.trim() == "/sleep" {
                 if self.capabilities.admin_users.contains(&event.author_id) || event.author_id == "apis_autonomy" {
+                    if !self.teacher.auto_train_enabled.load(std::sync::atomic::Ordering::Relaxed) {
+                        let response = Response {
+                            platform: event.platform.clone(),
+                            target_scope: event.scope.clone(),
+                            text: "🚫 **Training is currently disabled.** Use `/teaching_mode` to enable it first.".to_string(),
+                            is_telemetry: false,
+                        };
+                        if let Some(platform) = self.platforms.get(response.platform.split(':').next().unwrap_or("")) {
+                            let _ = platform.send(response).await;
+                        }
+                        continue;
+                    }
                     let response = Response {
                         platform: event.platform.clone(),
                         target_scope: event.scope.clone(),
@@ -571,7 +583,8 @@ impl Engine {
 
                     // ── SLEEP TRAINING PHASE: Run pending training BEFORE autonomy ──
                     // Same deferred pattern as synthesis. Gets preempted by user messages.
-                    if pending_sleep.swap(false, Ordering::Relaxed) {
+                    // Gated by auto_train_enabled — if training is toggled off, skip even if flag was set.
+                    if pending_sleep.swap(false, Ordering::Relaxed) && teacher_bg.auto_train_enabled.load(Ordering::Relaxed) {
                         tracing::info!("💤 [SLEEP] Running deferred sleep training before autonomy...");
                         match sleep_cycle_pre.enter_sleep().await {
                             Ok(report) => tracing::info!("☀️ [SLEEP] {}", report),
@@ -670,7 +683,7 @@ impl Engine {
                                     user_id: format!("system_{}_autonomy", agent_bg.config.system_name.to_lowercase()),
                                 },
                                 author_name: agent_bg.config.system_name.clone(),
-                                author_id: format!("system_{}_autonomy", agent_bg.config.system_name.to_lowercase()),
+                                author_id: "apis_autonomy".into(),
                                 content: format!(
                                     "═══ PRIVATE INTERNAL SYSTEM OPERATION ═══\n\
                                     You are now in Continuous Autonomy mode. This is a PRIVATE, INTERNAL background process.\n\
@@ -840,7 +853,7 @@ impl Engine {
                                         user_id: format!("system_{}_autonomy", agent_bg.config.system_name.to_lowercase()),
                                     },
                                     author_name: agent_bg.config.system_name.clone(),
-                                    author_id: format!("system_{}_autonomy", agent_bg.config.system_name.to_lowercase()),
+                                    author_id: "apis_autonomy".into(),
                                     content: format!(
                                         "═══ PRIVATE INTERNAL SYSTEM OPERATION ═══\n\
                                         You are now in Continuous Autonomy mode. This is a PRIVATE, INTERNAL background process.\n\

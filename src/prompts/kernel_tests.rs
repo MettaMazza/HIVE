@@ -7,7 +7,7 @@
         assert!(laws.contains("Kernel Laws"));
         assert!(laws.contains("Zero Assumption Protocol"));
         assert!(laws.contains("Golden Rule of Systemic Awareness"));
-        assert!(laws.contains("5-Tier Memory Architecture"));
+        assert!(laws.contains("6-Tier Memory Architecture"));
         assert!(laws.contains("Teacher Module"));
         assert!(laws.contains("golden examples"));
         assert!(laws.contains("preference pair"));
