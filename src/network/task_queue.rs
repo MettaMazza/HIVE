@@ -382,7 +382,7 @@ mod tests {
     async fn test_priority_ordering() {
         let queue = TaskQueue::new();
 
-        let low_id = queue.submit(
+        let _low_id = queue.submit(
             "Inference", "model", "low priority",
             100, PeerId("u".to_string()), 0.1, 60
         ).await;

@@ -360,7 +360,7 @@ mod tests {
         ).await.unwrap();
 
         // Peer 1 votes for
-        let result = registry.vote(
+        let _result = registry.vote(
             &proposal_id,
             PeerId("eu_1".to_string()),
             true,
