@@ -338,7 +338,13 @@ pub async fn handle_message(handler: &super::Handler, ctx: Context, msg: Message
                     User {} initiated a new session via /new.\n\
                     Previous conversation has been archived to persistent memory.\n\
                     You are now operating in a fresh context window.\n\n\
-                    YOU MUST ALWAYS use manage_user_preferences, search_timeline (semantic), and operate_synaptic_graph to recall who they are, then greet them.",
+                    YOU MUST ALWAYS use ALL of these memory tools to recall who they are before greeting:\n\
+                    - manage_user_preferences (read their profile)\n\
+                    - search_timeline action:[recent] (paginate through recent conversation history)\n\
+                    - search_timeline action:[semantic] (semantic recall by meaning)\n\
+                    - operate_synaptic_graph (search for stored facts about them)\n\
+                    - manage_scratchpad (check for any persistent notes)\n\
+                    Then greet them.",
                     user_name
                 ),
                 timestamp: Some(chrono::Utc::now().to_rfc3339()),
