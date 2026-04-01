@@ -39,8 +39,8 @@ services:
       - HIVE_AUTO_OPEN=false
       # Connect to host's Ollama — host.docker.internal resolves to your machine
       - HIVE_OLLAMA_URL=http://host.docker.internal:11434
-      - HIVE_MODEL=qwen3.5:122b
-      - HIVE_DEEP_MODEL=qwen3.5:122b
+      - HIVE_MODEL=qwen3.5:35b
+      - HIVE_DEEP_MODEL=qwen3.5:35b
       - HIVE_PYTHON_BIN=python3
       - RUST_LOG=HIVE=info
 
