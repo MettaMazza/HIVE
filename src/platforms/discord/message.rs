@@ -338,7 +338,7 @@ pub async fn handle_message(handler: &super::Handler, ctx: Context, msg: Message
                     User {} initiated a new session via /new.\n\
                     Previous conversation has been archived to persistent memory.\n\
                     You are now operating in a fresh context window.\n\n\
-                    Use your memory tools to recall who they are before responding, then greet them.",
+                    Use manage_user_preferences, search_timeline (semantic), and operate_synaptic_graph to recall who they are, then greet them.",
                     user_name
                 ),
                 timestamp: Some(chrono::Utc::now().to_rfc3339()),
