@@ -42,6 +42,23 @@ fn get_reader() -> Box<dyn AsyncBufRead + Unpin + Send + Sync> {
 pub async fn run_app() {
     dotenv::dotenv().ok(); // Load .env file manually first
 
+    // ── Persisted Model Override ──────────────────────────────────
+    // If a model swap was persisted to disk (via /model swap), use it
+    // instead of the .env default. Lives in the Docker volume so it
+    // survives rebuilds.
+    if let Ok(override_model) = std::fs::read_to_string("memory/core/model_override.txt") {
+        let model = override_model.trim().to_string();
+        if !model.is_empty() {
+            // SAFETY: Called once at startup before any threads read HIVE_MODEL
+            unsafe { std::env::set_var("HIVE_MODEL", &model); }
+            // Also override the deep model if not separately configured
+            if std::env::var("HIVE_DEEP_MODEL_EXPLICIT").is_err() {
+                unsafe { std::env::set_var("HIVE_DEEP_MODEL", &model); }
+            }
+            eprintln!("[BOOT] 🔄 Model override loaded from disk: {}", model);
+        }
+    }
+
     // ── Global Configuration ───────────────────────────────────────
     let config = crate::config::AppConfig::load_from_env();
 

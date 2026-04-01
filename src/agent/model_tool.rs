@@ -135,15 +135,20 @@ pub async fn execute_swap_model(
             // SAFETY: We only call this from the single model swap tool, no concurrent env reads
             unsafe { std::env::set_var("HIVE_MODEL", &model_name); }
 
+            // Persist to disk so the swap survives reboots.
+            // On next boot, the engine reads this file and overrides the env default.
+            let _ = std::fs::create_dir_all("memory/core");
+            let _ = std::fs::write("memory/core/model_override.txt", &model_name);
+
             if let Some(ref tx) = telemetry_tx {
-                let _ = tx.send(format!("🔄 Model swapped to: {}\n", model_name)).await;
+                let _ = tx.send(format!("🔄 Model swapped to: {} (persisted)\n", model_name)).await;
             }
 
-            tracing::info!("[MODEL_TOOL] 🔄 Model swapped to '{}' via agent tool", model_name);
+            tracing::info!("[MODEL_TOOL] 🔄 Model swapped to '{}' via agent tool (persisted to disk)", model_name);
 
             ToolResult {
                 task_id,
-                output: format!("✅ Model swapped to `{}`. Next inference will use this model.", model_name),
+                output: format!("✅ Model swapped to `{}`. Persisted — this model will be used on next boot too.", model_name),
                 tokens_used: 0,
                 status: ToolStatus::Success,
             }
