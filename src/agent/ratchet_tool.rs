@@ -233,9 +233,9 @@ mod tests {
     #[tokio::test]
     async fn test_ratchet_failure() {
         // Evaluate `false` should trigger rollback.
-        // It's going to fail finding "fake" checkpoint, but the tool will return Success (the agent observes the rollback).
+        // Rollback of non-existent "fake" checkpoint will fail, returning Failed status.
         let r = execute_ratchet_tool("1".into(), "action:[evaluate_test] command:[false] checkpoint_id:[fake]".into(), None).await;
-        assert!(matches!(r.status, ToolStatus::Success)); // Agent observes the mechanical output via Success block
+        assert!(matches!(r.status, ToolStatus::Failed(_))); // Rollback failure returns Failed
         assert!(r.output.contains("Ratchet FAILED"));
         assert!(r.output.contains("CRITICAL ERROR")); // because rollback failed to find 'fake' checkpoint
     }

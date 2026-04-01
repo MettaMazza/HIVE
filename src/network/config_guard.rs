@@ -27,8 +27,7 @@ const PROTECTED_PATHS: &[&str] = &[
     ".env",
 ];
 
-/// The ONLY user-editable file.
-#[allow(dead_code)]
+/// The ONLY user-editable paths — excluded from integrity hashing.
 const USER_EDITABLE: &[&str] = &[
     "memory/identity.json",
     "memory/",
@@ -165,8 +164,18 @@ impl ConfigGuard {
                     if name == "target" || name == ".git" || name.starts_with('.') {
                         continue;
                     }
+                    // Skip user-editable directories
+                    let path_str = path.to_string_lossy();
+                    if USER_EDITABLE.iter().any(|ue| path_str.ends_with(ue.trim_end_matches('/'))) {
+                        continue;
+                    }
                     Self::collect_files(&path, files);
                 } else {
+                    // Skip user-editable files
+                    let path_str = path.to_string_lossy();
+                    if USER_EDITABLE.iter().any(|ue| path_str.ends_with(ue)) {
+                        continue;
+                    }
                     files.push(path);
                 }
             }

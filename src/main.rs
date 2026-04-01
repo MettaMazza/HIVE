@@ -40,6 +40,11 @@ fn get_reader() -> Box<dyn AsyncBufRead + Unpin + Send + Sync> {
 
 #[cfg(not(tarpaulin_include))]
 pub async fn run_app() {
+    // Install rustls crypto provider before any TLS/QUIC code runs
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install rustls CryptoProvider");
+
     dotenv::dotenv().ok(); // Load .env file manually first
 
     // ── Persisted Model Override ──────────────────────────────────

@@ -508,7 +508,7 @@ const PORTAL_HTML: &str = r##"<!DOCTYPE html>
     </div>
 
     <div class="footer">
-        <p>🐝 HIVE v5.0 — The Human Internet Viable Ecosystem</p>
+        <p>🐝 HIVE v4.8 — The Human Internet Viable Ecosystem</p>
         <p>Everything here runs peer-to-peer. You are the internet.</p>
     </div>
 
