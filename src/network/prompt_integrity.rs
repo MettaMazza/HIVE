@@ -18,7 +18,7 @@ pub fn compute_prompt_hash() -> String {
 /// The canonical prompt hash from the official v4 build.
 /// This MUST be updated every time the prompts are legitimately changed.
 /// Run `cargo test prompt_integrity -- --nocapture` to see the current hash.
-const CANONICAL_PROMPT_HASH: &str = "6068f6fcd166a2004b313742f0a68c203b3b7eb1f95eda74e0ff34397d66f15d";
+const CANONICAL_PROMPT_HASH: &str = "b153f9a89ac4c1a9a5417cdd6de9bc1b723c36f6718c738bd91d75acde6710b2";
 
 /// Verify that the current prompts match the canonical hash.
 /// Called before any mesh operation.
