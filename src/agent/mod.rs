@@ -167,18 +167,28 @@ impl AgentManager {
     }
 
     /// Fetches all registered tools formatted as a string for the Planner prompt.
-    /// If `is_autonomy` is true, self-moderation and self-protection tools are excluded
-    /// to prevent the agent from loop-testing them on itself.
+    /// If `is_autonomy` is true, dangerous and self-moderation tools are excluded
+    /// to prevent unsupervised execution of system-altering operations.
     pub fn get_available_tools_text(&self, is_autonomy: bool) -> String {
         let mut out = String::new();
-        let moderation_tools = [
+
+        // Tools excluded during autonomy:
+        // 1. Moderation tools — prevent loop-testing on itself
+        // 2. System modification tools — require human supervision
+        // 3. External tooling — too compute-intensive or dangerous unsupervised
+        let autonomy_excluded = [
+            // Moderation
             "refuse_request", "disengage", "mute_user", "set_boundary",
             "block_topic", "escalate_to_admin", "report_concern",
-            "rate_limit_user", "request_consent", "wellbeing_status"
+            "rate_limit_user", "request_consent", "wellbeing_status",
+            // System modification (require human supervision)
+            "opencode", "system_recompile",
+            // Dangerous unsupervised
+            "run_bash_command",
         ];
 
         for (name, template) in &self.registry {
-            if is_autonomy && moderation_tools.contains(&name.as_str()) {
+            if is_autonomy && autonomy_excluded.contains(&name.as_str()) {
                 continue;
             }
             out.push_str(&format!("- TOOL `{}`: {}\n", name, template.system_prompt));

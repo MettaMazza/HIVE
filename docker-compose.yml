@@ -31,7 +31,8 @@ services:
       - .env
 
     volumes:
-      - hive-memory:/home/hive/memory       # Persistent memory
+      - ./.git:/home/hive/.git               # Inject native Git history dynamically
+      - hive-memory:/home/hive/memory        # Persistent memory
       - hive-data:/home/hive/.hive           # Keys and config
       - ./models:/home/hive/models:ro        # Kokoro TTS model files (read-only)
 

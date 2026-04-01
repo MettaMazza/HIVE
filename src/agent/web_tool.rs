@@ -88,6 +88,13 @@ pub async fn execute_web_search(
             let element = tab.wait_for_element(&c_css).map_err(|e| format!("Selector not found '{}': {:?}", c_css, e))?;
             
             let text = element.get_inner_text().map_err(|e| format!("Failed to extract inner text: {:?}", e))?;
+
+            // Explicitly kill Chrome to prevent IOSurface client leak
+            if let Some(pid) = browser.get_process_id() {
+                drop(browser);
+                let _ = std::process::Command::new("kill").arg("-9").arg(pid.to_string()).status();
+            }
+
             Ok(text)
         }).await;
         

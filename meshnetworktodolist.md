@@ -14,6 +14,7 @@
 | Apis Code | VS Code / Cursor | ~30% | 100% |
 | HiveChat | Discord | ~25% | 100% |
 | Mesh Site Builder | Squarespace | ~20% | 100% |
+ mesh file sharing service and site 
 
 ---
 

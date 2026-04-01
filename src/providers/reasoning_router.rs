@@ -85,7 +85,11 @@ impl ReasoningRouter {
                     .unwrap_or_else(|_| "qwen3.5:35b".into())
             });
         let high_model = std::env::var("HIVE_HIGH_MODEL")
-            .unwrap_or_else(|_| "qwen3.5:122b".into());
+            .unwrap_or_else(|_| {
+                std::env::var("HIVE_MODEL")
+                    .or_else(|_| std::env::var("OLLAMA_MODEL"))
+                    .unwrap_or_else(|_| "qwen3.5:35b".into())
+            });
 
         tracing::info!("[ROUTER] 📊 Reasoning Router enabled:");
         tracing::info!("[ROUTER]   classifier = {}", router_model);

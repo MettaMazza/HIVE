@@ -117,6 +117,11 @@ COPY <<'ENTRYPOINT' /usr/local/bin/start-hive.sh
 #!/bin/bash
 set -e
 
+# Establish Internal Git Identity & Bypasses for Host Binding
+git config --global user.name "Apis (HIVE)"
+git config --global user.email "apis@hive.engine"
+git config --global --add safe.directory /home/hive
+
 echo "🐝 ═══════════════════════════════════════════════════════"
 echo "🐝  HIVE — Human Internet Viable Ecosystem"
 echo "🐝  Starting all services..."

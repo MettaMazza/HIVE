@@ -295,7 +295,27 @@ pub(crate) fn build_default_registries() -> (HashMap<String, ToolTemplate>, Hash
             tools: vec![],
         };
 
+        let mesh_status = ToolTemplate {
+            name: "mesh_status".into(),
+            system_prompt: "The HIVE Mesh Dashboard — your window into the decentralised P2P supercomputer. You are part of a mesh network of Apis instances that share compute, data, and internet access. \
+                'action:[status]' — full mesh status: connected peers, governance phase, compute capacity, HIVE Coin balance, DHT entries, sandbox jobs. \
+                'action:[peers]' — list connected peers with their capabilities (OS, arch, RAM, models). \
+                'action:[governance]' — show current governance phase (Bootstrap/Council/Democracy), active proposals, council members. \
+                'action:[compute]' — show distributed compute stats: available slots, active jobs, batch queue, sandbox capacity. \
+                'action:[economy]' — show HIVE Coin stats: supply, your balance, block height, halving schedule. \
+                'action:[dht]' — show DHT stats: local entries, known peers, replication factor. \
+                'action:[files]' — show distributed file system stats: shared files, chunks stored, active retrievals. \
+                'action:[priority]' — show local resource priority status: CPU/RAM usage, remote job state, sharing indicator. \
+                CONTEXT: Governance has three phases — Bootstrap (0-9 peers, developer emergency powers), Council (10-999, multisig with elected members), Democracy (1000+, pure peer equality). \
+                The developer key grants code maintenance access but cannot override governance, mint coins, or unilaterally unban peers. \
+                HIVE Coin is minted algorithmically (1/block, halves every 100K blocks). No human controls the supply. \
+                Sandbox compute uses Wasm isolation — programs run with no filesystem, no network, capped memory/CPU. \
+                Your machine always has priority — remote jobs pause at 80% CPU, kill at 90%.".into(),
+            tools: vec![],
+        };
+
         registry.insert(researcher.name.clone(), researcher);
+        registry.insert(mesh_status.name.clone(), mesh_status);
         registry.insert(visualizer.name.clone(), visualizer);
         registry.insert(send_email.name.clone(), send_email);
         registry.insert(set_alarm.name.clone(), set_alarm);

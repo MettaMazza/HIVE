@@ -56,6 +56,12 @@ pub async fn execute_visualizer(
             let abs_path = cwd.join("memory/cached_images/brain_snapshot.png");
             
             std::fs::write(&abs_path, png_data).map_err(|e| format!("Failed to save physical snapshot: {}", e))?;
+
+            // Explicitly kill Chrome to prevent IOSurface client leak
+            if let Some(pid) = browser.get_process_id() {
+                drop(browser);
+                let _ = std::process::Command::new("kill").arg("-9").arg(pid.to_string()).status();
+            }
             
             Ok(abs_path.to_string_lossy().into_owned())
         }).await;

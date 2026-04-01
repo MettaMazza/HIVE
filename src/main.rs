@@ -130,6 +130,10 @@ pub async fn run_app() {
 
     let memory_store = Arc::new(crate::memory::MemoryStore::new(Some(std::path::PathBuf::from(&config.storage_root))));
     let stop_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+    // ── Unified Identity System ──────────────────────────────────────
+    // Single persistent identity shared across all mesh platforms.
+    let mesh_identity = Arc::new(crate::network::identity::MeshIdentity::load());
     // Create the model handle and base URL early — shared with Discord handler for /model command
     let ollama_base_url = std::env::var("HIVE_OLLAMA_URL")
         .unwrap_or_else(|_| "http://localhost:11434".to_string());
@@ -377,10 +381,10 @@ pub async fn run_app() {
         // Do NOT spawn mesh services — this peer is disconnected
     }
 
-    // 7f. Verify pool code integrity (tied to creator key)
+    // 7f. Verify pool code integrity
     crate::network::pool::PoolManager::verify_pool_integrity();
-    if crate::network::pool::PoolManager::is_creator_machine() {
-        tracing::info!("[SAFENET] 🔑 Creator key detected — authorised for code modifications");
+    if crate::network::creator_key::creator_key_exists() {
+        tracing::info!("[SAFENET] 🔧 Developer key detected — config guard exemption for local development");
     }
 
     // 7g. Spawn the Offline Mesh Monitor (store-and-forward, connectivity tracking)
@@ -392,7 +396,7 @@ pub async fn run_app() {
     // 7h. Spawn HiveSurface — the decentralised social web platform
     {
         let post_store = Arc::new(crate::network::post_store::PostStore::new());
-        crate::server::mesh_social::spawn_mesh_social_server(post_store).await;
+        crate::server::mesh_social::spawn_mesh_social_server(post_store, mesh_identity.clone()).await;
     }
 
     // 7i. Spawn Apis Code — the decentralised web IDE
@@ -402,13 +406,13 @@ pub async fn run_app() {
 
     // 7j. Spawn HiveChat — the decentralised Discord clone
     {
-        crate::server::hive_chat::spawn_hive_chat_server().await;
+        crate::server::hive_chat::spawn_hive_chat_server(mesh_identity.clone()).await;
     }
 
     // 7k. Spawn HivePortal — the mesh homepage & app launcher
     {
         let registry = Arc::new(crate::server::hive_portal::SiteRegistry::new());
-        crate::server::hive_portal::spawn_hive_portal_server(registry).await;
+        crate::server::hive_portal::spawn_hive_portal_server(registry, mesh_identity.clone()).await;
     }
 
     // 7l. Spawn HIVE Bank — DeFi wallet & NFT trading cards
@@ -419,6 +423,16 @@ pub async fn run_app() {
     // 7m. Spawn HIVE Marketplace — Goods & Services commerce
     {
         crate::server::hive_marketplace::spawn_hive_marketplace_server().await;
+    }
+
+    // 7n. Spawn Upload Server — shared file upload endpoint for all platforms
+    {
+        crate::server::upload_server::spawn_upload_server(mesh_identity.clone()).await;
+    }
+
+    // 7o. Spawn File Share — mesh file sharing & discovery platform
+    {
+        crate::server::file_share::spawn_file_share_server(mesh_identity.clone()).await;
     }
 
     // 7n. Auto-open HivePortal in the default browser
@@ -470,6 +484,8 @@ pub async fn run_app() {
             tracing::warn!("Received Ctrl-C, executing shutdown sequence...");
             tracing::info!("Shutting down HIVE... saving temporal state.");
             memory_store.temporal.write().await.record_shutdown();
+            // Persist identity on shutdown
+            mesh_identity.persist().await;
             // Allow disk flushes
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
             tracing::info!("Shutdown complete.");

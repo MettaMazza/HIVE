@@ -41,6 +41,9 @@ pub struct ChatChannel {
     pub name: String,
     pub topic: String,
     pub created_at: String,
+    /// Channel category (e.g. "Text Channels", "Voice", "Dev")
+    #[serde(default)]
+    pub category: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,6 +86,21 @@ struct ChatSnapshot {
     messages: HashMap<String, Vec<ChatMessage>>,
     dms: Vec<DirectMessage>,
     members: HashMap<String, Vec<MemberInfo>>,
+    #[serde(default)]
+    pins: HashMap<String, Vec<String>>,
+    #[serde(default)]
+    roles: HashMap<String, Vec<ServerRole>>,
+}
+
+/// Role within a server.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerRole {
+    pub id: String,
+    pub server_id: String,
+    pub name: String,
+    pub color: String,
+    pub members: Vec<String>,
+    pub permissions: Vec<String>,
 }
 
 /// Chat store — all state for the Discord clone.
@@ -95,6 +113,10 @@ pub struct ChatStore {
     tx: broadcast::Sender<Value>,
     max_messages: usize,
     persist_path: String,
+    /// Pinned message IDs per channel.
+    pins: RwLock<HashMap<String, Vec<String>>>,
+    /// Roles per server.
+    roles: RwLock<HashMap<String, Vec<ServerRole>>>,
 }
 
 impl ChatStore {
@@ -118,6 +140,8 @@ impl ChatStore {
                     tx,
                     max_messages: max,
                     persist_path,
+                    pins: RwLock::new(snap.pins),
+                    roles: RwLock::new(snap.roles),
                 };
             }
         }
@@ -151,6 +175,7 @@ impl ChatStore {
                 name: name.to_string(),
                 topic: topic.to_string(),
                 created_at: chrono::Utc::now().to_rfc3339(),
+                category: Some("Text Channels".to_string()),
             };
             messages.insert(ch.id.clone(), vec![]);
             channels.push(ch);
@@ -194,6 +219,8 @@ impl ChatStore {
             tx,
             max_messages: max,
             persist_path,
+            pins: RwLock::new(HashMap::new()),
+            roles: RwLock::new(HashMap::new()),
         }
     }
 
@@ -205,6 +232,8 @@ impl ChatStore {
             messages: self.messages.read().await.clone(),
             dms: self.dms.read().await.clone(),
             members: self.members.read().await.clone(),
+            pins: self.pins.read().await.clone(),
+            roles: self.roles.read().await.clone(),
         };
         if let Ok(json) = serde_json::to_string(&snap) {
             if let Some(parent) = std::path::Path::new(&self.persist_path).parent() {
@@ -231,6 +260,7 @@ impl ChatStore {
             name: "general".to_string(),
             topic: "General discussion".to_string(),
             created_at: chrono::Utc::now().to_rfc3339(),
+            category: Some("Text Channels".to_string()),
         };
 
         self.messages.write().await.insert(general.id.clone(), vec![]);
@@ -252,6 +282,7 @@ impl ChatStore {
             name: name.to_string(),
             topic: topic.to_string(),
             created_at: chrono::Utc::now().to_rfc3339(),
+            category: None,
         };
 
         self.messages.write().await.insert(channel.id.clone(), vec![]);
@@ -335,6 +366,185 @@ impl ChatStore {
     pub fn subscribe(&self) -> broadcast::Receiver<Value> {
         self.tx.subscribe()
     }
+
+    /// Edit a message (only the author can edit).
+    pub async fn edit_message(&self, channel_id: &str, msg_id: &str, author_id: &str, new_content: &str) -> Option<ChatMessage> {
+        let msg = {
+            let mut messages = self.messages.write().await;
+            let msgs = messages.get_mut(channel_id)?;
+            let msg = msgs.iter_mut().find(|m| m.id == msg_id && m.author_id == author_id)?;
+            msg.content = new_content.to_string();
+            msg.edited = true;
+            msg.clone()
+        };
+        self.persist().await;
+        Some(msg)
+    }
+
+    /// Delete a message (only the author can delete).
+    pub async fn delete_message(&self, channel_id: &str, msg_id: &str, author_id: &str) -> bool {
+        let deleted = {
+            let mut messages = self.messages.write().await;
+            if let Some(msgs) = messages.get_mut(channel_id) {
+                let before = msgs.len();
+                msgs.retain(|m| !(m.id == msg_id && m.author_id == author_id));
+                msgs.len() < before
+            } else {
+                false
+            }
+        };
+        if deleted {
+            self.persist().await;
+        }
+        deleted
+    }
+
+    /// Get messages with cursor-based pagination (before a given message ID).
+    pub async fn messages_before(&self, channel_id: &str, before_id: &str, limit: usize) -> Vec<ChatMessage> {
+        let messages = self.messages.read().await;
+        if let Some(msgs) = messages.get(channel_id) {
+            if let Some(pos) = msgs.iter().position(|m| m.id == before_id) {
+                let start = pos.saturating_sub(limit);
+                msgs[start..pos].to_vec()
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        }
+    }
+
+    // ─── P1: Pins ─────────────────────────────────────────────────────
+
+    /// Pin a message in a channel.
+    pub async fn pin_message(&self, channel_id: &str, msg_id: &str) -> bool {
+        // Verify message exists
+        let exists = {
+            let messages = self.messages.read().await;
+            messages.get(channel_id)
+                .map(|msgs| msgs.iter().any(|m| m.id == msg_id))
+                .unwrap_or(false)
+        };
+        if !exists { return false; }
+
+        {
+            let mut pins = self.pins.write().await;
+            let channel_pins = pins.entry(channel_id.to_string()).or_default();
+            if !channel_pins.contains(&msg_id.to_string()) {
+                channel_pins.push(msg_id.to_string());
+            }
+        }
+        self.persist().await;
+        true
+    }
+
+    /// Unpin a message.
+    pub async fn unpin_message(&self, channel_id: &str, msg_id: &str) -> bool {
+        let removed = {
+            let mut pins = self.pins.write().await;
+            if let Some(channel_pins) = pins.get_mut(channel_id) {
+                let before = channel_pins.len();
+                channel_pins.retain(|id| id != msg_id);
+                channel_pins.len() < before
+            } else {
+                false
+            }
+        };
+        if removed { self.persist().await; }
+        removed
+    }
+
+    /// Get pinned messages for a channel.
+    pub async fn pinned_messages(&self, channel_id: &str) -> Vec<ChatMessage> {
+        let pins = self.pins.read().await;
+        let pin_ids = match pins.get(channel_id) {
+            Some(ids) => ids.clone(),
+            None => return vec![],
+        };
+        drop(pins);
+
+        let messages = self.messages.read().await;
+        if let Some(msgs) = messages.get(channel_id) {
+            msgs.iter()
+                .filter(|m| pin_ids.contains(&m.id))
+                .cloned()
+                .collect()
+        } else {
+            vec![]
+        }
+    }
+
+    // ─── P1: Message Search ───────────────────────────────────────────
+
+    /// Search messages across all channels.
+    pub async fn search_messages(&self, query: &str, limit: usize) -> Vec<ChatMessage> {
+        let q = query.to_lowercase();
+        let messages = self.messages.read().await;
+        let mut results = vec![];
+        for msgs in messages.values() {
+            for msg in msgs.iter().rev() {
+                if msg.content.to_lowercase().contains(&q)
+                    || msg.author_name.to_lowercase().contains(&q) {
+                    results.push(msg.clone());
+                    if results.len() >= limit { return results; }
+                }
+            }
+        }
+        results
+    }
+
+    // ─── P1: Roles ────────────────────────────────────────────────────
+
+    /// Create a role in a server.
+    pub async fn create_role(&self, server_id: &str, name: &str, color: &str, permissions: Vec<String>) -> ServerRole {
+        let role = ServerRole {
+            id: uuid::Uuid::new_v4().to_string(),
+            server_id: server_id.to_string(),
+            name: name.to_string(),
+            color: color.to_string(),
+            members: vec![],
+            permissions,
+        };
+        {
+            let mut roles = self.roles.write().await;
+            roles.entry(server_id.to_string()).or_default().push(role.clone());
+        }
+        self.persist().await;
+        role
+    }
+
+    /// Assign a role to a member.
+    pub async fn assign_role(&self, server_id: &str, role_id: &str, peer_id: &str) -> bool {
+        let mut roles = self.roles.write().await;
+        if let Some(server_roles) = roles.get_mut(server_id) {
+            if let Some(role) = server_roles.iter_mut().find(|r| r.id == role_id) {
+                if !role.members.contains(&peer_id.to_string()) {
+                    role.members.push(peer_id.to_string());
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Get roles for a server.
+    pub async fn server_roles(&self, server_id: &str) -> Vec<ServerRole> {
+        let roles = self.roles.read().await;
+        roles.get(server_id).cloned().unwrap_or_default()
+    }
+
+    // ─── P1: Channel Categories ───────────────────────────────────────
+
+    /// Set category for a channel.
+    pub async fn set_channel_category(&self, channel_id: &str, category: &str) -> bool {
+        let mut channels = self.channels.write().await;
+        if let Some(ch) = channels.iter_mut().find(|c| c.id == channel_id) {
+            ch.category = Some(category.to_string());
+            true
+        } else {
+            false
+        }
+    }
 }
 
 // ─── Server Setup ───────────────────────────────────────────────────────
@@ -343,9 +553,18 @@ impl ChatStore {
 struct HiveChatState {
     store: Arc<ChatStore>,
     local_peer_id: String,
+    identity: Arc<crate::network::identity::MeshIdentity>,
+    ws_hub: Arc<crate::server::ws_hub::WsHub>,
 }
 
-/// Read the current display name dynamically (reflects identity changes without restart).
+/// Read the current display name from the shared identity store.
+/// Falls back to env var for backward compatibility.
+async fn get_display_name_from_identity(identity: &crate::network::identity::MeshIdentity) -> String {
+    identity.display_name().await
+}
+
+/// Sync fallback for contexts where async isn't available.
+#[allow(dead_code)]
 fn get_display_name() -> String {
     std::env::var("HIVE_USER_NAME")
         .or_else(|_| std::env::var("USER"))
@@ -365,16 +584,30 @@ struct SendDmReq { to_id: String, content: String }
 #[derive(Deserialize)]
 struct LinkDiscordReq { discord_username: String }
 #[derive(Deserialize)]
-struct MessagesQuery { limit: Option<usize> }
+struct MessagesQuery { limit: Option<usize>, before: Option<String> }
+#[derive(Deserialize)]
+struct EditMessageReq { content: String }
+#[derive(Deserialize)]
+struct TypingReq { channel_id: String }
+#[derive(Deserialize)]
+struct SearchMessagesQuery { q: String, #[serde(default)] limit: Option<usize> }
+#[derive(Deserialize)]
+struct CreateRoleReq { name: String, color: Option<String>, #[serde(default)] permissions: Vec<String> }
+#[derive(Deserialize)]
+struct AssignRoleReq { peer_id: String }
+#[derive(Deserialize)]
+struct SetCategoryReq { category: String }
 
-pub async fn spawn_hive_chat_server() {
+pub async fn spawn_hive_chat_server(identity: Arc<crate::network::identity::MeshIdentity>) {
     let port: u16 = 3034; // Mesh-governed: creator-key protected
 
-    let local_peer_id = std::env::var("HIVE_MESH_CHAT_NAME")
-        .unwrap_or_else(|_| "local".to_string());
+    let local_peer_id = identity.peer_id().await;
+
+    let ws_hub = Arc::new(crate::server::ws_hub::WsHub::new());
+    ws_hub.spawn_typing_cleanup();
 
     let store = Arc::new(ChatStore::new());
-    let state = HiveChatState { store, local_peer_id };
+    let state = HiveChatState { store, local_peer_id, identity, ws_hub };
 
     tokio::spawn(async move {
         tracing::info!("[HIVECHAT] 💬 Starting on http://0.0.0.0:{}", port);
@@ -386,10 +619,23 @@ pub async fn spawn_hive_chat_server() {
             .route("/api/channel/{channel_id}/messages", get(api_messages))
             .route("/api/channel/{channel_id}/message", post(api_send_message))
             .route("/api/message/{channel_id}/{msg_id}/react", post(api_react_msg))
+            .route("/api/message/{channel_id}/{msg_id}/edit", axum::routing::put(api_edit_message))
+            .route("/api/message/{channel_id}/{msg_id}/delete", axum::routing::delete(api_delete_message))
+            .route("/api/channel/{channel_id}/pins", get(api_pinned_messages))
+            .route("/api/channel/{channel_id}/pin/{msg_id}", post(api_pin_message))
+            .route("/api/channel/{channel_id}/unpin/{msg_id}", post(api_unpin_message))
+            .route("/api/channel/{channel_id}/category", axum::routing::put(api_set_category))
+            .route("/api/server/{server_id}/roles", get(api_server_roles).post(api_create_role))
+            .route("/api/server/{server_id}/role/{role_id}/assign", post(api_assign_role))
+            .route("/api/search/messages", get(api_search_messages))
+            .route("/api/typing", post(api_typing))
+            .route("/api/unread", get(api_unread))
+            .route("/api/unread/{channel_id}/read", post(api_mark_read))
             .route("/api/dms", get(api_dms))
             .route("/api/dm", post(api_send_dm))
             .route("/api/link-discord", post(api_link_discord))
             .route("/api/stream", get(api_stream))
+            .route("/api/ws", get(api_ws))
             .route("/api/status", get(api_chat_status))
             .fallback(get(serve_chat_spa))
             .layer(CorsLayer::permissive())
@@ -437,11 +683,19 @@ async fn api_create_channel(State(state): State<HiveChatState>, Path(server_id):
 
 async fn api_messages(State(state): State<HiveChatState>, Path(channel_id): Path<String>, Query(params): Query<MessagesQuery>) -> Json<Value> {
     let limit = params.limit.unwrap_or(100).min(500);
+
+    // Cursor-based pagination: if ?before=<msg_id>, load messages before that ID
+    if let Some(before_id) = &params.before {
+        let msgs = state.store.messages_before(&channel_id, before_id, limit).await;
+        return Json(json!({"messages": msgs, "count": msgs.len(), "has_more": msgs.len() == limit}));
+    }
+
     let messages = state.store.messages.read().await;
     let msgs = messages.get(&channel_id).map(|m| {
         m.iter().rev().take(limit).cloned().collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>()
     }).unwrap_or_default();
-    Json(json!({"messages": msgs, "count": msgs.len()}))
+    let has_more = messages.get(&channel_id).map(|m| m.len() > limit).unwrap_or(false);
+    Json(json!({"messages": msgs, "count": msgs.len(), "has_more": has_more}))
 }
 
 async fn api_send_message(State(state): State<HiveChatState>, Path(channel_id): Path<String>, Json(req): Json<SendMessageReq>) -> Json<Value> {
@@ -455,7 +709,8 @@ async fn api_send_message(State(state): State<HiveChatState>, Path(channel_id): 
         return Json(json!({"error": "Message blocked by content filter", "reason": format!("{:?}", scan)}));
     }
 
-    match state.store.send_message(&channel_id, &state.local_peer_id, &get_display_name(), &req.content, req.reply_to).await {
+    let display_name = get_display_name_from_identity(&state.identity).await;
+    match state.store.send_message(&channel_id, &state.local_peer_id, &display_name, &req.content, req.reply_to).await {
         Some(msg) => Json(json!({"ok": true, "message": msg})),
         None => Json(json!({"error": "Channel not found"})),
     }
@@ -480,7 +735,8 @@ async fn api_dms(State(state): State<HiveChatState>) -> Json<Value> {
 
 async fn api_send_dm(State(state): State<HiveChatState>, Json(req): Json<SendDmReq>) -> Json<Value> {
     if req.content.trim().is_empty() { return Json(json!({"error": "Message cannot be empty"})); }
-    let dm = state.store.send_dm(&state.local_peer_id, &get_display_name(), &req.to_id, &req.content).await;
+    let display_name = get_display_name_from_identity(&state.identity).await;
+    let dm = state.store.send_dm(&state.local_peer_id, &display_name, &req.to_id, &req.content).await;
     Json(json!({"ok": true, "dm": dm}))
 }
 
@@ -517,11 +773,212 @@ async fn api_chat_status(State(state): State<HiveChatState>) -> Json<Value> {
     let channels = state.store.channels.read().await;
     let messages = state.store.messages.read().await;
     let total_msgs: usize = messages.values().map(|v| v.len()).sum();
+    let display_name = get_display_name_from_identity(&state.identity).await;
+    let avatar = state.identity.avatar_url().await;
     Json(json!({
         "servers": servers.len(), "channels": channels.len(),
         "total_messages": total_msgs, "peer_id": state.local_peer_id,
-        "display_name": get_display_name(),
+        "display_name": display_name,
+        "avatar_url": avatar,
     }))
+}
+
+// ─── New P0 Endpoints ───────────────────────────────────────────────────
+
+async fn api_edit_message(
+    State(state): State<HiveChatState>,
+    Path((channel_id, msg_id)): Path<(String, String)>,
+    Json(req): Json<EditMessageReq>,
+) -> Json<Value> {
+    if req.content.trim().is_empty() {
+        return Json(json!({"error": "Content cannot be empty"}));
+    }
+    match state.store.edit_message(&channel_id, &msg_id, &state.local_peer_id, &req.content).await {
+        Some(msg) => {
+            state.ws_hub.broadcast_edit(&channel_id, &msg_id, &req.content);
+            Json(json!({"ok": true, "message": msg}))
+        }
+        None => Json(json!({"error": "Message not found or not yours"})),
+    }
+}
+
+async fn api_delete_message(
+    State(state): State<HiveChatState>,
+    Path((channel_id, msg_id)): Path<(String, String)>,
+) -> Json<Value> {
+    let deleted = state.store.delete_message(&channel_id, &msg_id, &state.local_peer_id).await;
+    if deleted {
+        state.ws_hub.broadcast_delete(&channel_id, &msg_id);
+    }
+    Json(json!({"ok": deleted}))
+}
+
+async fn api_typing(
+    State(state): State<HiveChatState>,
+    Json(req): Json<TypingReq>,
+) -> Json<Value> {
+    let name = get_display_name_from_identity(&state.identity).await;
+    state.ws_hub.set_typing(&req.channel_id, &state.local_peer_id, &name).await;
+    Json(json!({"ok": true}))
+}
+
+async fn api_unread(State(state): State<HiveChatState>) -> Json<Value> {
+    let unread = state.ws_hub.get_unread(&state.local_peer_id).await;
+    Json(json!({"unread": unread}))
+}
+
+async fn api_mark_read(
+    State(state): State<HiveChatState>,
+    Path(channel_id): Path<String>,
+) -> Json<Value> {
+    state.ws_hub.mark_read(&channel_id, &state.local_peer_id).await;
+    Json(json!({"ok": true}))
+}
+
+/// WebSocket upgrade endpoint — replaces SSE for bidirectional real-time.
+async fn api_ws(
+    State(state): State<HiveChatState>,
+    ws: axum::extract::WebSocketUpgrade,
+) -> axum::response::Response {
+    ws.on_upgrade(move |socket| handle_ws(socket, state))
+}
+
+async fn handle_ws(
+    mut socket: axum::extract::ws::WebSocket,
+    state: HiveChatState,
+) {
+    use axum::extract::ws::Message;
+
+    // Register peer as connected
+    state.ws_hub.peer_connected(&state.local_peer_id).await;
+
+    // Subscribe to broadcast events
+    let mut rx = state.ws_hub.subscribe();
+
+    let peer_id = state.local_peer_id.clone();
+    let ws_hub = state.ws_hub.clone();
+
+    loop {
+        tokio::select! {
+            // Forward broadcast events to client
+            Ok(event) = rx.recv() => {
+                if let Ok(json) = serde_json::to_string(&event) {
+                    if socket.send(Message::Text(json.into())).await.is_err() {
+                        break;
+                    }
+                }
+            }
+            // Handle incoming messages from client
+            Some(msg) = socket.recv() => {
+                match msg {
+                    Ok(Message::Text(text)) => {
+                        if let Ok(event) = serde_json::from_str::<serde_json::Value>(&text) {
+                            match event.get("type").and_then(|t| t.as_str()) {
+                                Some("typing") => {
+                                    if let Some(ch) = event.get("channel_id").and_then(|c| c.as_str()) {
+                                        let name = event.get("display_name")
+                                            .and_then(|n| n.as_str())
+                                            .unwrap_or("Unknown");
+                                        ws_hub.set_typing(ch, &peer_id, name).await;
+                                    }
+                                }
+                                Some("join_channel") => {
+                                    if let Some(ch) = event.get("channel_id").and_then(|c| c.as_str()) {
+                                        ws_hub.join_channel(ch, &peer_id).await;
+                                        ws_hub.mark_read(ch, &peer_id).await;
+                                    }
+                                }
+                                Some("leave_channel") => {
+                                    if let Some(ch) = event.get("channel_id").and_then(|c| c.as_str()) {
+                                        ws_hub.leave_channel(ch, &peer_id).await;
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    Ok(Message::Close(_)) | Err(_) => break,
+                    _ => {}
+                }
+            }
+            else => break,
+        }
+    }
+
+    // Cleanup on disconnect
+    state.ws_hub.peer_disconnected(&peer_id).await;
+    tracing::debug!("[HIVECHAT] WebSocket disconnected: {}", peer_id);
+}
+
+// ─── P1 Endpoints ───────────────────────────────────────────────────────
+
+async fn api_pinned_messages(
+    State(state): State<HiveChatState>,
+    Path(channel_id): Path<String>,
+) -> Json<Value> {
+    let pinned = state.store.pinned_messages(&channel_id).await;
+    Json(json!({"pinned": pinned, "count": pinned.len()}))
+}
+
+async fn api_pin_message(
+    State(state): State<HiveChatState>,
+    Path((channel_id, msg_id)): Path<(String, String)>,
+) -> Json<Value> {
+    let ok = state.store.pin_message(&channel_id, &msg_id).await;
+    Json(json!({"ok": ok}))
+}
+
+async fn api_unpin_message(
+    State(state): State<HiveChatState>,
+    Path((channel_id, msg_id)): Path<(String, String)>,
+) -> Json<Value> {
+    let ok = state.store.unpin_message(&channel_id, &msg_id).await;
+    Json(json!({"ok": ok}))
+}
+
+async fn api_set_category(
+    State(state): State<HiveChatState>,
+    Path(channel_id): Path<String>,
+    Json(req): Json<SetCategoryReq>,
+) -> Json<Value> {
+    let ok = state.store.set_channel_category(&channel_id, &req.category).await;
+    Json(json!({"ok": ok}))
+}
+
+async fn api_search_messages(
+    State(state): State<HiveChatState>,
+    Query(params): Query<SearchMessagesQuery>,
+) -> Json<Value> {
+    let limit = params.limit.unwrap_or(50).min(200);
+    let results = state.store.search_messages(&params.q, limit).await;
+    Json(json!({"results": results, "count": results.len(), "query": params.q}))
+}
+
+async fn api_server_roles(
+    State(state): State<HiveChatState>,
+    Path(server_id): Path<String>,
+) -> Json<Value> {
+    let roles = state.store.server_roles(&server_id).await;
+    Json(json!({"roles": roles, "count": roles.len()}))
+}
+
+async fn api_create_role(
+    State(state): State<HiveChatState>,
+    Path(server_id): Path<String>,
+    Json(req): Json<CreateRoleReq>,
+) -> Json<Value> {
+    let color = req.color.unwrap_or_else(|| "#ffc107".to_string());
+    let role = state.store.create_role(&server_id, &req.name, &color, req.permissions).await;
+    Json(json!({"ok": true, "role": role}))
+}
+
+async fn api_assign_role(
+    State(state): State<HiveChatState>,
+    Path((server_id, role_id)): Path<(String, String)>,
+    Json(req): Json<AssignRoleReq>,
+) -> Json<Value> {
+    let ok = state.store.assign_role(&server_id, &role_id, &req.peer_id).await;
+    Json(json!({"ok": ok}))
 }
 
 // ─── SPA Frontend ───────────────────────────────────────────────────────
@@ -577,5 +1034,121 @@ mod tests {
         assert_eq!(dm.from_name, "Alice");
         let dms = store.dms.read().await;
         assert_eq!(dms.len(), 1);
+    }
+
+    // ─── New P0 tests ─────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_chat_store_edit_message() {
+        let store = ChatStore::new();
+        let msg = store.send_message("hive-general", "peer1", "Alice", "Original", None).await.unwrap();
+
+        // Author can edit
+        let edited = store.edit_message("hive-general", &msg.id, "peer1", "Edited").await;
+        assert!(edited.is_some());
+        let edited_msg = edited.unwrap();
+        assert_eq!(edited_msg.content, "Edited");
+        assert!(edited_msg.edited);
+
+        // Non-author cannot edit
+        let blocked = store.edit_message("hive-general", &msg.id, "peer2", "Hack").await;
+        assert!(blocked.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_chat_store_delete_message() {
+        let store = ChatStore::new();
+        let msg = store.send_message("hive-general", "peer1", "Alice", "Delete me", None).await.unwrap();
+        let msg_count_before = store.messages.read().await["hive-general"].len();
+
+        // Non-author cannot delete
+        assert!(!store.delete_message("hive-general", &msg.id, "peer2").await);
+
+        // Author can delete
+        assert!(store.delete_message("hive-general", &msg.id, "peer1").await);
+        let msg_count_after = store.messages.read().await["hive-general"].len();
+        assert_eq!(msg_count_after, msg_count_before - 1);
+
+        // Double-delete returns false
+        assert!(!store.delete_message("hive-general", &msg.id, "peer1").await);
+    }
+
+    #[tokio::test]
+    async fn test_chat_store_messages_before() {
+        let store = ChatStore::new();
+        // Send several messages
+        store.send_message("hive-general", "p1", "A", "msg1", None).await;
+        store.send_message("hive-general", "p1", "A", "msg2", None).await;
+        let last = store.send_message("hive-general", "p1", "A", "msg3", None).await.unwrap();
+
+        let before_last = store.messages_before("hive-general", &last.id, 5).await;
+        assert!(!before_last.is_empty());
+        assert!(before_last.iter().all(|m| m.id != last.id));
+    }
+
+    #[tokio::test]
+    async fn test_chat_nonexistent_channel() {
+        let store = ChatStore::new();
+        assert!(store.edit_message("nonexistent", "msg", "peer", "text").await.is_none());
+        assert!(!store.delete_message("nonexistent", "msg", "peer").await);
+        assert!(store.messages_before("nonexistent", "msg", 10).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_pin_unpin() {
+        let store = ChatStore::new();
+        let msg = store.send_message("hive-general", "p1", "Alice", "Pin me!", None).await.unwrap();
+
+        assert!(store.pin_message("hive-general", &msg.id).await);
+        assert!(!store.pin_message("nonexistent", "fake").await); // nonexistent channel
+
+        let pinned = store.pinned_messages("hive-general").await;
+        assert_eq!(pinned.len(), 1);
+        assert_eq!(pinned[0].id, msg.id);
+
+        assert!(store.unpin_message("hive-general", &msg.id).await);
+        assert!(store.pinned_messages("hive-general").await.is_empty());
+        assert!(!store.unpin_message("hive-general", &msg.id).await); // double unpin
+    }
+
+    #[tokio::test]
+    async fn test_message_search() {
+        let store = ChatStore::new();
+        store.send_message("hive-general", "p1", "Alice", "Hello world", None).await;
+        store.send_message("hive-general", "p2", "Bob", "Goodbye moon", None).await;
+
+        let results = store.search_messages("hello", 50).await;
+        assert_eq!(results.len(), 1);
+        assert!(results[0].content.contains("Hello"));
+
+        let results = store.search_messages("Bob", 50).await;
+        assert_eq!(results.len(), 1); // matches author name
+
+        let empty = store.search_messages("nonexistent_xyz", 50).await;
+        assert!(empty.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_roles() {
+        let store = ChatStore::new();
+        let server = store.create_server("Test", "🧪", "owner").await;
+
+        let role = store.create_role(&server.id, "Admin", "#ff0000", vec!["manage_channels".into()]).await;
+        assert_eq!(role.name, "Admin");
+
+        assert!(store.assign_role(&server.id, &role.id, "peer1").await);
+        assert!(!store.assign_role(&server.id, &role.id, "peer1").await); // duplicate
+
+        let roles = store.server_roles(&server.id).await;
+        assert_eq!(roles.len(), 1);
+        assert_eq!(roles[0].members.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_channel_categories() {
+        let store = ChatStore::new();
+
+        assert!(store.set_channel_category("hive-general", "Main").await);
+        assert!(!store.set_channel_category("nonexistent", "Cat").await);
     }
 }

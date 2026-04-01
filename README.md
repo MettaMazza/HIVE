@@ -7,8 +7,8 @@
   <img src="https://img.shields.io/badge/lang-Pure_Rust-F46623?style=for-the-badge&logo=rust&logoColor=white" />
   <img src="https://img.shields.io/badge/LLM-Ollama_Local-0969DA?style=for-the-badge" />
   <img src="https://img.shields.io/badge/lines-52K+-FFB800?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/tests-394_passing-00C853?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/modules-140+-A855F7?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/tests-600+_passing-00C853?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/modules-155+-A855F7?style=for-the-badge" />
 </p>
 
 <h1 align="center">🐝 HIVE Engine</h1>
@@ -35,11 +35,12 @@ Unlike wrapper bots that relay messages to cloud APIs, HIVE is a **purpose-built
 - 🧠 **Multi-turn ReAct Loop** — Apis reasons, selects tools, observes results, and iterates autonomously. It decides when to stop, not the user.
 - 🔒 **Memory-Level Security** — Per-user data isolation enforced at the architecture layer. Private data is *invisible* to other scopes — not by prompting, by design.
 - 🗜️ **4-Phase Context Consolidation** — Automatically summarizes and injects synthetic memory events when working context nears 80% capacity to prevent thread fragmentation.
-- 🛠️ **38 Native Tool Drones** — Web search, code execution, native Git, LSP Code Intelligence, file I/O, image generation, TTS, PDF composition, process management, smart home control, email, calendar, and more — all running locally.
+- 🛠️ **lots of Tool Drones** — Web search, code execution, native Git, LSP Code Intelligence, file I/O, image generation, TTS, PDF composition, process management, mesh status dashboard, and more — all running locally.
 - ⏱️ **AutoResearch & Ratchets** — Define `.hive/directive.md` goals and HIVE will autonomously experiment with your codebase during idle time, mechanically rolling back any edits that break the build via Atomic Checkpoints.
 - 📡 **Live Inference HUD** — Watch Apis think in real-time via streaming Discord embeds with reasoning tokens, tool activity, and performance telemetry.
 - 🎓 **Self-Supervised Learning** — An integrated Teacher module captures preference pairs and golden examples for continuous improvement.
-- 🕸️ **NeuroLease Mesh Network** — Decentralized peer-to-peer weight sharing, binary attestation, and trust-based propagation between HIVE instances.
+- 🕸️ **Decentralised Supercomputer** — P2P mesh with Wasm-sandboxed compute, Kademlia DHT, distributed file system, internet relay, and algorithmic HIVE Coin economy.
+- ⚖️ **Sunset Governance** — Three-phase automatic power transition: Bootstrap (dev powers) → Council (multisig) → Democracy (1000+ peers, pure equality). Hardcoded and irreversible.
 - 🔄 **Anti-Spiral Recovery** — Automatic detection and recovery from reasoning loops, with interruptible inference and thought-level safeguards.
 - 👁️ **Observer Audit Module** — Every response is audited for confabulation, logical inconsistency, and lazy deflection before delivery.
 
@@ -83,18 +84,19 @@ Unlike wrapper bots that relay messages to cloud APIs, HIVE is a **purpose-built
 |-------|-------------|
 | **Platforms** | Trait-based I/O abstraction. Discord, CLI, Glasses, and Telemetry ship out of the box. Adding Telegram or Slack = one `impl Platform`. |
 | **ReAct Loop** | Autonomous multi-turn reasoning engine with anti-spiral detection. Apis selects tools, reads observations, recovers from reasoning loops, and decides its own next action. |
-| **Tool Drones** | 34 native capabilities spanning information retrieval, code execution, multi-modal generation, memory management, and system automation. |
+| **Tool Drones** | 39 native capabilities spanning information retrieval, code execution, multi-modal generation, memory management, mesh dashboard, and system automation. |
 | **Memory Store** | 5-tier persistence: Working Memory → Scratchpad → Timeline → Synaptic Graph → Lessons. All scope-isolated with compile-time access gates. |
 | **Provider** | Local LLM integration via Ollama with streaming token extraction, `<think>` tag parsing, vision support, and interruptible inference. |
 | **Observer** | Post-generation audit module that catches confabulation, lazy deflection, logical inconsistency, and architectural leakage before delivery. |
 | **Teacher** | Captures reasoning traces, evaluates response quality, and generates preference pairs for RLHF-style continuous improvement. |
-| **NeuroLease** | Decentralized mesh network for weight sharing, trust propagation, binary attestation, and integrity verification between HIVE instances. |
-| **SafeNet** | Decentralised survival platform: web proxy, compute pooling, connection sharing, content security, community governance, crisis response, and offline mesh — all P2P over QUIC. |
+| **NeuroLease** | Decentralised supercomputer mesh: Wasm-sandboxed compute, Kademlia DHT storage, distributed file system, internet relay, intelligent job routing, and peer-to-peer weight sharing. |
+| **SafeNet** | Survival platform: web proxy, compute pooling, connection sharing, content security, sunset governance (Bootstrap→Council→Democracy), crisis response, and offline mesh — all P2P over QUIC. |
 | **Kernel** | Core identity protocols: Zero Assumption Protocol, Anti-Gaslighting, Contradiction Resolution, Continuity Recovery, and the full governance constitution. |
+| **HIVE Coin** | Algorithmic cryptocurrency: 1 coin/block, halves every 100K blocks. Earned by contributing compute, relay, and storage. No human controls supply. |
 
 ---
 
-## 🛠️ The 38 Tool Drones
+## 🛠️ The 39 Tool Drones
 
 Apis has access to a full arsenal of native capabilities, all running **locally on your machine**:
 
@@ -182,34 +184,44 @@ Every memory query passes through `Scope::can_read()` — a compile-time enforce
 
 ---
 
-## 🌐 SafeNet — Decentralised Survival Platform
+## 🌐 Decentralised Supercomputer & SafeNet
 
-HIVE v4.3–4.4 introduces **SafeNet**: a fully decentralised, internet-independent mesh that keeps everyone connected even when infrastructure fails.
+Every HIVE instance is a node in a decentralised P2P supercomputer. Together, they form a single distributed computer with shared compute, data, internet access, and an algorithmic economy.
 
-### Resource Pooling (v4.4)
+### Distributed Compute
 
-Every Apis instance is a node. Together, they form a supercomputer with a shared internet pipe.
-
-| Scenario | What Happens |
+| Feature | How It Works |
 |---|---|
-| Your internet goes down | Web requests route through mesh peers automatically |
-| Your Ollama is overloaded | Inference spills to mesh compute peers |
-| Regional internet blackout | Unaffected peers relay for the region |
-| Small hardware? | You get access to the combined compute of every node on the mesh |
+| **Inference Routing** | AI requests route to the best peer by model match, latency, slots, queue depth, region |
+| **Batch Processing** | Large jobs fan out to N peers in parallel, results aggregate automatically |
+| **Wasm Sandbox** | Compile any program to WebAssembly — runs on peer hardware in full isolation (no filesystem, no network, memory/CPU capped) |
+| **Priority** | Your local work always comes first. Remote jobs pause at 80% CPU, kill at 90% |
+| **Internet Relay** | Offline peers route web requests through connected peers with ephemeral IDs |
 
-**Equality Collective** — Both web and compute sharing are **ON by default**. If you disable both, you're disconnected from the mesh. No freeloading.
+### Distributed Data
 
-```
-┌── REQUESTING PEER ──┐         ┌── PROVIDING PEER ──┐
-│ Ephemeral ID        │ QUIC    │ Content filter     │
-│ Content filter      │ TLS 1.3 │ Capacity check     │
-│ Rate limiting       │ ◄─────► │ Rate limiting      │
-│ Fair usage quotas   │         │ Local Ollama       │
-└─────────────────────┘         └────────────────────┘
-        ↑ Identity hidden              ↑ No memory access
-```
+| Feature | How It Works |
+|---|---|
+| **Kademlia DHT** | Content-addressed storage distributed by XOR distance, K=3 replication |
+| **File Chunking** | Files split into 256KB chunks, stored across multiple peers, retrieved in parallel |
+| **Content Store** | Disk-backed with SHA-256 integrity, LRU eviction, pinning for critical data |
+| **Privacy** | File names encrypted — peers storing chunks can't see what they hold |
 
-**Security**: Compute peers see ONLY the raw prompt. No chat history, no memory, no system prompt, no real identity. Ephemeral IDs are generated per request.
+### Sunset Governance
+
+| Phase | Peers | Developer Powers |
+|---|---|---|
+| **Bootstrap** | 0–9 | Emergency access (unban, hotfix). All actions logged and broadcast. |
+| **Council** | 10–999 | Creator + elected council must agree (2-of-3 multisig). |
+| **Democracy** | 1000+ | Developer key = one vote. Pure equality. No individual overrides. |
+
+Transitions are **automatic and hardcoded** — when peer_count reaches the threshold, powers disappear. Config-guarded code prevents modification.
+
+### HIVE Coin Economy
+
+- **Algorithmic minting**: 1 HIVE/block, halves every 100,000 blocks. No human controls supply.
+- **Earned by**: running inference, relaying web requests, storing DHT data, running sandbox jobs
+- **Proportional distribution**: rewards weighted by contribution
 
 ### Core Components
 
@@ -218,38 +230,33 @@ Every Apis instance is a node. Together, they form a supercomputer with a shared
 | Web Proxy | `:8480` | Censorship-resistant browsing with mesh relay fallback |
 | Human Mesh | `:9877` | P2P discovery and communication |
 | Apis-Book | `:3031` | Read-only dashboard (one-way mirror into AI mesh) |
-| **HiveSurface** | **`:3032`** | **Decentralised social web — Facebook + Reddit + Twitter for the mesh** |
-| **Apis Code** | **`:3033`** | **AI-powered web IDE — browse, edit, terminal, Apis AI assistant** |
-| **HiveChat** | **`:3034`** | **Discord clone — servers, channels, DMs, reactions, threading** |
-| **HivePortal** | **`:3035`** | **Mesh homepage — Google-like search, service grid, site registry** |
-| **Goods & Services Marketplace** | **`:3038`** | **Trade digital goods, services, compute time** |
-| **Credits System** | — | **Non-crypto internal points for mesh contribution rewards** |
-| **Dynamic Pricing** | — | **Real-time supply/demand rate adjustment for compute and network** |
-| **Universal Access Queue** | — | **Everyone uses mesh, credits buy priority not access** |
-| **NFT Auctions** | — | **Enhanced HIVE Bank — list/delist/auction trading cards** |
+| HiveSurface | `:3032` | Decentralised social web |
+| Apis Code | `:3033` | AI-powered web IDE |
+| HiveChat | `:3034` | Discord clone — servers, channels, DMs |
+| HivePortal | `:3035` | Mesh homepage — search, services, registry |
 | Content Filter | — | 4-layer security: hash-blocking, injection detection, rate limiting, reputation |
-| Governance | — | Community ban voting, emergency alerts, OSINT sharing, resource directory |
+| Governance | — | Sunset phases, community ban voting, emergency alerts, OSINT sharing |
 | Offline Mesh | — | Store-and-forward with 72h TTL, connectivity monitoring |
 | Pool Manager | — | Round-robin web relay, compute node selection, job lifecycle |
 | Compute Relay | — | 6-layer security pipeline for serving mesh inference |
-| Phase 5 Security | — | Creator Key required for minting (physical file, not a role), economy data in self-destruct wipe, kernel economy awareness |
-
-### Integrity Protection
-
-- All SafeNet code is hashed at boot and verified against the creator key
-- Same self-destruct chain as the Apis-to-Apis mesh protects pooling code
-- Only the creator key holder can legitimately modify SafeNet source
+| Sandbox Engine | — | Wasm execution with fuel-based CPU limiting, priority management |
+| DHT + Content Store | — | Kademlia distributed storage with disk persistence |
+| Distributed File System | — | Chunked file sharing with parallel retrieval |
 
 ---
 
-## 🕸️ NeuroLease Mesh Network
+## 🕸️ NeuroLease Protocol
 
-HIVE instances can discover, authenticate, and synchronize with each other via the **NeuroLease** peer-to-peer protocol:
+HIVE instances discover, authenticate, and synchronize via the **NeuroLease** peer-to-peer protocol:
 
 - **Binary Attestation** — Each peer proves integrity through cryptographic verification of its compiled binary
-- **Creator Key Authentication** — Network participation requires valid creator key signatures
 - **Trust Propagation** — Peers establish trust through challenge-response verification
 - **Weight Synchronization** — Learned weights and preference data propagate across the mesh
+- **Intelligent Routing** — Jobs scored by model match ×  latency ×  slots ×  queue depth ×  region
+- **Batch Fan-Out** — Parallelisable jobs distributed across N peers with result aggregation
+- **Task Queue** — Priority-ordered, deduplicated, persistent job queue with retry logic
+- **Kademlia DHT** — Content-addressed distributed storage with K-replication
+- **Wasm Sandbox** — Secure general-purpose compute on peer hardware
 - **Integrity Watchdog** — Continuous self-destruct monitoring for tampered instances
 - **Adversarial Hardening** — Built-in tests for common mesh attack vectors
 
@@ -346,15 +353,15 @@ cargo run --release
 | Metric | Value |
 |--------|-------|
 | **Language** | 100% Rust |
-| **Source Modules** | 140+ |
-| **Lines of Code** | 52,000+ |
-| **Unit Tests** | 394 (all passing) |
+| **Source Modules** | 155+ |
+| **Lines of Code** | 58,000+ |
+| **Unit Tests** | 600+ (all passing) |
 | **Compiler Warnings** | 0 |
 | **External AI APIs** | 0 (fully local via Ollama) |
 | **Frameworks Used** | 0 (pure trait-based architecture) |
 | **Platforms** | Discord · CLI · Glasses · Telemetry |
 | **Memory Tiers** | Working → Scratchpad → Timeline → Synaptic → Lessons |
-| **Mesh Services** | 14 (transport, proxy, pool, compute, governance, offline, chat, book, surface, code, hivechat, portal, credits, marketplace) |
+| **Mesh Services** | 18 (transport, proxy, pool, compute, sandbox, DHT, content store, distributed FS, governance phases, task queue, offline, chat, book, surface, code, hivechat, portal, marketplace) |
 
 ---
 
@@ -392,7 +399,7 @@ cargo run --release
 cargo test --all
 ```
 
-394 tests covering: memory isolation, scope filtering, provider streaming, JSON repair, tool execution, platform routing, atomic checkpoints, ratchet auto-research, LSP integration, context consolidation, native git tools, adversarial mesh attacks, moderation, prompt integrity, resource pooling, compute relay, equality enforcement, content security, governance voting, social feed, post store, web IDE, path traversal security, chat servers, messaging, DMs, reactions, site registry, and more.
+600+ tests covering: memory isolation, scope filtering, provider streaming, JSON repair, tool execution, platform routing, atomic checkpoints, ratchet auto-research, LSP integration, context consolidation, native git tools, adversarial mesh attacks, moderation, prompt integrity, resource pooling, compute relay, equality enforcement, content security, governance voting, sunset governance phases, Wasm sandbox execution, distributed compute routing, Kademlia DHT, content-addressed storage, distributed file system chunking, priority management, batch fan-out, task queue deduplication, social feed, post store, web IDE, path traversal security, chat servers, messaging, DMs, reactions, site registry, and more.
 
 ---
 
@@ -404,6 +411,11 @@ cargo test --all
 - [x] ~~Anti-spiral recovery~~ → Thought loop detection and re-prompting
 - [x] ~~SafeNet decentralised mesh~~ → Web proxy, governance, crisis response, offline mesh
 - [x] ~~Resource pooling~~ → Decentralised web connection + compute sharing
+- [x] ~~Decentralised governance~~ → Sunset phases (Bootstrap → Council → Democracy at 1000 peers)
+- [x] ~~Algorithmic economy~~ → HIVE Coin with deflationary halving schedule
+- [x] ~~Distributed compute~~ → Intelligent routing, batch fan-out, task queue
+- [x] ~~Wasm sandbox~~ → Secure general-purpose compute on peer hardware
+- [x] ~~Distributed data~~ → Kademlia DHT, content-addressed storage, chunked file system
 - [ ] Telegram platform adapter
 - [ ] Fine-tuning pipeline from Teacher preference pairs
 - [ ] Plugin system for community tool drones

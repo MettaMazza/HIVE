@@ -29,7 +29,7 @@ base64 = "0.22.1"
 uuid = { version = "1.22.0", features = ["v4"] }
 tokio-tungstenite = "0.26.2"
 lettre = { version = "0.11.19", default-features = false, features = ["builder", "tokio1", "tokio1-rustls-tls", "smtp-transport"] }
-axum = "0.8.8"
+axum = { version = "0.8.8", features = ["multipart", "ws"] }
 regex = "1.12.3"
 imap = "2"
 native-tls = "0.2"
@@ -52,9 +52,18 @@ aes-gcm = "0.10"
 rand = "0.8"
 zeroize = { version = "1.6", features = ["derive"] }
 
+# ── NeuroLease: Production mesh cryptography ──────────────────────
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+chacha20poly1305 = "0.10"
+
+# ── HIVE Sandbox: Wasm execution engine ────────────────────────────
+wasmtime = "29"
+
 [dev-dependencies]
 tempfile = "3.26.0"
 wiremock = "0.6.5"
+wat = "1"
 
 [lib]
 name = "hive_core"

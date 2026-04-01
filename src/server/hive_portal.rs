@@ -53,6 +53,15 @@ impl SiteRegistry {
         }
     }
 
+    /// Test-only constructor with isolated temp path.
+    #[cfg(test)]
+    fn new_test() -> Self {
+        Self {
+            sites: RwLock::new(Vec::new()),
+            persist_path: format!("/tmp/hive_test_portal_{}.json", uuid::Uuid::new_v4()),
+        }
+    }
+
     pub async fn register(&self, site: MeshSite) {
         {
             self.sites.write().await.push(site);
@@ -82,18 +91,51 @@ impl SiteRegistry {
             }
         }
     }
+
+    /// Delete a site by ID.
+    pub async fn delete(&self, site_id: &str) -> bool {
+        let removed = {
+            let mut sites = self.sites.write().await;
+            let before = sites.len();
+            sites.retain(|s| s.id != site_id);
+            sites.len() < before
+        };
+        if removed { self.persist().await; }
+        removed
+    }
+
+    /// Get site categories.
+    pub async fn categories(&self) -> Vec<(String, usize)> {
+        let sites = self.sites.read().await;
+        let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for s in sites.iter() {
+            *counts.entry(s.category.clone()).or_default() += 1;
+        }
+        let mut list: Vec<_> = counts.into_iter().collect();
+        list.sort_by(|a, b| b.1.cmp(&a.1));
+        list
+    }
 }
 
 #[derive(Clone)]
 struct PortalState {
     registry: Arc<SiteRegistry>,
+    identity: Arc<crate::network::identity::MeshIdentity>,
 }
 
 #[derive(Deserialize)]
 struct SearchQuery { q: Option<String> }
 
 #[derive(Deserialize)]
-struct SetIdentity { name: String }
+struct SetIdentity {
+    name: String,
+    #[serde(default)]
+    bio: Option<String>,
+    #[serde(default)]
+    avatar_url: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+}
 
 #[derive(Deserialize)]
 struct RegisterSite {
@@ -104,17 +146,20 @@ struct RegisterSite {
     category: Option<String>,
 }
 
-pub async fn spawn_hive_portal_server(registry: Arc<SiteRegistry>) {
+pub async fn spawn_hive_portal_server(registry: Arc<SiteRegistry>, identity: Arc<crate::network::identity::MeshIdentity>) {
     let port: u16 = 3035; // Mesh-governed: creator-key protected
 
-    let state = PortalState { registry };
+    let state = PortalState { registry, identity };
 
     tokio::spawn(async move {
         tracing::info!("[PORTAL] 🏠 HivePortal starting on http://0.0.0.0:{}", port);
 
         let app = Router::new()
             .route("/api/services", get(api_services))
+            .route("/api/health", get(api_health))
             .route("/api/sites", get(api_sites).post(api_register_site))
+            .route("/api/sites/{site_id}", axum::routing::delete(api_delete_site))
+            .route("/api/sites/categories", get(api_site_categories))
             .route("/api/search", get(api_search))
             .route("/api/status", get(api_portal_status))
             .route("/api/identity", get(api_get_identity).post(api_set_identity))
@@ -159,6 +204,8 @@ async fn api_services() -> Json<Value> {
             {"id":"proxy","name":"Web Proxy","icon":"🛡️","desc":"Censorship-resistant mesh browsing","port":8480,"url":"http://localhost:8480","category":"network"},
             {"id":"bank","name":"HIVE Bank","icon":"🏦","desc":"Wallet, NFT gallery, credits & crypto dashboard","port":3037,"url":"http://localhost:3037","category":"economy"},
             {"id":"marketplace","name":"Marketplace","icon":"🛒","desc":"Goods & services — trade, browse, review","port":3038,"url":"http://localhost:3038","category":"economy"},
+            {"id":"uploads","name":"File Upload","icon":"📤","desc":"Upload & share images, documents, and media","port":8421,"url":"http://localhost:8421","category":"tools"},
+            {"id":"fileshare","name":"File Share","icon":"📁","desc":"Browse & discover shared files across the mesh","port":3039,"url":"http://localhost:3039","category":"tools"},
         ],
         "connectivity": if clearnet { "online" } else { "mesh_only" },
         "web_relays": pool_stats["web_relays_available"],
@@ -194,49 +241,144 @@ async fn api_search(State(state): State<PortalState>, Query(params): Query<Searc
     if q.is_empty() {
         return Json(json!({"results": [], "query": ""}));
     }
-    let sites = state.registry.search(&q).await;
-    Json(json!({"results": sites, "query": q, "count": sites.len()}))
-}
+    let q_lower = q.to_lowercase();
 
-async fn api_portal_status() -> Json<Value> {
+    // Search user-published sites
+    let sites = state.registry.search(&q).await;
+
+    // Also search built-in services
+    let services = vec![
+        ("surface", "HiveSurface", "Social media posts reactions communities", 3032),
+        ("code", "Apis Code", "AI web IDE terminal coding", 3033),
+        ("chat", "HiveChat", "Discord messaging servers channels", 3034),
+        ("bank", "HIVE Bank", "Wallet NFT crypto credits", 3037),
+        ("marketplace", "Marketplace", "Goods services trade commerce", 3038),
+        ("fileshare", "File Share", "Files documents media sharing", 3039),
+        ("uploads", "File Upload", "Upload images documents", 8421),
+    ];
+    let matching_services: Vec<Value> = services.iter()
+        .filter(|(_, name, desc, _)| name.to_lowercase().contains(&q_lower) || desc.to_lowercase().contains(&q_lower))
+        .map(|(id, name, desc, port)| json!({
+            "type": "service", "id": id, "name": name, "desc": desc,
+            "url": format!("http://localhost:{}", port),
+        }))
+        .collect();
+
     Json(json!({
-        "portal": "HivePortal",
-        "version": "1.0",
-        "services": 6,
+        "results": sites,
+        "services": matching_services,
+        "query": q,
+        "count": sites.len() + matching_services.len(),
     }))
 }
 
-async fn api_get_identity() -> Json<Value> {
-    let name = std::env::var("HIVE_USER_NAME").unwrap_or_default();
-    let is_anon = name.trim().is_empty() || name.to_lowercase() == "anonymous";
-    Json(json!({"name": if is_anon { "Anonymous".to_string() } else { name }, "is_anonymous": is_anon}))
+async fn api_portal_status(State(state): State<PortalState>) -> Json<Value> {
+    let sites = state.registry.list().await;
+    let profile = state.identity.profile().await;
+    Json(json!({
+        "portal": "HivePortal",
+        "version": "2.0",
+        "total_services": 10,
+        "total_sites": sites.len(),
+        "user": profile.display_name,
+        "peer_id": profile.peer_id,
+    }))
 }
 
-async fn api_set_identity(Json(req): Json<SetIdentity>) -> Json<Value> {
-    let new_name = req.name.trim().to_string();
-    unsafe { std::env::set_var("HIVE_USER_NAME", &new_name); }
+/// Health check — probe all mesh services.
+async fn api_health() -> Json<Value> {
+    let services = vec![
+        ("panopticon", 3030), ("book", 3031), ("surface", 3032),
+        ("code", 3033), ("chat", 3034), ("portal", 3035),
+        ("bank", 3037), ("marketplace", 3038), ("fileshare", 3039),
+        ("uploads", 8421), ("proxy", 8480),
+    ];
 
-    // Save to .env for persistence inside Docker
-    if let Ok(content) = std::fs::read_to_string(".env") {
-        let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
-        let mut found = false;
-        for line in lines.iter_mut() {
-            if line.starts_with("HIVE_USER_NAME=") {
-                *line = format!("HIVE_USER_NAME={}", new_name);
-                found = true;
-                break;
-            }
-        }
-        if !found {
-            if !lines.is_empty() { lines.push("".to_string()); }
-            lines.push(format!("HIVE_USER_NAME={}", new_name));
-        }
-        let _ = std::fs::write(".env", lines.join("\n"));
-    } else {
-        let _ = std::fs::write(".env", format!("HIVE_USER_NAME={}\n", new_name));
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build().unwrap_or_default();
+
+    let mut results = vec![];
+    for (id, port) in &services {
+        let url = format!("http://localhost:{}/api/status", port);
+        let healthy = client.get(&url).send().await.is_ok();
+        results.push(json!({
+            "id": id, "port": port, "healthy": healthy,
+            "status": if healthy { "up" } else { "down" },
+        }));
     }
-    
-    Json(json!({"ok": true, "name": new_name}))
+
+    let up = results.iter().filter(|r| r["healthy"] == true).count();
+    let total = results.len();
+
+    Json(json!({
+        "services": results,
+        "up": up, "down": total - up, "total": total,
+        "health": if up == total { "all_healthy" } else if up > 0 { "degraded" } else { "down" },
+    }))
+}
+
+async fn api_delete_site(
+    State(state): State<PortalState>,
+    axum::extract::Path(site_id): axum::extract::Path<String>,
+) -> Json<Value> {
+    let deleted = state.registry.delete(&site_id).await;
+    Json(json!({"ok": deleted}))
+}
+
+async fn api_site_categories(State(state): State<PortalState>) -> Json<Value> {
+    let cats = state.registry.categories().await;
+    Json(json!({"categories": cats}))
+}
+
+async fn api_get_identity(State(state): State<PortalState>) -> Json<Value> {
+    let profile = state.identity.profile().await;
+    let is_anon = state.identity.is_anonymous().await;
+    Json(json!({
+        "name": profile.display_name,
+        "peer_id": profile.peer_id,
+        "avatar_url": profile.avatar_url,
+        "bio": profile.bio,
+        "status": format!("{}", profile.status),
+        "custom_status": profile.custom_status,
+        "is_anonymous": is_anon,
+        "created_at": profile.created_at,
+    }))
+}
+
+async fn api_set_identity(State(state): State<PortalState>, Json(req): Json<SetIdentity>) -> Json<Value> {
+    let new_name = req.name.trim().to_string();
+    if let Err(e) = state.identity.set_display_name(&new_name).await {
+        return Json(json!({"error": e}));
+    }
+
+    // Update optional fields if provided
+    if let Some(bio) = &req.bio {
+        state.identity.set_bio(bio).await;
+    }
+    if let Some(avatar) = &req.avatar_url {
+        state.identity.set_avatar(avatar).await;
+    }
+    if let Some(status_str) = &req.status {
+        let status = match status_str.as_str() {
+            "idle" => crate::network::identity::UserStatus::Idle,
+            "dnd" => crate::network::identity::UserStatus::DoNotDisturb,
+            "invisible" => crate::network::identity::UserStatus::Invisible,
+            "offline" => crate::network::identity::UserStatus::Offline,
+            _ => crate::network::identity::UserStatus::Online,
+        };
+        state.identity.set_status(status).await;
+    }
+
+    let profile = state.identity.profile().await;
+    Json(json!({
+        "ok": true,
+        "name": profile.display_name,
+        "peer_id": profile.peer_id,
+        "avatar_url": profile.avatar_url,
+        "bio": profile.bio,
+        "status": format!("{}", profile.status),
+    }))
 }
 
 // ─── SPA Frontend ───────────────────────────────────────────────────────
@@ -509,7 +651,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_site_registry() {
-        let registry = SiteRegistry::new();
+        let registry = SiteRegistry::new_test();
         assert_eq!(registry.list().await.len(), 0);
 
         registry.register(MeshSite {
@@ -526,5 +668,45 @@ mod tests {
 
         let empty = registry.search("nonexistent").await;
         assert_eq!(empty.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_site_delete() {
+        let registry = SiteRegistry::new_test();
+        registry.register(MeshSite {
+            id: "del1".into(), name: "Delete Me".into(), description: "temp".into(),
+            url: "http://test".into(), icon: "🗑".into(),
+            author: "Bob".into(), category: "temp".into(),
+            created_at: "2024-01-01".into(),
+        }).await;
+
+        assert_eq!(registry.list().await.len(), 1);
+        assert!(registry.delete("del1").await);
+        assert_eq!(registry.list().await.len(), 0);
+        assert!(!registry.delete("del1").await); // double delete
+    }
+
+    #[tokio::test]
+    async fn test_site_categories() {
+        let registry = SiteRegistry::new_test();
+        for i in 0..3 {
+            registry.register(MeshSite {
+                id: format!("c{}", i), name: format!("Site {}", i), description: "".into(),
+                url: "http://test".into(), icon: "🌐".into(),
+                author: "A".into(), category: "blog".into(),
+                created_at: "2024-01-01".into(),
+            }).await;
+        }
+        registry.register(MeshSite {
+            id: "c3".into(), name: "Shop".into(), description: "".into(),
+            url: "http://test".into(), icon: "🛒".into(),
+            author: "A".into(), category: "commerce".into(),
+            created_at: "2024-01-01".into(),
+        }).await;
+
+        let cats = registry.categories().await;
+        assert_eq!(cats.len(), 2);
+        assert_eq!(cats[0].0, "blog");
+        assert_eq!(cats[0].1, 3);
     }
 }

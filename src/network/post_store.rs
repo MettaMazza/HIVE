@@ -3,7 +3,7 @@
 /// Stores posts from mesh peers in a bounded ring buffer.
 /// Persists to disk on shutdown, loads on boot.
 /// Broadcast channel for SSE real-time streaming.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::{RwLock, broadcast};
 use serde::{Deserialize, Serialize};
@@ -44,6 +44,18 @@ pub struct MeshPost {
     pub replies: Vec<MeshPost>,
     pub created_at: String,
     pub community: Option<String>,
+    /// Media attachment URLs (images, video thumbnails, etc.)
+    #[serde(default)]
+    pub media_urls: Vec<String>,
+    /// Whether this post has been edited.
+    #[serde(default)]
+    pub edited: bool,
+    /// If this is a share/repost, the original post ID.
+    #[serde(default)]
+    pub shared_from: Option<String>,
+    /// Author's avatar URL (populated from identity).
+    #[serde(default)]
+    pub author_avatar: Option<String>,
 }
 
 impl MeshPost {
@@ -60,6 +72,10 @@ impl MeshPost {
             replies: Vec::new(),
             created_at: chrono::Utc::now().to_rfc3339(),
             community: None,
+            media_urls: Vec::new(),
+            edited: false,
+            shared_from: None,
+            author_avatar: None,
         }
     }
 
@@ -95,12 +111,14 @@ impl MeshPost {
     }
 }
 
-/// The post store — ring buffer of mesh posts.
+/// The post store — ring buffer of mesh posts with follow graph.
 pub struct PostStore {
     posts: Arc<RwLock<Vec<MeshPost>>>,
     max_posts: usize,
     tx: broadcast::Sender<MeshPost>,
     persist_path: String,
+    /// Follow graph: follower_id -> set of followed peer_ids.
+    follows: Arc<RwLock<HashMap<String, HashSet<String>>>>,
 }
 
 impl PostStore {
@@ -131,6 +149,14 @@ impl PostStore {
             ));
         }
 
+        // Load follow graph
+        let follow_path = persist_path.replace(".json", "_follows.json");
+        let follows = if let Ok(data) = std::fs::read_to_string(&follow_path) {
+            serde_json::from_str::<HashMap<String, HashSet<String>>>(&data).unwrap_or_default()
+        } else {
+            HashMap::new()
+        };
+
         tracing::info!("[SURFACE] 🌐 PostStore ready (max={}, persist={})", max, persist_path);
 
         Self {
@@ -138,6 +164,7 @@ impl PostStore {
             max_posts: max,
             tx,
             persist_path,
+            follows: Arc::new(RwLock::new(follows)),
         }
     }
 
@@ -283,6 +310,124 @@ impl PostStore {
                 Err(e) => tracing::error!("[SURFACE] ❌ Failed to persist posts: {}", e),
             }
         }
+        // Also persist follow graph
+        self.persist_follows().await;
+    }
+
+    /// Persist follow graph to disk.
+    async fn persist_follows(&self) {
+        let follow_path = self.persist_path.replace(".json", "_follows.json");
+        let follows = self.follows.read().await;
+        if let Ok(json) = serde_json::to_string_pretty(&*follows) {
+            let _ = std::fs::write(&follow_path, json);
+        }
+    }
+
+    // ─── Edit / Delete / Share ────────────────────────────────────────
+
+    /// Edit a post (only the author can edit).
+    pub async fn edit_post(&self, post_id: &str, author_id: &str, new_content: &str) -> Option<MeshPost> {
+        let post = {
+            let mut posts = self.posts.write().await;
+            let post = posts.iter_mut().find(|p| p.id == post_id && p.author_id == author_id)?;
+            post.content = new_content.to_string();
+            post.edited = true;
+            post.clone()
+        };
+        self.persist().await;
+        Some(post)
+    }
+
+    /// Delete a post (only the author can delete).
+    pub async fn delete_post(&self, post_id: &str, author_id: &str) -> bool {
+        let deleted = {
+            let mut posts = self.posts.write().await;
+            let before = posts.len();
+            posts.retain(|p| !(p.id == post_id && p.author_id == author_id));
+            posts.len() < before
+        };
+        if deleted {
+            self.persist().await;
+        }
+        deleted
+    }
+
+    /// Share/repost a post with attribution.
+    pub async fn share_post(&self, post_id: &str, sharer_id: &str, sharer_name: &str) -> Option<MeshPost> {
+        let original = {
+            let posts = self.posts.read().await;
+            posts.iter().find(|p| p.id == post_id).cloned()
+        };
+
+        if let Some(original) = original {
+            let mut shared = MeshPost::new(sharer_id, sharer_name, &original.content, original.post_type.clone());
+            shared.shared_from = Some(original.id.clone());
+            shared.media_urls = original.media_urls.clone();
+            shared.link_url = original.link_url.clone();
+            self.push(shared.clone()).await;
+            Some(shared)
+        } else {
+            None
+        }
+    }
+
+    // ─── Follow System ────────────────────────────────────────────────
+
+    /// Follow a peer.
+    pub async fn follow(&self, follower_id: &str, target_id: &str) {
+        {
+            let mut follows = self.follows.write().await;
+            follows.entry(follower_id.to_string())
+                .or_default()
+                .insert(target_id.to_string());
+        }
+        self.persist_follows().await;
+    }
+
+    /// Unfollow a peer.
+    pub async fn unfollow(&self, follower_id: &str, target_id: &str) -> bool {
+        let removed = {
+            let mut follows = self.follows.write().await;
+            if let Some(following) = follows.get_mut(follower_id) {
+                following.remove(target_id)
+            } else {
+                false
+            }
+        };
+        if removed {
+            self.persist_follows().await;
+        }
+        removed
+    }
+
+    /// Get list of peer IDs that a user follows.
+    pub async fn following(&self, peer_id: &str) -> Vec<String> {
+        let follows = self.follows.read().await;
+        follows.get(peer_id)
+            .map(|set| set.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Get personalised feed from followed users.
+    pub async fn by_follows(&self, follower_id: &str, limit: usize) -> Vec<MeshPost> {
+        let following = {
+            let follows = self.follows.read().await;
+            follows.get(follower_id).cloned().unwrap_or_default()
+        };
+
+        let posts = self.posts.read().await;
+        posts.iter()
+            .rev()
+            .filter(|p| following.contains(&p.author_id))
+            .take(limit)
+            .cloned()
+            .collect()
+    }
+
+    /// Check if a user follows another.
+    pub async fn is_following(&self, follower_id: &str, target_id: &str) -> bool {
+        let follows = self.follows.read().await;
+        follows.get(follower_id).map(|s| s.contains(target_id)).unwrap_or(false)
     }
 }
 
@@ -406,6 +551,7 @@ mod tests {
             max_posts: 5,
             tx: broadcast::channel(16).0,
             persist_path: "/tmp/hive_test_posts.json".to_string(),
+            follows: Arc::new(RwLock::new(std::collections::HashMap::new())),
         };
 
         for i in 0..8 {

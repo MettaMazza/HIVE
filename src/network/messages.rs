@@ -265,6 +265,96 @@ pub enum MeshMessage {
         total_compute_slots: u32,
         provider: PeerId,
     },
+
+    // ── Sandbox Compute (Wasm) ──────────────────────────────────────
+    /// Submit a Wasm binary for sandboxed execution on a peer.
+    SandboxRequest {
+        job_id: String,
+        wasm_binary: Vec<u8>,
+        input_data: Vec<u8>,
+        cpu_limit_secs: u64,
+        memory_limit_mb: u32,
+        requester: PeerId,
+    },
+    /// Result of sandboxed Wasm execution.
+    SandboxResponse {
+        job_id: String,
+        stdout: Vec<u8>,
+        stderr: Vec<u8>,
+        exit_code: i32,
+        cpu_seconds_used: f64,
+        provider: PeerId,
+    },
+
+    // ── Batch Compute ───────────────────────────────────────────────
+    /// Fan-out a batch job to multiple peers.
+    ComputeBatch {
+        batch_id: String,
+        chunks: Vec<String>,
+        model: String,
+        requester: PeerId,
+    },
+    /// Result of a single chunk in a batch job.
+    ComputeChunkResult {
+        batch_id: String,
+        chunk_index: u32,
+        result: String,
+        provider: PeerId,
+    },
+
+    // ── DHT ─────────────────────────────────────────────────────────
+    /// Store a value in the distributed hash table.
+    DHTStore {
+        key: String,
+        value: Vec<u8>,
+        entry_type: String,
+        ttl_secs: u64,
+        origin: PeerId,
+    },
+    /// Look up a value from the DHT.
+    DHTLookup {
+        key: String,
+        requester: PeerId,
+    },
+    /// DHT lookup response — value found.
+    DHTResponse {
+        key: String,
+        value: Vec<u8>,
+        provider: PeerId,
+    },
+    /// DHT lookup response — not found, here are referrals.
+    DHTNotFound {
+        key: String,
+        referrals: Vec<PeerId>,
+    },
+
+    // ── File System ─────────────────────────────────────────────────
+    /// Announce a file manifest (chunked file).
+    FileManifest {
+        file_hash: String,
+        chunk_hashes: Vec<String>,
+        total_size: u64,
+        origin: PeerId,
+    },
+    /// Request a specific chunk of a file.
+    FileChunkRequest {
+        chunk_hash: String,
+        requester: PeerId,
+    },
+    /// Response with a file chunk.
+    FileChunkResponse {
+        chunk_hash: String,
+        data: Vec<u8>,
+        provider: PeerId,
+    },
+
+    // ── Governance Phases ───────────────────────────────────────────
+    /// Announce a governance phase transition.
+    PhaseTransition {
+        new_phase: String,
+        peer_count: u64,
+        timestamp: String,
+    },
 }
 
 /// Signed envelope wrapping every mesh message.

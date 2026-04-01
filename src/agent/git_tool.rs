@@ -24,6 +24,16 @@ pub async fn execute_git_tool(
         };
     }
 
+    // SAFETY ENFORCEMENT: Never allow remote manipulation.
+    if action == "push" || action == "pull" || action == "fetch" || action == "clone" {
+        return ToolResult {
+            task_id,
+            output: "Error: Remote git manipulation (push/pull/fetch) is strictly prohibited by security constraints. You may only manipulate the local repository timeline.".into(),
+            tokens_used: 0,
+            status: ToolStatus::Failed("Security Violation: Action strictly forbidden".into()),
+        };
+    }
+
     let result = match action.as_str() {
         "status" => {
             run_git(&["status", "--porcelain", "--branch"]).await

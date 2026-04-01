@@ -28,9 +28,16 @@ use crate::network::post_store::{PostStore, MeshPost, PostType};
 struct SurfaceState {
     post_store: Arc<PostStore>,
     local_peer_id: String,
+    identity: Arc<crate::network::identity::MeshIdentity>,
 }
 
-/// Read the current display name dynamically (reflects identity changes without restart).
+/// Read the current display name from the shared identity store.
+async fn get_display_name_from_identity(identity: &crate::network::identity::MeshIdentity) -> String {
+    identity.display_name().await
+}
+
+/// Sync fallback for backward compat.
+#[allow(dead_code)]
 fn get_display_name() -> String {
     std::env::var("HIVE_USER_NAME")
         .or_else(|_| std::env::var("USER"))
@@ -68,15 +75,20 @@ struct ReplyRequest {
     content: String,
 }
 
-pub async fn spawn_mesh_social_server(post_store: Arc<PostStore>) {
+#[derive(Deserialize)]
+struct EditPostReq {
+    content: String,
+}
+
+pub async fn spawn_mesh_social_server(post_store: Arc<PostStore>, identity: Arc<crate::network::identity::MeshIdentity>) {
     let port: u16 = 3032; // Mesh-governed: creator-key protected
 
-    let local_peer_id = std::env::var("HIVE_MESH_CHAT_NAME")
-        .unwrap_or_else(|_| "Apis".to_string());
+    let local_peer_id = identity.peer_id().await;
 
     let state = SurfaceState {
         post_store,
         local_peer_id,
+        identity,
     };
 
     tokio::spawn(async move {
@@ -89,6 +101,12 @@ pub async fn spawn_mesh_social_server(post_store: Arc<PostStore>) {
             .route("/api/post", post(api_create_post))
             .route("/api/post/{post_id}/react", post(api_react))
             .route("/api/post/{post_id}/reply", post(api_reply))
+            .route("/api/post/{post_id}/edit", axum::routing::put(api_edit_post))
+            .route("/api/post/{post_id}/delete", axum::routing::delete(api_delete_post))
+            .route("/api/post/{post_id}/share", post(api_share_post))
+            .route("/api/follow/{peer_id}", post(api_follow))
+            .route("/api/unfollow/{peer_id}", post(api_unfollow))
+            .route("/api/following", get(api_following))
             .route("/api/search", get(api_search))
             .route("/api/communities", get(api_communities))
             .route("/api/profile/{peer_id}", get(api_profile))
@@ -189,7 +207,7 @@ async fn api_create_post(
 
     let mut post = MeshPost::new(
         &state.local_peer_id,
-        &get_display_name(),
+        &get_display_name_from_identity(&state.identity).await,
         &req.content,
         post_type,
     );
@@ -227,7 +245,7 @@ async fn api_reply(
 
     let reply = MeshPost::new(
         &state.local_peer_id,
-        &get_display_name(),
+        &get_display_name_from_identity(&state.identity).await,
         &req.content,
         PostType::Text,
     );
@@ -263,8 +281,13 @@ async fn api_profile(
     Path(peer_id): Path<String>,
 ) -> Json<Value> {
     let posts = state.post_store.by_author(&peer_id, 50).await;
+    let profile = state.identity.profile().await;
+    let is_local = peer_id == state.local_peer_id;
     Json(json!({
         "peer_id": peer_id,
+        "display_name": if is_local { profile.display_name } else { peer_id.clone() },
+        "avatar_url": if is_local { profile.avatar_url } else { None::<String> },
+        "bio": if is_local { profile.bio } else { None::<String> },
         "posts": posts,
         "post_count": posts.len(),
     }))
@@ -298,6 +321,65 @@ async fn api_stream(
     )
 }
 
+// ─── New P0 Endpoints ───────────────────────────────────────────────────
+
+async fn api_edit_post(
+    State(state): State<SurfaceState>,
+    Path(post_id): Path<String>,
+    Json(req): Json<EditPostReq>,
+) -> Json<Value> {
+    if req.content.trim().is_empty() {
+        return Json(json!({"error": "Content cannot be empty"}));
+    }
+    match state.post_store.edit_post(&post_id, &state.local_peer_id, &req.content).await {
+        Some(post) => Json(json!({"ok": true, "post": post})),
+        None => Json(json!({"error": "Post not found or not yours"})),
+    }
+}
+
+async fn api_delete_post(
+    State(state): State<SurfaceState>,
+    Path(post_id): Path<String>,
+) -> Json<Value> {
+    let deleted = state.post_store.delete_post(&post_id, &state.local_peer_id).await;
+    Json(json!({"ok": deleted}))
+}
+
+async fn api_share_post(
+    State(state): State<SurfaceState>,
+    Path(post_id): Path<String>,
+) -> Json<Value> {
+    let name = get_display_name_from_identity(&state.identity).await;
+    match state.post_store.share_post(&post_id, &state.local_peer_id, &name).await {
+        Some(post) => Json(json!({"ok": true, "post": post})),
+        None => Json(json!({"error": "Post not found"})),
+    }
+}
+
+async fn api_follow(
+    State(state): State<SurfaceState>,
+    Path(peer_id): Path<String>,
+) -> Json<Value> {
+    if peer_id == state.local_peer_id {
+        return Json(json!({"error": "Cannot follow yourself"}));
+    }
+    state.post_store.follow(&state.local_peer_id, &peer_id).await;
+    Json(json!({"ok": true, "following": peer_id}))
+}
+
+async fn api_unfollow(
+    State(state): State<SurfaceState>,
+    Path(peer_id): Path<String>,
+) -> Json<Value> {
+    let removed = state.post_store.unfollow(&state.local_peer_id, &peer_id).await;
+    Json(json!({"ok": removed}))
+}
+
+async fn api_following(State(state): State<SurfaceState>) -> Json<Value> {
+    let following = state.post_store.following(&state.local_peer_id).await;
+    Json(json!({"following": following, "count": following.len()}))
+}
+
 // ─── SPA Frontend ───────────────────────────────────────────────────────
 
 async fn serve_spa() -> Html<String> {
@@ -309,6 +391,7 @@ use super::mesh_social_html::SPA_HTML;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::network::post_store::{PostStore, PostType};
 
     #[test]
     fn test_spa_html_not_empty() {
@@ -316,5 +399,83 @@ mod tests {
         assert!(SPA_HTML.contains("HiveSurface"));
         assert!(SPA_HTML.contains("/api/feed"));
         assert!(SPA_HTML.contains("/api/status"));
+    }
+
+    #[tokio::test]
+    async fn test_post_edit() {
+        let store = PostStore::new();
+        let mut post = crate::network::post_store::MeshPost::new("peer1", "Alice", "Original", PostType::Text);
+        post.media_urls = vec!["http://localhost:8421/file/test.png".to_string()];
+        store.push(post.clone()).await;
+
+        let edited = store.edit_post(&post.id, "peer1", "Edited content").await;
+        assert!(edited.is_some());
+        assert_eq!(edited.unwrap().content, "Edited content");
+
+        // Non-author blocked
+        assert!(store.edit_post(&post.id, "peer2", "Hack").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_post_delete() {
+        let store = PostStore::new();
+        let post = crate::network::post_store::MeshPost::new("peer1", "Alice", "Delete me", PostType::Text);
+        let id = post.id.clone();
+        store.push(post).await;
+        let before = store.count().await;
+
+        assert!(!store.delete_post(&id, "peer2").await); // non-author
+        assert!(store.delete_post(&id, "peer1").await);
+        assert_eq!(store.count().await, before - 1);
+    }
+
+    #[tokio::test]
+    async fn test_post_share() {
+        let store = PostStore::new();
+        let post = crate::network::post_store::MeshPost::new("peer1", "Alice", "Share this", PostType::Text);
+        let id = post.id.clone();
+        store.push(post).await;
+
+        let shared = store.share_post(&id, "peer2", "Bob").await;
+        assert!(shared.is_some());
+        let s = shared.unwrap();
+        assert_eq!(s.shared_from.unwrap(), id);
+        assert_eq!(s.author_id, "peer2");
+    }
+
+    #[tokio::test]
+    async fn test_follow_system() {
+        let store = PostStore::new();
+
+        store.follow("alice", "bob").await;
+        assert!(store.is_following("alice", "bob").await);
+        assert!(!store.is_following("bob", "alice").await);
+
+        let following = store.following("alice").await;
+        assert_eq!(following.len(), 1);
+
+        assert!(store.unfollow("alice", "bob").await);
+        assert!(!store.is_following("alice", "bob").await);
+        assert!(!store.unfollow("alice", "bob").await); // double unfollow
+    }
+
+    #[tokio::test]
+    async fn test_follow_feed() {
+        let store = PostStore::new();
+
+        // Bob posts
+        let post = crate::network::post_store::MeshPost::new("bob", "Bob", "Hello from Bob", PostType::Text);
+        store.push(post).await;
+
+        // Alice follows Bob
+        store.follow("alice", "bob").await;
+
+        let feed = store.by_follows("alice", 50).await;
+        assert!(!feed.is_empty());
+        assert!(feed.iter().all(|p| p.author_id == "bob"));
+
+        // Charlie (not following) gets empty feed
+        let empty = store.by_follows("charlie", 50).await;
+        assert!(empty.is_empty());
     }
 }

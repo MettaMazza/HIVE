@@ -274,6 +274,12 @@ impl DocumentComposer {
                 .map_err(|e| std::io::Error::other(e.to_string()))?;
             std::fs::write(&png_path_clone, png_data)?;
 
+            // Explicitly kill Chrome to prevent IOSurface client leak
+            if let Some(pid) = browser.get_process_id() {
+                drop(browser);
+                let _ = std::process::Command::new("kill").arg("-9").arg(pid.to_string()).status();
+            }
+
             Ok(())
         })
         .await?;

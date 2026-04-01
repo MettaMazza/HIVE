@@ -37,6 +37,22 @@ pub mod governance;
 pub mod pool;
 pub mod compute_relay;
 pub mod post_store;
+pub mod identity;
+pub mod mesh_crypto;
+pub mod mesh_loop;
+pub mod regional_keys;
+pub mod hardware_id;
+pub mod hardware_blacklist;
+pub mod capability_registry;
+pub mod config_guard;
+pub mod distributed_compute;
+pub mod task_queue;
+pub mod dht;
+pub mod content_store;
+pub mod governance_phases;
+pub mod sandbox;
+pub mod sandbox_priority;
+pub mod mesh_fs;
 
 pub(crate) mod web_proxy_html;
 
@@ -62,6 +78,8 @@ pub use governance::GovernanceEngine;
 pub use pool::PoolManager;
 pub use compute_relay::ComputeRelay;
 pub use post_store::PostStore;
+pub use mesh_loop::{MeshHandlers, start_mesh_loop};
+pub use identity::MeshIdentity;
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -161,7 +179,7 @@ impl HiveMesh {
         PeerId(hash)
     }
 
-    /// Start the mesh — spawns discovery, watchdog, and message handler tasks.
+    /// Start the mesh — spawns discovery, watchdog, message loop, and handler tasks.
     pub async fn start(self: &Arc<Self>) {
         // Check for previous self-destruct
         if self_destruct::has_self_destructed() {
@@ -225,7 +243,130 @@ impl HiveMesh {
             }
         });
 
-        tracing::info!("[NEUROLEASE] 🚀 Mesh started — listening for peers on port {}", mesh.config.port);
+        // ── CORE MESSAGE LOOP ────────────────────────────────────────
+        // Bind QUIC transport and start the mesh event loop.
+        let mesh_dir = std::path::PathBuf::from("memory/mesh");
+        match QuicTransport::bind(self.config.port, &self.peer_id) {
+            Ok(transport) => {
+                let transport = Arc::new(transport);
+
+                // Build handler subsystems
+                let content_filter = Arc::new(ContentFilter::new());
+                let pool = Arc::new(RwLock::new(
+                    PoolManager::new(self.peer_id.clone())
+                ));
+                let compute_relay_config = compute_relay::ComputeRelayConfig::mesh_defaults();
+                let compute_pool_inner = pool.read().await.compute_pool.clone();
+                let compute_relay = Arc::new(ComputeRelay::new(
+                    compute_relay_config,
+                    content_filter.clone(),
+                    compute_pool_inner,
+                    self.peer_id.clone(),
+                ));
+
+                let sync = Arc::new(RwLock::new(
+                    KnowledgeSync::new(&mesh_dir)
+                ));
+
+                let chat = Arc::new(ApisChat::from_env());
+                let book = Arc::new(ApisBook::new());
+                let governance = Arc::new(
+                    GovernanceEngine::new()
+                );
+
+                // L3-L7 subsystems
+                let regional = Arc::new(
+                    regional_keys::RegionalKeyRegistry::new()
+                );
+                let hardware_blacklist = Arc::new(RwLock::new(
+                    hardware_blacklist::HardwareBlacklist::new(&mesh_dir)
+                ));
+                let capabilities = Arc::new(
+                    capability_registry::CapabilityRegistry::new()
+                );
+                // Auto-detect local capabilities
+                capabilities.detect_local(&self.peer_id).await;
+
+                let project_root = std::env::current_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("."));
+                let config_guard = Arc::new(RwLock::new(
+                    config_guard::ConfigGuard::new(&project_root)
+                ));
+                let ledger = Arc::new(RwLock::new(
+                    crate::crypto::mesh_ledger::MeshLedger::new(&mesh_dir)
+                ));
+
+                // ── v5.0 Supercomputer subsystems ────────────────────────
+                let sandbox_engine = Arc::new(
+                    sandbox::SandboxEngine::new(sandbox::SandboxConfig::default())
+                        .unwrap_or_else(|e| {
+                            tracing::error!("[NEUROLEASE] ⚠️ Sandbox engine failed to init: {} — using disabled config", e);
+                            sandbox::SandboxEngine::new(sandbox::SandboxConfig {
+                                enabled: false,
+                                ..Default::default()
+                            }).expect("Disabled sandbox must init")
+                        })
+                );
+                let priority_manager = Arc::new(
+                    sandbox_priority::PriorityManager::new()
+                );
+                let dht = Arc::new(RwLock::new(
+                    dht::DHT::new(self.peer_id.clone(), dht::DEFAULT_K)
+                ));
+                let mesh_fs_instance = Arc::new(RwLock::new(
+                    mesh_fs::MeshFS::new(self.peer_id.clone())
+                ));
+                let governance_manager = Arc::new(
+                    governance_phases::GovernanceManager::new()
+                );
+
+                let handlers = Arc::new(MeshHandlers {
+                    transport: transport.clone(),
+                    trust: self.trust.clone(),
+                    sanctions: self.sanctions.clone(),
+                    sync,
+                    weights: None,
+                    propagation: None,
+                    chat,
+                    book,
+                    governance,
+                    compute_relay,
+                    content_filter,
+                    pool,
+                    registry: self.registry.clone(),
+                    local_peer: self.peer_id.clone(),
+                    local_attestation: self.local_attestation(),
+                    regional,
+                    hardware_blacklist,
+                    capabilities,
+                    config_guard,
+                    ledger,
+                    sandbox_engine,
+                    priority_manager: priority_manager.clone(),
+                    dht,
+                    mesh_fs: mesh_fs_instance,
+                    governance_manager,
+                });
+
+                // Spawn the priority monitor loop (tracks local CPU/RAM every 5s)
+                priority_manager.clone().spawn_monitor();
+
+                // Start the event loop — accepts connections, routes messages
+                start_mesh_loop(handlers).await;
+
+                tracing::info!(
+                    "[NEUROLEASE] 🚀 Mesh started — QUIC transport + event loop on port {}",
+                    mesh.config.port
+                );
+            }
+            Err(e) => {
+                tracing::error!(
+                    "[NEUROLEASE] ❌ Failed to bind QUIC transport on port {}: {}",
+                    self.config.port, e
+                );
+                tracing::info!("[NEUROLEASE] 🚀 Mesh started in discovery-only mode (no transport)");
+            }
+        }
     }
 
     /// Check if a peer should be accepted (not quarantined, not unattested).

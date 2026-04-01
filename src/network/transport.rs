@@ -170,6 +170,19 @@ impl QuicTransport {
     pub async fn connected_peers(&self) -> Vec<PeerId> {
         self.connections.read().await.keys().cloned().collect()
     }
+
+    /// Disconnect from all peers — used by config guard and self-destruct.
+    pub async fn disconnect_all(&self) {
+        let mut conns = self.connections.write().await;
+        let count = conns.len();
+        for (peer_id, conn) in conns.drain() {
+            conn.close(0u32.into(), b"mesh_disconnect");
+            tracing::info!("[TRANSPORT] 🔌 Disconnected from {}", peer_id);
+        }
+        if count > 0 {
+            tracing::warn!("[TRANSPORT] ⚠️ Disconnected from all {} peers", count);
+        }
+    }
 }
 
 /// Custom certificate verifier that skips TLS server cert verification.

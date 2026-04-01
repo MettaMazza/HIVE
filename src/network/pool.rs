@@ -401,6 +401,19 @@ impl PoolManager {
         Ok((provider, ephemeral))
     }
 
+    /// Forward a compute heartbeat from the mesh loop to the inner ComputePool.
+    pub async fn update_compute_peer(
+        &self,
+        peer_id: PeerId,
+        model: String,
+        available_slots: u32,
+        ram_gb: f64,
+        queue_depth: u32,
+    ) {
+        let mut pool = self.compute_pool.write().await;
+        pool.handle_heartbeat(peer_id, model, available_slots, ram_gb, queue_depth);
+    }
+
     /// Get aggregate pool stats for dashboards.
     pub async fn stats(&self) -> serde_json::Value {
         let web = self.web_pool.read().await;
@@ -522,11 +535,6 @@ impl PoolManager {
         true
     }
 
-    /// Check if this is the creator's machine (has the creator key).
-    /// Only the creator can modify SafeNet code without triggering self-destruct.
-    pub fn is_creator_machine() -> bool {
-        crate::network::creator_key::creator_key_exists()
-    }
 }
 
 
