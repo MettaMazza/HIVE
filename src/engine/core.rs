@@ -287,6 +287,15 @@ impl Engine {
 
         tracing::info!("HIVE is active. Apis is listening.");
 
+        // LSP idle reaper — shuts down language servers after 5 minutes of inactivity.
+        // Runs every 60 seconds in the background. Fire-and-forget — panics are isolated.
+        tokio::spawn(async {
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
+                crate::agent::lsp_client::shutdown_idle(300).await;
+            }
+        });
+
         // Autonomy loop: self-event timer after 5 min idle
         let autonomy_handle: Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>> = Arc::new(tokio::sync::Mutex::new(None));
         // PREEMPTION: Track active autonomy ReAct loop so it can be aborted on user messages

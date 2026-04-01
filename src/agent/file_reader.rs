@@ -81,6 +81,26 @@ pub async fn execute_file_reader(
             }
         };
 
+        // Notify LSP about the opened file (non-blocking, best-effort).
+        // This warms up the language server so subsequent definition/reference
+        // queries return faster. Failures are silently ignored.
+        if crate::agent::lsp_client::detect_language(&resolved_path).is_some() {
+            let lsp_path = resolved_path.clone();
+            let lsp_content = content.clone();
+            tokio::spawn(async move {
+                if crate::agent::lsp_client::get_client_for_file(&lsp_path).await.is_ok() {
+                    // We need mutable access to the registry to call did_open
+                    let registry = crate::agent::lsp_client::get_registry();
+                    let mut guard = registry.lock().await;
+                    if let Some(lang) = crate::agent::lsp_client::detect_language(&lsp_path) {
+                        if let Some(client) = guard.get_mut(&lang) {
+                            let _ = client.did_open(&lsp_path, &lsp_content).await;
+                        }
+                    }
+                }
+            });
+        }
+
         let lines: Vec<&str> = content.lines().collect();
         let total_lines = lines.len();
 

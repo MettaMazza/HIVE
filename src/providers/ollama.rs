@@ -256,12 +256,16 @@ impl Provider for OllamaProvider {
             if let Some(cached_b64) = vision_cache::load(url).await {
                 b64_images.push(cached_b64);
             } else if let Ok(resp) = self.client.get(url.as_str()).send().await {
-                if let Ok(bytes) = resp.bytes().await {
-                    use base64::{Engine as _, engine::general_purpose::STANDARD};
-                    let b64 = STANDARD.encode(&bytes);
-                    // Cache for future turns
-                    vision_cache::save(url, &b64).await;
-                    b64_images.push(b64);
+                if resp.status().is_success() {
+                    if let Ok(bytes) = resp.bytes().await {
+                        use base64::{Engine as _, engine::general_purpose::STANDARD};
+                        let b64 = STANDARD.encode(&bytes);
+                        // Cache for future turns
+                        vision_cache::save(url, &b64).await;
+                        b64_images.push(b64);
+                    }
+                } else {
+                    tracing::warn!("[VISION] Failed to fetch image (HTTP {}): {}", resp.status(), url);
                 }
             }
         }

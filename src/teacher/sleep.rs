@@ -141,6 +141,12 @@ impl SleepCycle {
 
     /// Check if it's time for an automatic sleep cycle.
     pub async fn should_auto_sleep(&self) -> bool {
+        let training_enabled = std::env::var("HIVE_TRAINING_ENABLED")
+            .unwrap_or_else(|_| "true".to_string());
+        if training_enabled.to_lowercase() != "true" {
+            return false;
+        }
+
         let last = self.last_sleep.lock().await;
         match *last {
             None => {
@@ -163,6 +169,13 @@ impl SleepCycle {
 
     /// Enter sleep: select best examples, train, wake up.
     pub async fn enter_sleep(&self) -> Result<SleepReport, String> {
+        let training_enabled = std::env::var("HIVE_TRAINING_ENABLED")
+            .unwrap_or_else(|_| "true".to_string());
+        if training_enabled.to_lowercase() != "true" {
+            tracing::info!("💤 [SLEEP] Training is globally disabled via HIVE_TRAINING_ENABLED. Skipping cycle.");
+            return Err("Training is globally disabled".into());
+        }
+
         let start = std::time::Instant::now();
 
         // Acquire training lock

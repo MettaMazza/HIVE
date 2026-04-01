@@ -340,6 +340,7 @@ impl GoalTree {
     // ─── Formatting ────────────────────────────────────────────────────
 
     /// Format the goal tree for injection into the HUD/prompt.
+    /// Uses visual progress bars and checkbox notation for at-a-glance scanning.
     pub async fn format_for_prompt(&self) -> String {
         let data = self.data.lock().await;
         if data.nodes.is_empty() {
@@ -359,10 +360,12 @@ impl GoalTree {
             let priority_label = if root.priority >= 0.8 { "HIGH" }
                 else if root.priority >= 0.5 { "MED" }
                 else { "LOW" };
+            let bar = Self::progress_bar(root.progress);
             out.push_str(&format!(
-                "🎯 [{}] {} (progress: {:.0}%, id: {})\n",
+                "🎯 [{}] {} {} {:.0}% (id: {})\n",
                 priority_label,
                 root.title,
+                bar,
                 root.progress * 100.0,
                 root.id
             ));
@@ -373,6 +376,13 @@ impl GoalTree {
 
     // ─── Internal Helpers ──────────────────────────────────────────────
 
+    /// Render a 10-segment progress bar: [■■■■□□□□□□]
+    fn progress_bar(progress: f64) -> String {
+        let filled = (progress * 10.0).round() as usize;
+        let empty = 10_usize.saturating_sub(filled);
+        format!("[{}{}]", "■".repeat(filled), "□".repeat(empty))
+    }
+
     fn format_children(data: &GoalTreeData, parent_id: &str, out: &mut String, indent: usize) {
         let children: Vec<&GoalNode> = data.nodes.iter()
             .filter(|n| n.parent_id.as_deref() == Some(parent_id))
@@ -380,25 +390,21 @@ impl GoalTree {
 
         for child in children {
             let prefix = "  ".repeat(indent);
-            let icon = match child.status {
-                GoalStatus::Completed => "✅",
-                GoalStatus::Active => "🔄",
-                GoalStatus::Failed => "❌",
-                GoalStatus::Blocked => "🚫",
-                GoalStatus::Pending => "⬜",
+            let checkbox = match child.status {
+                GoalStatus::Completed => "[x]",
+                GoalStatus::Active => "[/]",
+                GoalStatus::Failed => "[!]",
+                GoalStatus::Blocked => "[-]",
+                GoalStatus::Pending => "[ ]",
             };
-            let progress_str = format!(", {:.0}%", child.progress * 100.0);
-            out.push_str(&format!("{}└─ {} {} ({}{}, id: {})\n", prefix, icon, child.title, 
-                match child.status {
-                    GoalStatus::Completed => "DONE",
-                    GoalStatus::Active => "IN PROGRESS",
-                    GoalStatus::Failed => "FAILED",
-                    GoalStatus::Blocked => "BLOCKED",
-                    GoalStatus::Pending => "PENDING",
-                },
-                progress_str,
-                child.id
-            ));
+            // Only show progress percentage for non-leaf nodes or active items
+            let has_children = data.nodes.iter().any(|n| n.parent_id.as_deref() == Some(&child.id));
+            let progress_info = if has_children || matches!(child.status, GoalStatus::Active) {
+                format!(" ({:.0}%)", child.progress * 100.0)
+            } else {
+                String::new()
+            };
+            out.push_str(&format!("{}└─ {} {}{} (id: {})\n", prefix, checkbox, child.title, progress_info, child.id));
             Self::format_children(data, &child.id, out, indent + 1);
         }
     }

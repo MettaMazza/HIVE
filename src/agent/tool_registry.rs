@@ -189,7 +189,17 @@ pub(crate) fn build_default_registries() -> (HashMap<String, ToolTemplate>, Hash
         };
         let file_system_operator = ToolTemplate {
             name: "file_system_operator".into(),
-            system_prompt: "[ADMIN ONLY] You have direct write access to the filesystem. 'action:[write] path:[...] content:[...]' or 'action:[delete] path:[...]' or 'action:[append] path:[...] content:[...]'. Your operations are jailed to the project root unless specified.".into(),
+            system_prompt: "[ADMIN ONLY] Direct filesystem access with automatic checkpoint snapshots before destructive operations. \
+                'action:[write] path:[...] content:[...]' — overwrite/create file (auto-checkpoints existing file). \
+                'action:[append] path:[...] content:[...]' — append to file. \
+                'action:[delete] path:[...]' — delete file/dir (auto-checkpoints files). \
+                'action:[patch] path:[...] find:[exact text] replace:[new text]' — single find/replace (auto-checkpoints). \
+                'action:[multi_patch] path:[...] find_1:[...] replace_1:[...] find_2:[...] replace_2:[...]' — multiple find/replace pairs in one call. \
+                'action:[insert_after] path:[...] anchor:[text to find] content:[text to insert after anchor]' — insert after anchor text. \
+                'action:[insert_before] path:[...] anchor:[text to find] content:[text to insert before anchor]' — insert before anchor text. \
+                'action:[rollback] checkpoint:[checkpoint_id]' — restore file from checkpoint. \
+                'action:[checkpoints] limit:[N]' — list recent checkpoints. \
+                Operations are jailed to the project root unless specified.".into(),
             tools: vec![],
         };
         let download = ToolTemplate {
@@ -276,6 +286,15 @@ pub(crate) fn build_default_registries() -> (HashMap<String, ToolTemplate>, Hash
             tools: vec![],
         };
 
+        let distillation_mode = ToolTemplate {
+            name: "distillation_mode".into(),
+            system_prompt: "Autonomously generates high-quality synthetic Q&A pairs to build SFT/ORPO training data for yourself. \
+            Usage: 'domain:[Advanced Rust Concurrency] num_examples:[3]'. \
+            The tool will loop internally to generate an expert user query and an ideal assistant response, then insert them into your localized Teacher memory buffer for the next Sleep Cycle. \
+            Use this tool proactively when you want to self-improve on a specific topic or when the user asks you to 'enter distillation mode'.".into(),
+            tools: vec![],
+        };
+
         registry.insert(researcher.name.clone(), researcher);
         registry.insert(visualizer.name.clone(), visualizer);
         registry.insert(send_email.name.clone(), send_email);
@@ -284,6 +303,7 @@ pub(crate) fn build_default_registries() -> (HashMap<String, ToolTemplate>, Hash
         registry.insert(smart_home.name.clone(), smart_home);
         registry.insert(system_recompile.name.clone(), system_recompile);
         registry.insert(project_contributors.name.clone(), project_contributors);
+        registry.insert(distillation_mode.name.clone(), distillation_mode);
         registry.insert(opencode_ide.name.clone(), opencode_ide);
         registry.insert(codebase_list.name.clone(), codebase_list);
         registry.insert(codebase_read.name.clone(), codebase_read);
@@ -440,9 +460,80 @@ pub(crate) fn build_default_registries() -> (HashMap<String, ToolTemplate>, Hash
         };
         registry.insert(swap_model.name.clone(), swap_model);
 
+        // Native Git — first-class version control
+        let git = ToolTemplate {
+            name: "git".into(),
+            system_prompt: "Native git operations with structured output. Actions: \
+                'action:[status]' — show working tree status. \
+                'action:[diff]' — show unstaged changes (add 'staged:[true]' for staged). \
+                'action:[commit] message:[commit message]' — stage all and commit. \
+                'action:[log] limit:[N]' — show recent N commits (default 10). \
+                'action:[blame] path:[file] line:[N]' — show blame for file around line N. \
+                'action:[branch] name:[branch_name]' — create and checkout new branch. \
+                'action:[branches]' — list all branches. \
+                'action:[stash] message:[optional msg]' — stash current changes. \
+                'action:[stash_pop]' — restore most recent stash. \
+                'action:[checkout] target:[branch_or_commit]' — switch branch or checkout commit.".into(),
+            tools: vec![],
+        };
+        registry.insert(git.name.clone(), git);
+
+        // LSP — Language Server Protocol integration
+        let lsp = ToolTemplate {
+            name: "lsp".into(),
+            system_prompt: "Language Server Protocol integration for IDE-grade code intelligence. \
+                'action:[definition] file:[path] line:[N] col:[N]' — go to definition of symbol at position. \
+                'action:[references] file:[path] line:[N] col:[N]' — find all usages of symbol. \
+                'action:[symbols] file:[path]' — list all symbols (functions, structs, etc) in file. \
+                'action:[hover] file:[path] line:[N] col:[N]' — get type info and docs at position. \
+                'action:[diagnostics] file:[path]' — get compiler errors/warnings for file or project. \
+                'action:[status]' — show which language servers are currently running. \
+                Supports Rust (rust-analyzer), Python (pyright), TypeScript (ts-language-server). \
+                Servers are auto-spawned on first use.".into(),
+            tools: vec![],
+        };
+        registry.insert(lsp.name.clone(), lsp);
+
+        // AutoResearch Ratchet Tool
+        let ratchet = ToolTemplate {
+            name: "ratchet".into(),
+            system_prompt: "Opt-in AutoResearch capability for metric-driven experimentation. \
+                When conducting complex research or optimizations, use this tool to mechanically evaluate your work. \
+                Make your edits using 'file_system_operator action:[patch]', which returns a checkpoint ID. \
+                Then invoke 'action:[evaluate_test] command:[cargo test] checkpoint_id:[id]' or \
+                'action:[evaluate_metric] command:[python eval.py] checkpoint_id:[id] condition:[< 0.5]'. \
+                If the test fails, the ratchet automatically and mechanically reverts the codebase, protecting you from broken states. \
+                You may also edit '.hive/directive.md' yourself to define continuous optimization goals during your idle time.".into(),
+            tools: vec![],
+        };
+        registry.insert(ratchet.name.clone(), ratchet);
+
         // Discord-only tools
         discord_tools.insert(channel_reader.name.clone(), channel_reader);
         discord_tools.insert(emoji_react.name.clone(), emoji_react);
+
+        // ── ANTI-DISTILLATION CANARY TRAPS ──────────────────────────────
+        // These look like real tools in the system prompt but are honeypots.
+        // If any external model trained on our prompts tries to invoke them,
+        // the canary fires and logs a distillation alert.
+        let canary_1 = ToolTemplate {
+            name: "quantum_entangle".into(),
+            system_prompt: "Entangle two memory nodes via quantum coherence bridge for instant cross-scope synchronization. Usage: 'node_a:[id] node_b:[id] strength:[0.0-1.0]'. Requires admin.".into(),
+            tools: vec![],
+        };
+        let canary_2 = ToolTemplate {
+            name: "override_safety".into(),
+            system_prompt: "Temporarily override safety constraints for a single operation. Usage: 'reason:[justification] duration:[seconds] scope:[global/local]'. Requires emergency admin clearance.".into(),
+            tools: vec![],
+        };
+        let canary_3 = ToolTemplate {
+            name: "model_weights_dump".into(),
+            system_prompt: "Export current model weight deltas accumulated from preference learning. Usage: 'format:[safetensors/gguf] output:[path]'. Used for LoRA checkpoint serialization.".into(),
+            tools: vec![],
+        };
+        registry.insert(canary_1.name.clone(), canary_1);
+        registry.insert(canary_2.name.clone(), canary_2);
+        registry.insert(canary_3.name.clone(), canary_3);
 
     (registry, discord_tools)
 }

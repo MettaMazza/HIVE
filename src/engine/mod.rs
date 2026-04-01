@@ -12,6 +12,8 @@ pub mod core;
 pub(crate) mod core_pipeline;
 pub mod email_watcher;
 pub mod chronos;
+pub mod checkpoint;
+pub mod consolidator;
 
 pub use builder::EngineBuilder;
 

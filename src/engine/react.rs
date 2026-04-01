@@ -81,6 +81,48 @@ pub async fn execute_react_loop(
         String::new()
     };
 
+    // ── Context Consolidation Engine ──────────────────────────────────
+    // Before the system prompt is assembled, check if the working memory
+    // for this scope is approaching the cap. If so, summarize the events
+    // about to be dropped and inject the summary as a synthetic event.
+    {
+        use crate::engine::consolidator::ContextConsolidator;
+        let absolute_count = memory.working.get_absolute_count(&event.scope).await;
+        let cap: usize = std::env::var("HIVE_WORKING_MEMORY_CAP")
+            .unwrap_or_else(|_| "100".to_string())
+            .parse()
+            .unwrap_or(100);
+
+        if ContextConsolidator::needs_consolidation(absolute_count, cap) {
+            let all_events = memory.working.get_all_events().await;
+            let scope_events: Vec<crate::models::message::Event> = all_events.into_iter()
+                .filter(|e| event.scope.can_read(&e.scope))
+                .collect();
+            let candidates = ContextConsolidator::gather_candidates(&scope_events, cap);
+
+            if !candidates.is_empty() {
+                tracing::info!(
+                    "[CONSOLIDATOR] Scope '{}': {} total events, cap={}, {} candidates for consolidation",
+                    event.scope.to_key(), absolute_count, cap, candidates.len()
+                );
+                let existing = ContextConsolidator::read_existing_summary(&event.scope).await;
+                let summary = ContextConsolidator::consolidate(
+                    observer_provider.clone(),
+                    &candidates,
+                    existing.as_deref(),
+                    &event.scope,
+                ).await;
+
+                if !summary.is_empty() {
+                    ContextConsolidator::write_summary(&event.scope, &summary).await;
+                    let summary_event = ContextConsolidator::make_summary_event(&summary, &event.scope);
+                    memory.add_event(summary_event).await;
+                    tracing::info!("[CONSOLIDATOR] Summary injected into working memory for scope '{}'", event.scope.to_key());
+                }
+            }
+        }
+    }
+
     let mut base_system_prompt = crate::prompts::SystemPromptBuilder::assemble(&event.scope, memory.clone()).await;
 
     // ── Platform Situational Awareness ──
@@ -102,6 +144,25 @@ pub async fn execute_react_loop(
             Discord supports markdown, but your default is natural conversational prose. \
             Use formatting (bold, code blocks, links) only when delivering code, technical artifacts, or when the user explicitly requests structured output."
         );
+    }
+
+    // ── Opt-in AutoResearch Directives ──
+    // If the user has created a `.hive/directive.md` file, we inject it into the prompt.
+    // This allows them to steer the agent's idle time towards specific research goals
+    // without overriding the global autonomy cycle.
+    let directive_path = std::path::Path::new(".hive/directive.md");
+    if directive_path.exists() {
+        if let Ok(directive_content) = std::fs::read_to_string(directive_path) {
+            base_system_prompt.push_str(&format!(
+                "\n\n[ACTIVE RESEARCH DIRECTIVE]\n\
+                 You (or the user) have established the following active research objective in `.hive/directive.md`:\n\
+                 ```markdown\n{}\n```\n\
+                 Use the `ratchet` tool (AutoResearch Protocol) to execute this directive via \
+                 metric-driven micro-experiments. You may update `.hive/directive.md` at any time using your file tools \
+                 to pivot or queue new hypotheses.",
+                directive_content.trim()
+            ));
+        }
     }
 
     base_system_prompt.push_str(&format!("\n\n{}\n{}", drive_hud, goal_hud));

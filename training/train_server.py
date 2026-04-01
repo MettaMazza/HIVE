@@ -90,7 +90,9 @@ class TrainingHandler(http.server.BaseHTTPRequestHandler):
 
 def run_training(params: dict) -> dict:
     """Execute train_teacher.py with the given parameters on the HOST."""
-    python_bin = os.environ.get("HIVE_PYTHON_BIN", "python3")
+    # Use sys.executable so the server spawns train_teacher with the exact same
+    # python binary that launched the server (which should be python3.12 for MLX MoE)
+    python_bin = os.environ.get("HIVE_PYTHON_BIN", sys.executable)
 
     # Build command from params (mirrors the Rust subprocess call)
     cmd = [python_bin, "training/train_teacher.py"]

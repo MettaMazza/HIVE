@@ -1,7 +1,7 @@
 # 🐝 HIVE Mesh Network — Complete Feature Parity Roadmap
 
 > Every detail needed to make each platform a **1:1 match** with its real-world counterpart.
-> Organised by platform, priority (P0=critical, P1=high, P2=medium, P3=nice-to-have), and estimated effort.
+> Organised by platform, priority (P0=critical, P1=high, P2=medium, P3=nice-to-have), and estimated effort. we also need to add a file sharing core service platform 
 
 ---
 

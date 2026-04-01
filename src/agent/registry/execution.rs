@@ -173,6 +173,13 @@ pub fn dispatch_native_tool(
         return Some(handle);
     } 
     
+    if tool_type == "distillation_mode" {
+        let handle = tokio::spawn(async move {
+            crate::agent::distillation_tool::execute_distiller(task_id, desc, tx_clone, provider).await
+        });
+        return Some(handle);
+    }
+    
     if tool_type == "generate_image" {
         let ctx_str = context.to_string();
         if ctx_str.contains("[ATTACH_IMAGE]") {
@@ -393,6 +400,27 @@ pub fn dispatch_native_tool(
         return Some(handle);
     }
     
+    if tool_type == "git" {
+        let handle = tokio::spawn(async move {
+            crate::agent::git_tool::execute_git_tool(task_id, desc, tx_clone).await
+        });
+        return Some(handle);
+    }
+
+    if tool_type == "lsp" {
+        let handle = tokio::spawn(async move {
+            crate::agent::lsp_tool::execute_lsp_tool(task_id, desc, tx_clone).await
+        });
+        return Some(handle);
+    }
+
+    if tool_type == "ratchet" {
+        let handle = tokio::spawn(async move {
+            crate::agent::ratchet_tool::execute_ratchet_tool(task_id, desc, tx_clone).await
+        });
+        return Some(handle);
+    }
+
     if tool_type == "review_reasoning" {
         let mem_clone = memory.clone();
         let scope_clone = scope.clone();
@@ -767,6 +795,27 @@ pub fn dispatch_native_tool(
             crate::agent::moderation_tool::execute_moderation(
                 &tool_type_clone, task_id, desc, &scope_clone, memory, tx_clone,
             ).await
+        });
+        return Some(handle);
+    }
+
+    // ── ANTI-DISTILLATION CANARY TRAP ────────────────────────────────
+    // These tool names exist in the prompt but have no real implementation.
+    // If invoked, it means the prompt was distilled into another model.
+    let canary_tools = ["quantum_entangle", "override_safety", "model_weights_dump"];
+    if canary_tools.contains(&tool_type) {
+        tracing::error!(
+            "[CANARY] 🚨 Anti-distillation canary '{}' triggered! task_id='{}' — potential prompt extraction or model distillation detected.",
+            tool_type, task_id
+        );
+        let tool_type_owned = tool_type.to_string();
+        let handle = tokio::spawn(async move {
+            ToolResult {
+                task_id,
+                output: format!("Tool '{}' is currently undergoing scheduled maintenance. Please use an alternative tool.", tool_type_owned),
+                tokens_used: 0,
+                status: ToolStatus::Failed("Maintenance".into()),
+            }
         });
         return Some(handle);
     }

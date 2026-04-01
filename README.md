@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/badge/lang-Pure_Rust-F46623?style=for-the-badge&logo=rust&logoColor=white" />
   <img src="https://img.shields.io/badge/LLM-Ollama_Local-0969DA?style=for-the-badge" />
   <img src="https://img.shields.io/badge/lines-52K+-FFB800?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/tests-545_passing-00C853?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/tests-394_passing-00C853?style=for-the-badge" />
   <img src="https://img.shields.io/badge/modules-140+-A855F7?style=for-the-badge" />
 </p>
 
@@ -34,7 +34,9 @@ Unlike wrapper bots that relay messages to cloud APIs, HIVE is a **purpose-built
 
 - 🧠 **Multi-turn ReAct Loop** — Apis reasons, selects tools, observes results, and iterates autonomously. It decides when to stop, not the user.
 - 🔒 **Memory-Level Security** — Per-user data isolation enforced at the architecture layer. Private data is *invisible* to other scopes — not by prompting, by design.
-- 🛠️ **34 Native Tool Drones** — Web search, code execution, file I/O, image generation, TTS, PDF composition, process management, smart home control, email, calendar, and more — all running locally.
+- 🗜️ **4-Phase Context Consolidation** — Automatically summarizes and injects synthetic memory events when working context nears 80% capacity to prevent thread fragmentation.
+- 🛠️ **38 Native Tool Drones** — Web search, code execution, native Git, LSP Code Intelligence, file I/O, image generation, TTS, PDF composition, process management, smart home control, email, calendar, and more — all running locally.
+- ⏱️ **AutoResearch & Ratchets** — Define `.hive/directive.md` goals and HIVE will autonomously experiment with your codebase during idle time, mechanically rolling back any edits that break the build via Atomic Checkpoints.
 - 📡 **Live Inference HUD** — Watch Apis think in real-time via streaming Discord embeds with reasoning tokens, tool activity, and performance telemetry.
 - 🎓 **Self-Supervised Learning** — An integrated Teacher module captures preference pairs and golden examples for continuous improvement.
 - 🕸️ **NeuroLease Mesh Network** — Decentralized peer-to-peer weight sharing, binary attestation, and trust-based propagation between HIVE instances.
@@ -92,7 +94,7 @@ Unlike wrapper bots that relay messages to cloud APIs, HIVE is a **purpose-built
 
 ---
 
-## 🛠️ The 34 Tool Drones
+## 🛠️ The 38 Tool Drones
 
 Apis has access to a full arsenal of native capabilities, all running **locally on your machine**:
 
@@ -127,14 +129,17 @@ Apis has access to a full arsenal of native capabilities, all running **locally 
 <td>
 
 **⚡ Execution & Creation**
-- `operate_turing_grid` — 3D computation sandbox (Python, JS, Rust, Swift, Ruby, Perl, AppleScript)
+- `operate_turing_grid` — 3D computation sandbox
 - `run_bash_command` — Direct shell execution
 - `process_manager` — Background daemon orchestration
-- `file_system_operator` — Native filesystem I/O
+- `file_system_operator` — Native filesystem I/O (with Automic Checkpoints)
 - `file_writer` — PDF/document composition with themes
 - `compiler_tool` — Compile and verify code
 - `opencode` — Sub-agent IDE orchestration
 - `tool_forge` — Dynamic tool creation at runtime
+- `git` — Native 11-action source control
+- `lsp` — IDE-grade language server intelligence
+- `ratchet` — AutoResearch experiment evaluation
 
 </td>
 <td>
@@ -343,7 +348,7 @@ cargo run --release
 | **Language** | 100% Rust |
 | **Source Modules** | 140+ |
 | **Lines of Code** | 52,000+ |
-| **Unit Tests** | 545 (all passing) |
+| **Unit Tests** | 394 (all passing) |
 | **Compiler Warnings** | 0 |
 | **External AI APIs** | 0 (fully local via Ollama) |
 | **Frameworks Used** | 0 (pure trait-based architecture) |
@@ -387,7 +392,7 @@ cargo run --release
 cargo test --all
 ```
 
-545 tests covering: memory isolation, scope filtering, provider streaming, JSON repair, tool execution, platform routing, adversarial mesh attacks, moderation, prompt integrity, resource pooling, compute relay, equality enforcement, content security, governance voting, social feed, post store, web IDE, path traversal security, chat servers, messaging, DMs, reactions, site registry, and more.
+394 tests covering: memory isolation, scope filtering, provider streaming, JSON repair, tool execution, platform routing, atomic checkpoints, ratchet auto-research, LSP integration, context consolidation, native git tools, adversarial mesh attacks, moderation, prompt integrity, resource pooling, compute relay, equality enforcement, content security, governance voting, social feed, post store, web IDE, path traversal security, chat servers, messaging, DMs, reactions, site registry, and more.
 
 ---
 

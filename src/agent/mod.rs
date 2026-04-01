@@ -48,6 +48,7 @@ pub mod calendar_tool;
 pub mod smarthome_tool;
 pub mod compiler_tool;
 pub mod contributors_tool;
+pub mod distillation_tool;
 pub mod contacts_tool;
 pub mod opencode;
 pub mod wallet_tool;
@@ -55,6 +56,10 @@ pub mod credits_tool;
 pub mod nft_tool;
 pub mod deep_think_tool;
 pub mod model_tool;
+pub mod git_tool;
+pub mod lsp_client;
+pub mod lsp_tool;
+pub mod ratchet_tool;
 
 pub mod tool_registry;
 

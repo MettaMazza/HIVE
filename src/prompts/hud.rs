@@ -93,8 +93,14 @@ impl HudData {
             Scope::Private { user_id } => format!("Private (User ID: {})", user_id),
         };
 
+        let msg_count = memory_store.working.get_absolute_count(scope).await;
+        let msg_cap: usize = std::env::var("HIVE_WORKING_MEMORY_CAP")
+            .unwrap_or_else(|_| "100".to_string())
+            .parse()
+            .unwrap_or(100);
         let working_memory_load = format!(
-            "{} / {}",
+            "{}/{} messages | {} / {} tokens",
+            msg_count, msg_cap,
             memory_store.working.current_tokens().await,
             memory_store.working.max_tokens()
         );
@@ -378,7 +384,8 @@ mod tests {
         let hud = HudData::build(&scope, mem).await;
         
         assert_eq!(hud.active_scope, "Private (User ID: user123)");
-        assert!(hud.working_memory_load.ends_with(" / 256000"));
+        assert!(hud.working_memory_load.contains("messages"));
+        assert!(hud.working_memory_load.contains("/ 256000 tokens"));
         assert_eq!(hud.room_roster, None); // Private scope should have no room roster
     }
 
@@ -415,7 +422,8 @@ mod tests {
         let hud = HudData::build(&pub_scope, mem).await;
 
         assert_eq!(hud.active_scope, format!("Public (Broadcast Channel: {} | Active User ID: test_user)", unique_id));
-        assert!(hud.working_memory_load.ends_with(" / 256000"));
+        assert!(hud.working_memory_load.contains("messages"));
+        assert!(hud.working_memory_load.contains("/ 256000 tokens"));
         assert_eq!(hud.scratchpad_content, Some("First noteSecond note\n".to_string()));
         assert_eq!(hud.room_roster, Some("Alice, Bob".to_string()));
     }
@@ -426,7 +434,7 @@ mod tests {
             temporal_metrics: "Current System Time: 2026-03-07T12:00:00Z".to_string(),
             timeline_narratives: String::new(),
             active_scope: "Public (Broadcast Channel)".to_string(),
-            working_memory_load: "100 / 256000".to_string(),
+            working_memory_load: "0/100 messages | 100 / 256000 tokens".to_string(),
             scratchpad_content: Some("Test note".to_string()),
             room_roster: None,
             relevant_lessons: None,
@@ -444,7 +452,7 @@ mod tests {
         let output = format_hud(&data);
         assert!(output.contains("Current System Time: 2026-03-07T12:00:00Z"));
         assert!(output.contains("Active Context Boundary: Public (Broadcast Channel)"));
-        assert!(output.contains("100 / 256000"));
+        assert!(output.contains("0/100 messages | 100 / 256000 tokens"));
         assert!(output.contains("Test note"));
     }
 

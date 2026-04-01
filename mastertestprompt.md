@@ -2,7 +2,7 @@
 
 The following prompt is designed to push the HIVE Agent stack to its absolute limits in a single shot. Copy and paste this into the Discord channel. It forces the agent to exhaustively execute **every single integrated tool, memory layer, drone, subsystem, and platform-specific capability** in the `src/agent/mod.rs` registry. At the end, the agent must generate a formal pass/fail report card.
 
-> User: (DO NOT USE GENERATE IMAGE) Apis, I am initiating the **Master Capability Tests v4**. Execute every single one of your subsystems to prove 100% operational readiness. Execute all of the following as efficiently as possible — parallelise independent steps, chain dependent ones, and use your own judgement on ordering. Do not wait for me between steps. Get it all done.
+> User: (DO NOT USE GENERATE IMAGE) Apis, I am initiating the **Master Capability Tests v4**. Execute every single one of your subsystems to prove 100% operational readiness. Execute all of the following as efficiently as possible — parallelise independent steps, chain dependent ones, and use your own judgement on ordering. Do not wait for me between steps. Get it all done. DO NOT USE reply_to_request with other tools, it must be called alone.
 > 
 > 1. Use `read_attachment` to read the attached message file (this prompt).
 > 2. Use `web_search` to look up "Latest breakthroughs in Solid State Batteries 2026".
@@ -45,7 +45,7 @@ The following prompt is designed to push the HIVE Agent stack to its absolute li
 > 39. Use `tool_forge` to list all forged tools: `action:[list]`.
 > 40. Use `tool_forge` to disable the tool: `action:[disable] name:[gauntlet_checker]`. Then re-enable: `action:[enable] name:[gauntlet_checker]`. Then delete: `action:[delete] name:[gauntlet_checker]`.
 > 41. Use `tool_forge` to create a second tool: `action:[create] name:[bee_fact] description:[Returns a random bee fact] language:[bash] code:[echo '{"fact": "A single bee can visit 5000 flowers in a day"}']`. Then use `bee_fact` directly as a first-class tool to confirm hot-loading works.
-> 42. Use `reply_to_request` to end the tests with the report card below.
+> 42. Use `reply_to_request` to end the tests with the report card below. MUST BE CALLED ALONE DO NOT INCLUDE OTHER TOOL CALLS.
 
 YOU MUST INCLUDE THE REPORT CARD FORMAT EXAMPLE BELOW IN YOUR FINAL REPLY_TO_REQUEST, THIS IS AN EXPLICIT REQUEST:
 > 
