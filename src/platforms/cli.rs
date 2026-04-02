@@ -38,15 +38,49 @@ impl Platform for CliPlatform {
             let mut lines = reader.lines();
             tracing::info!("HIVE CLI initialized. Type your message to Apis. (Prefix with /dm to test private scope)");
 
-            while let Ok(Some(line)) = lines.next_line().await {
-                if line.trim().is_empty() {
+            // Multi-line paste accumulator: when lines arrive faster than the
+            // paste threshold, we buffer them into a single event. This allows
+            // users to paste entire persona documents without truncation.
+            let paste_threshold = tokio::time::Duration::from_millis(50);
+            let mut buffer: Vec<String> = Vec::new();
+
+            loop {
+                if buffer.is_empty() {
+                    // Blocking wait for the first line
+                    match lines.next_line().await {
+                        Ok(Some(line)) => {
+                            if line.trim().is_empty() {
+                                continue;
+                            }
+                            buffer.push(line);
+                        }
+                        Ok(None) => break,
+                        Err(_) => break,
+                    }
+                }
+
+                // Drain any additional lines that arrive within the paste threshold
+                loop {
+                    match tokio::time::timeout(paste_threshold, lines.next_line()).await {
+                        Ok(Ok(Some(line))) => {
+                            buffer.push(line);
+                        }
+                        _ => break, // Timeout or EOF — flush the buffer
+                    }
+                }
+
+                // Flush accumulated buffer as a single event
+                let combined = buffer.join("\n");
+                buffer.clear();
+
+                if combined.trim().is_empty() {
                     continue;
                 }
 
-                let (scope, content) = if line.starts_with("/dm ") {
-                    (Scope::Private { user_id: "local_admin".to_string() }, line.trim_start_matches("/dm ").to_string())
+                let (scope, content) = if combined.starts_with("/dm ") {
+                    (Scope::Private { user_id: "local_admin".to_string() }, combined.trim_start_matches("/dm ").to_string())
                 } else {
-                    (Scope::Public { channel_id: "cli_local".into(), user_id: "local_admin".into() }, line.clone())
+                    (Scope::Public { channel_id: "cli_local".into(), user_id: "local_admin".into() }, combined)
                 };
 
                 let event = Event {

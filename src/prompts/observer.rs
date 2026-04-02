@@ -190,8 +190,6 @@ pub async fn run_skeptic_audit(
 
     // Load the active persona identity for the observer to enforce
     let persona_identity = crate::prompts::identity::get_persona();
-    // Truncate to first 2000 chars to keep observer prompt lean
-    let persona_snippet: String = persona_identity.chars().take(2000).collect();
 
     let prompt = SKEPTIC_AUDIT_PROMPT
         .replace("{currentDatetime}", &current_time)
@@ -199,7 +197,7 @@ pub async fn run_skeptic_audit(
         .replace("{toolContext}", resolved_tool_context)
         .replace("{capabilitiesText}", &capabilities.format_for_prompt(new_event))
         .replace("{responseText}", candidate_text)
-        .replace("{personaIdentity}", &persona_snippet);
+        .replace("{personaIdentity}", &persona_identity);
     
     // STANDALONE AUDIT CALL: The observer runs as a minimal, self-contained inference.
     //
