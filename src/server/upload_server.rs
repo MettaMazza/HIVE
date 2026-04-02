@@ -258,12 +258,9 @@ pub async fn spawn_upload_server(identity: Arc<crate::network::identity::MeshIde
 
         let addr = format!("0.0.0.0:{}", port);
 
-        // Kill any stale process holding this port before binding
-        let _ = std::process::Command::new("fuser")
-            .args(["-k", &format!("{}/tcp", port)])
-            .output();
-        // Brief pause for the OS to release the socket
-        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        // NOTE: Removed fuser -k port cleanup — it kills HIVE's own process
+        // since other servers in the same binary may already hold this port.
+        // SO_REUSEADDR below handles socket reuse instead.
 
         // Bind with SO_REUSEADDR to handle TIME_WAIT sockets
         let socket = match socket2::Socket::new(
