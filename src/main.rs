@@ -47,6 +47,16 @@ pub async fn run_app() {
 
     dotenv::dotenv().ok(); // Load .env file manually first
 
+    // ── First-Time Setup Wizard ─────────────────────────────────────
+    // Intercept boot before anything else. If the user has never completed
+    // setup, the wizard walks them through hardware scanning, model
+    // selection, downloading, and .env configuration.
+    if crate::config::setup_wizard::should_run_setup() {
+        crate::config::setup_wizard::run_setup_wizard().await;
+        // Reload .env after wizard writes it
+        dotenv::dotenv().ok();
+    }
+
     // ── Persisted Model Override ──────────────────────────────────
     // If a model swap was persisted to disk (via /model swap), use it
     // instead of the .env default. Lives in the Docker volume so it

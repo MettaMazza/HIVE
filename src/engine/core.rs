@@ -216,18 +216,29 @@ impl Engine {
 impl Engine {
     #[cfg(not(tarpaulin_include))]
     pub async fn run(mut self) {
+        println!("\n🧠 Loading memory...");
         tracing::info!("Starting HIVE Engine...");
         
         // Load persisted cross-session memory 
         self.memory.init().await;
+        println!("🧠 ✅ Memory loaded.");
         
         let sender = self.event_sender.take().expect("Engine event sender missing");
 
         // Start all platforms
+        println!();
+        println!("📡 Connecting platforms...");
         for (name, platform) in self.platforms.iter() {
-            println!("Initializing platform: {}", name);
+            let display_name = match name.as_str() {
+                "discord" => "🎮 Discord",
+                "cli" => "💻 Terminal CLI",
+                "glasses" => "🕶️  Glasses",
+                _ => name.as_str(),
+            };
             if let Err(e) = platform.start(sender.clone()).await {
-                eprintln!("Failed to start platform {}: {}", name, e);
+                eprintln!("   ❌ {} — {}", display_name, e);
+            } else {
+                println!("   ✅ {}", display_name);
             }
         }
         
@@ -285,7 +296,92 @@ impl Engine {
         let default_sleep_interval = self.config.sleep_interval_secs;
         drop(sender);
 
-        tracing::info!("HIVE is active. Apis is listening.");
+        let persona_name = if crate::prompts::onboarding::should_run_onboarding() {
+            "HIVE CORE".to_string()
+        } else {
+            std::fs::read_to_string(".hive/persona.toml")
+                .ok()
+                .and_then(|s| {
+                    s.lines().find(|l| l.starts_with("name"))
+                        .and_then(|l| l.split('"').nth(1))
+                        .map(String::from)
+                })
+                .unwrap_or_else(|| "Apis".into())
+        };
+        println!();
+        println!("🐝 ═══════════════════════════════════════════════════════");
+        println!("🐝  {} is online.", persona_name);
+        println!("🐝 ═══════════════════════════════════════════════════════");
+        println!();
+        tracing::info!("HIVE is active. {} is listening.", persona_name);
+
+        // ── First-Boot Onboarding Event ──────────────────────────────────────
+        // The setup wizard asks the user where they want onboarding to happen.
+        // Read their choice. If no choice file exists, default to CLI.
+        if crate::prompts::onboarding::should_run_onboarding() {
+            if let Some(ref sender) = autonomy_sender {
+                // Read the user's platform choice (written by setup wizard)
+                let chosen_platform = tokio::fs::read_to_string("memory/core/onboarding_platform.json")
+                    .await
+                    .ok()
+                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                    .and_then(|j| j.get("platform").and_then(|p| p.as_str()).map(String::from))
+                    .unwrap_or_else(|| "cli".into());
+
+                let welcome_event = if chosen_platform == "discord" {
+                    // User chose Discord — use CHAT channel (where they interact)
+                    let channel_id = std::env::var("HIVE_CHAT_CHANNEL")
+                        .or_else(|_| std::env::var("HIVE_TARGET_CHANNEL"))
+                        .unwrap_or_default();
+
+                    if channel_id.is_empty() {
+                        println!("⚠️  Discord chosen but no channel configured — using terminal instead.");
+                        crate::models::message::Event {
+                            platform: "cli".into(),
+                            scope: crate::models::scope::Scope::Private {
+                                user_id: "local_admin".into(),
+                            },
+                            author_name: "System".into(),
+                            author_id: "local_admin".into(),
+                            content: "*** FIRST BOOT — BEGIN ONBOARDING ***".into(),
+                            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                            message_index: None,
+                        }
+                    } else {
+                        println!("🐝 Starting onboarding on Discord (user's choice)...");
+                        let fresh_id = chrono::Utc::now().timestamp_millis();
+                        crate::models::message::Event {
+                            platform: format!("discord:{}:{}:onboarding", channel_id, fresh_id),
+                            scope: crate::models::scope::Scope::Public {
+                                channel_id: channel_id.clone(),
+                                user_id: "local_admin".into(),
+                            },
+                            author_name: "System".into(),
+                            author_id: "local_admin".into(),
+                            content: "*** FIRST BOOT — BEGIN ONBOARDING ***".into(),
+                            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                            message_index: None,
+                        }
+                    }
+                } else {
+                    println!("🐝 First boot — starting onboarding in terminal...");
+                    println!();
+                    crate::models::message::Event {
+                        platform: "cli".into(),
+                        scope: crate::models::scope::Scope::Private {
+                            user_id: "local_admin".into(),
+                        },
+                        author_name: "System".into(),
+                        author_id: "local_admin".into(),
+                        content: "*** FIRST BOOT — BEGIN ONBOARDING ***".into(),
+                        timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                        message_index: None,
+                    }
+                };
+
+                let _ = sender.send(welcome_event).await;
+            }
+        }
 
         // LSP idle reaper — shuts down language servers after 5 minutes of inactivity.
         // Runs every 60 seconds in the background. Fire-and-forget — panics are isolated.
@@ -332,23 +428,64 @@ impl Engine {
             if event.content.trim() == "/clean" || event.content.trim() == "/clear" {
                 if self.capabilities.admin_users.contains(&event.author_id) {
                     tracing::warn!("[ADMIN COMMAND] Executing Factory Memory Wipe initiated by UID: {}", event.author_id);
+
+                    // Phase 1: Wipe all memory subsystems (uses sync I/O internally)
                     self.memory.wipe_all().await;
-                    
+
+                    // Phase 2: Reset temporal tracker (deletes temporal_state.json synchronously)
+                    self.memory.temporal.write().await.reset();
+
+                    // Phase 3: Wipe additional persistence files that live outside the memory/ tree.
+                    // ALL use std::fs (synchronous) to guarantee deletion completes before exit.
+                    let memory_base = self.memory.memory_dir.clone();
+                    let extra_files = [
+                        memory_base.join("mesh_posts.json"),
+                        memory_base.join("portal_sites.json"),
+                        memory_base.join("hive_chat.json"),
+                        memory_base.join("computer_grid.json"),
+                    ];
+                    for f in &extra_files {
+                        let _ = std::fs::remove_file(f);
+                    }
+
+                    // Wipe autonomy logs, training data, and computer runtime
+                    let extra_dirs = [
+                        memory_base.join("autonomy"),
+                        memory_base.join("computer_runtime"),
+                        memory_base.join("vectors"),
+                        memory_base.join("synaptic"),
+                        memory_base.join("moderation"),
+                        memory_base.join("core"),
+                    ];
+                    for d in &extra_dirs {
+                        let _ = std::fs::remove_dir_all(d);
+                    }
+
+                    // Re-create the empty memory directory structure so Docker volumes are clean
+                    let _ = std::fs::create_dir_all(&memory_base);
+
+                    // Also clean training preference/golden files outside memory/
+                    let _ = std::fs::remove_dir_all("training/golden_data");
+                    let _ = std::fs::remove_dir_all("training/preference_data");
+
+                    tracing::warn!("[ADMIN COMMAND] ✅ Full factory reset complete. All files confirmed deleted.");
+
+                    // Send confirmation AFTER all deletions are guaranteed complete
                     let response = Response {
                         platform: event.platform.clone(),
                         target_scope: event.scope.clone(),
-                        text: "🧠 **Factory Reset Complete.** All persistent memory structures and timelines have been securely destroyed. I am completely awake with no prior context.".to_string(),
+                        text: "🧠 **Factory Reset Complete.** All persistent memory structures, timelines, training data, and knowledge graphs have been securely destroyed. I am completely awake with no prior context.".to_string(),
                         is_telemetry: false,
                     };
                     if let Some(platform) = self.platforms.get(response.platform.split(':').next().unwrap_or("")) {
                         let _ = platform.send(response).await;
                     }
-                    // Hard exit to prevent the platform from echoing this completion message back into a fresh timeline.
-                    tracing::info!("Memory wipe complete. Clearing mesh persistence files...");
-                    self.memory.temporal.write().await.reset();
-                    let _ = std::fs::remove_file("memory/mesh_posts.json");
-                    let _ = std::fs::remove_file("memory/portal_sites.json");
-                    let _ = std::fs::remove_file("memory/hive_chat.json");
+
+                    // Brief pause to ensure the Discord message is delivered before process death
+                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+                    // Hard exit — prevents the platform from echoing the completion message
+                    // back into a fresh timeline. Exit code 0 stops the Docker restart loop.
                     tracing::info!("Full factory reset complete. HIVE Engine shutting down.");
                     std::process::exit(0);
                 } else {

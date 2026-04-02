@@ -1,4 +1,5 @@
 pub mod persona;
+pub mod setup_wizard;
 
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};

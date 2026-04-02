@@ -61,9 +61,9 @@ pub struct WellbeingSnapshot {
 pub struct ModerationStore {
     base_dir: PathBuf,
     /// In-memory cache for fast mute checks on every event
-    mutes: RwLock<Vec<MuteEntry>>,
+    pub(crate) mutes: RwLock<Vec<MuteEntry>>,
     /// In-memory cache for fast rate-limit checks
-    rate_limits: RwLock<HashMap<String, RateLimitEntry>>,
+    pub(crate) rate_limits: RwLock<HashMap<String, RateLimitEntry>>,
 }
 
 impl ModerationStore {

@@ -244,6 +244,55 @@ fi
 
 log "✅ Compose: $($COMPOSE_CMD version 2>/dev/null | head -1)"
 
+# ── Step 3.5: Ensure .env exists ────────────────────────────────────
+# Docker-compose needs .env on the host. If it doesn't exist, create it
+# from the example and prompt for essential configuration.
+if [ ! -f ".env" ]; then
+    if [ -f ".env.example" ]; then
+        echo ""
+        warn "No .env file found. Creating from .env.example..."
+        cp .env.example .env
+
+        echo ""
+        echo -e "${BOLD}  🐝 Quick Setup — Just a few things before we start:${NC}"
+        echo ""
+
+        # Ask for Discord token (essential for communication)
+        echo -e "  ${YELLOW}Discord Bot Token${NC} (required for Discord integration)"
+        echo -e "  Get one at: https://discord.com/developers/applications"
+        echo -n "  Token (or press Enter to skip): "
+        read -r DISCORD_TOKEN
+        if [ -n "$DISCORD_TOKEN" ]; then
+            # Use a delimiter that won't appear in tokens
+            sed -i.bak "s|DISCORD_TOKEN=.*|DISCORD_TOKEN=\"$DISCORD_TOKEN\"|" .env
+            rm -f .env.bak
+            log "✅ Discord token saved."
+        else
+            warn "Skipped — you can add it later in .env"
+        fi
+
+        # Ask for admin user ID
+        echo ""
+        echo -e "  ${YELLOW}Your Discord User ID${NC} (for admin access)"
+        echo -e "  Right-click your name in Discord → Copy User ID"
+        echo -n "  User ID (or press Enter to skip): "
+        read -r ADMIN_ID
+        if [ -n "$ADMIN_ID" ]; then
+            sed -i.bak "s|HIVE_ADMIN_USERS=.*|HIVE_ADMIN_USERS=\"$ADMIN_ID\"|" .env
+            rm -f .env.bak
+            log "✅ Admin user set."
+        fi
+
+        echo ""
+        log "📝 Configuration saved to .env"
+        log "   Edit .env anytime to change settings."
+        echo ""
+    else
+        error "No .env or .env.example found. Cannot continue."
+        exit 1
+    fi
+fi
+
 # ── Step 4: Build & Launch ──────────────────────────────────────────
 echo ""
 log "🔨 Building HIVE container (this takes ~5 min first time)..."
@@ -288,12 +337,10 @@ if [ -f "$TRAIN_SCRIPT" ]; then
     log "🧠 Training server starting on http://localhost:8491 (host MLX/Metal)"
 fi
 
-$COMPOSE_CMD up -d --build
-
 echo ""
-log "✅ HIVE is running!"
+log "✅ HIVE is starting!"
 echo ""
-echo -e "  ${BOLD}Your mesh network is live:${NC}"
+echo -e "  ${BOLD}Your mesh network will be live at:${NC}"
 echo ""
 echo -e "  ${GREEN}🏠 HivePortal${NC}    → ${BOLD}http://localhost:${PORTAL_PORT}${NC}  ← START HERE"
 echo -e "  ${GREEN}🌐 HiveSurface${NC}   → http://localhost:3032"
@@ -302,20 +349,25 @@ echo -e "  ${GREEN}💻 Apis Code${NC}     → http://localhost:3033"
 echo -e "  ${GREEN}📖 Apis Book${NC}     → http://localhost:3031"
 echo -e "  ${GREEN}👁️  Panopticon${NC}    → http://localhost:3030"
 echo ""
-echo -e "  ${YELLOW}Commands:${NC}"
-echo -e "    ./launch.sh stop     — Stop HIVE"
-echo -e "    ./launch.sh rebuild  — Rebuild after updates"
-echo -e "    docker logs -f hive-mesh  — View live logs"
+echo -e "  ${YELLOW}Press Ctrl+C to stop HIVE.${NC}"
 echo ""
 
-# ── Step 5: Open browser ───────────────────────────────────────────
-sleep 2
-URL="http://localhost:${PORTAL_PORT}"
-OS="$(uname -s)"
-case "$OS" in
-    Darwin)  open "$URL" 2>/dev/null ;;
-    Linux)   xdg-open "$URL" 2>/dev/null || sensible-browser "$URL" 2>/dev/null ;;
-esac
+# Open browser in background
+(sleep 3 && {
+    URL="http://localhost:${PORTAL_PORT}"
+    OS="$(uname -s)"
+    case "$OS" in
+        Darwin)  open "$URL" 2>/dev/null ;;
+        Linux)   xdg-open "$URL" 2>/dev/null || sensible-browser "$URL" 2>/dev/null ;;
+    esac
+}) &
 
 log "🐝 Welcome to the mesh. You are the internet now."
 echo ""
+
+# ── Launch Docker in FOREGROUND ─────────────────────────────────────
+# CLI is the default interface. Docker stays attached so the user can
+# interact with the setup wizard, onboarding, and see live output.
+# Ctrl+C stops HIVE cleanly.
+$COMPOSE_CMD up --build
+

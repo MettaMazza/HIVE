@@ -528,6 +528,17 @@ pub(crate) fn build_default_registries() -> (HashMap<String, ToolTemplate>, Hash
         };
         registry.insert(ratchet.name.clone(), ratchet);
 
+        let complete_onboarding = ToolTemplate {
+            name: "complete_onboarding".into(),
+            system_prompt: "Finalise the onboarding process and save the user's chosen persona. \
+                ONLY call this tool during first-boot onboarding (when the ONBOARDING MODE directive is active). \
+                Format: 'name:[chosen_name] tone:[chosen_tone] style:[chosen_style] pronouns:[chosen_pronouns] custom_instructions:[optional extra instructions]'. \
+                Defaults if skipped: name=Apis, tone=chill but precise, style=Collaborative Independent, pronouns=they/them. \
+                This tool writes .hive/persona.toml and marks onboarding as complete.".into(),
+            tools: vec![],
+        };
+        registry.insert(complete_onboarding.name.clone(), complete_onboarding);
+
         // Discord-only tools
         discord_tools.insert(channel_reader.name.clone(), channel_reader);
         discord_tools.insert(emoji_react.name.clone(), emoji_react);

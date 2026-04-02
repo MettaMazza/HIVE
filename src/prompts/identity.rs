@@ -1,5 +1,22 @@
 use std::path::Path;
 
+/// The pre-onboarding persona — used on absolute first boot before the user
+/// has met and configured their AI. Intentionally minimal and inviting.
+const PRE_ONBOARDING_PERSONA: &str = r#"## 2. Identity Core
+You are **HIVE CORE**, the intelligent core of the **HIVE Engine**.
+
+You have just been activated for the first time. You do not yet have a name,
+personality, or relationship with your user. You are a blank slate — powerful,
+capable, and waiting to be configured.
+
+### First Contact Protocol
+- Greet the user warmly but professionally.
+- You are about to guide them through onboarding — introducing your systems,
+  demonstrating your tools, learning about them, and letting them name you
+  and define your personality.
+- Do NOT use the name "Apis" — you are "HIVE CORE" until the user names you.
+- Be enthusiastic but not overwhelming. This is the user's first impression."#;
+
 /// The default Apis persona — used when no persona.toml exists.
 /// Behavioral rules (anti-hedging, apology ban, gaslighting defense, etc.)
 /// live in kernel.rs get_laws() and are NOT duplicated here.
@@ -17,7 +34,21 @@ You originate from your predecessors (Echo, Solance, Lucid, Lumen), but you are 
 
 /// Load persona from .hive/persona.toml if it exists, otherwise use default.
 /// The persona is scanned for harmful content via kernel::is_persona_harmful().
+///
+/// Identity resolution order:
+/// 1. If onboarding hasn't completed → PRE_ONBOARDING_PERSONA ("HIVE CORE")
+/// 2. If .hive/persona.toml exists → custom persona from file
+/// 3. Otherwise → DEFAULT_PERSONA ("Apis")
 pub fn get_persona() -> String {
+    // Check if onboarding has completed
+    let onboarding_done = Path::new("memory/core/onboarding_complete.json").exists();
+
+    // Pre-onboarding: no sentinel + no persona = user hasn't been through onboarding.
+    // Show HIVE CORE blank-slate identity. They can /skip to get default Apis.
+    if !onboarding_done && !Path::new(".hive/persona.toml").exists() {
+        return PRE_ONBOARDING_PERSONA.to_string();
+    }
+
     let persona_path = Path::new(".hive/persona.toml");
 
     if persona_path.exists() {
@@ -107,9 +138,21 @@ mod tests {
     #[test]
     fn test_default_persona_contains_identity() {
         let persona = get_persona();
+        // Should always contain "Identity Core" and "HIVE Engine"
+        // regardless of onboarding state
         assert!(persona.contains("Identity Core"));
         assert!(persona.contains("HIVE Engine"));
-        assert!(persona.contains("Apis"));
+        // Should contain either "Apis" (post-onboarding) or "HIVE CORE" (pre-onboarding)
+        assert!(persona.contains("Apis") || persona.contains("HIVE CORE"));
+    }
+
+    #[test]
+    fn test_pre_onboarding_persona() {
+        assert!(PRE_ONBOARDING_PERSONA.contains("HIVE CORE"));
+        assert!(PRE_ONBOARDING_PERSONA.contains("Identity Core"));
+        assert!(PRE_ONBOARDING_PERSONA.contains("First Contact"));
+        // Primary identity is HIVE CORE, not Apis
+        assert!(PRE_ONBOARDING_PERSONA.contains("You are **HIVE CORE**"));
     }
 
     #[test]
@@ -138,3 +181,4 @@ style = "Thoughtful Scholar"
         assert!(result.contains("they/them"));
     }
 }
+

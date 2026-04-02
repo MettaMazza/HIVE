@@ -85,7 +85,8 @@ RUN mkdir -p target/release && cp /usr/local/bin/hive target/release/HIVE
 # Copy configuration files
 COPY .env.example .env
 COPY README.md .
-COPY persona.toml.example .hive/persona.toml
+# Copy persona example as reference (NOT as live persona — onboarding creates that)
+COPY persona.toml.example .hive/persona.toml.example
 
 # Copy Flux scripts (MUST be after WORKDIR so they land at /home/hive/src/computer/)
 COPY src/computer/generate_image.py src/computer/generate_image.py

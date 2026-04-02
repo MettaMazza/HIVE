@@ -277,22 +277,55 @@ impl MemoryStore {
     }
 
     /// Triggers a total factory reset of the memory system (Private, Public, Timelines, etc.)
+    /// Uses synchronous I/O to guarantee filesystem operations complete before process::exit.
     pub async fn wipe_all(&self) {
-        // 1. Wipe Active RAM State
+        tracing::warn!("[MEMORY] ⚠️ FACTORY RESET — wiping ALL memory subsystems...");
+
+        // 1. Wipe ALL in-memory state across every subsystem
         self.working.clear_all().await;
         self.rosters.write().await.clear();
+        self.activity_stream.write().await.clear();
 
-        // 2. Wipe Physical Hard Drive Backups
-        let dir = self.working.get_memory_dir();
-        if let Err(e) = tokio::fs::remove_dir_all(&dir).await {
-            eprintln!("⚠️ Failed standard delete of {:?}: {}. Attempting force wipe...", dir, e);
-            let _ = std::process::Command::new("rm").arg("-rf").arg(&dir).status();
-            // Re-create the dir immediately so it's fresh without hitting Not Found errs
-            let _ = tokio::fs::create_dir_all(&dir).await;
+        // Clear synaptic graph RAM (nodes + edges)
+        {
+            let graph = &self.synaptic;
+            graph.nodes.write().await.clear();
+            graph.edges.write().await.clear();
         }
-        
+
+        // Clear vector index RAM
+        {
+            self.vector_index.entries.write().await.clear();
+            self.vector_index.known_ids.write().await.clear();
+        }
+
+        // Clear moderation RAM
+        {
+            self.moderation.mutes.write().await.clear();
+            self.moderation.rate_limits.write().await.clear();
+        }
+
+        // 2. Wipe Physical Hard Drive — use SYNC I/O so deletions complete
+        //    before the caller does process::exit(). Async tokio::fs races
+        //    with exit and may not flush on Docker overlay filesystems.
+        let dir = self.memory_dir.clone();
+        tracing::warn!("[MEMORY] Deleting memory directory: {:?}", dir);
+
+        if dir.exists() {
+            if let Err(e) = std::fs::remove_dir_all(&dir) {
+                eprintln!("⚠️ Failed std::fs delete of {:?}: {}. Attempting rm -rf...", dir, e);
+                let _ = std::process::Command::new("rm").arg("-rf").arg(&dir).status();
+            }
+        }
+
+        // 3. Re-create empty memory directory so Docker volume mounts
+        //    have a clean mountpoint and the next boot doesn't hit NotFound.
+        let _ = std::fs::create_dir_all(&dir);
+
+        tracing::warn!("[MEMORY] ✅ FACTORY RESET COMPLETE — all persistent memory destroyed.");
         println!("⚠️ FACTORY RESET EXECUTED: All persistent memory has been wiped.");
-    }    
+    }
+
     /// Builds a compact narrative of all public interactions currently in working memory.
     /// Used to give Apis context about her day's work when entering autonomy mode.
     pub async fn get_public_narrative(&self) -> String {
@@ -429,7 +462,6 @@ mod tests {
     async fn test_memorystore_wipe_all() {
         let test_dir = std::env::temp_dir().join(format!("hive_store_wipe_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
         let store = MemoryStore::new(Some(test_dir.clone()));
-        // Since get_memory_dir is hardcoded to "memory" here, we'll let it create it then wipe it.
         let pub_scope = Scope::Public { channel_id: "test".into(), user_id: "test".into() };
         let event = Event {
             platform: "test".into(),
@@ -441,10 +473,13 @@ mod tests {
             message_index: None,
         };
 
+        // Add data to multiple subsystems
         store.add_event(event).await;
+        store.synaptic.store("TestConcept", "test data").await;
         
         // Ensure it has data
         assert_eq!(store.get_working_history(&pub_scope).await.len(), 1);
+        assert_eq!(store.synaptic.stats().await.0, 1);
         
         // Wipe it all
         store.wipe_all().await;
@@ -452,8 +487,19 @@ mod tests {
         // Verify WorkingMemory RAM is cleared
         assert_eq!(store.get_working_history(&pub_scope).await.len(), 0);
         
-        // Verify working directory was unlinked
-        assert!(!test_dir.exists());
+        // Verify synaptic graph RAM is cleared
+        assert_eq!(store.synaptic.stats().await.0, 0);
+        
+        // Verify vector index RAM is cleared
+        assert_eq!(store.vector_index.len().await, 0);
+        
+        // Directory exists but is empty (re-created for Docker volume mounts)
+        assert!(test_dir.exists());
+        let entries: Vec<_> = std::fs::read_dir(&test_dir).unwrap().collect();
+        assert_eq!(entries.len(), 0, "Memory dir should be empty after wipe");
+        
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&test_dir);
     }
 
     #[tokio::test]

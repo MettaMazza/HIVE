@@ -3,6 +3,7 @@ pub mod identity;
 pub mod hud;
 pub mod observer;
 pub mod genesis;
+pub mod onboarding;
 
 use crate::models::scope::Scope;
 use crate::memory::MemoryStore;
@@ -30,8 +31,16 @@ impl SystemPromptBuilder {
         let identity_string = identity::get_persona();
 
         // Observer is NOT concatenated here; it runs as a separate 1:1 interceptor hook.
-        // Assembly order: HUD → SAFETY LAWS → KERNEL → GENESIS → PERSONA
-        format!("{}\n\n{}\n\n{}\n\n{}\n\n{}", hud_string, safety_laws, kernel_string, genesis_string, identity_string)
+        // Assembly order: HUD → SAFETY LAWS → KERNEL → GENESIS → PERSONA → [ONBOARDING]
+        let mut prompt = format!("{}\n\n{}\n\n{}\n\n{}\n\n{}", hud_string, safety_laws, kernel_string, genesis_string, identity_string);
+
+        // Inject onboarding directives on first boot (before user has completed onboarding)
+        if onboarding::should_run_onboarding() {
+            prompt.push_str("\n\n");
+            prompt.push_str(onboarding::get_onboarding_directives());
+        }
+
+        prompt
     }
 }
 

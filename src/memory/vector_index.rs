@@ -33,9 +33,9 @@ pub struct VectorEntry {
 /// In-memory vector store with cosine similarity search.
 #[derive(Debug)]
 pub struct VectorIndex {
-    entries: RwLock<Vec<VectorEntry>>,
+    pub(crate) entries: RwLock<Vec<VectorEntry>>,
     /// Set of known IDs for fast dedup checks
-    known_ids: RwLock<std::collections::HashSet<String>>,
+    pub(crate) known_ids: RwLock<std::collections::HashSet<String>>,
     dir: Option<PathBuf>,
 }
 

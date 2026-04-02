@@ -421,6 +421,51 @@ pub fn dispatch_native_tool(
         return Some(handle);
     }
 
+    if tool_type == "complete_onboarding" {
+        let handle = tokio::spawn(async move {
+            if let Some(ref tx) = tx_clone {
+                let _ = tx.send("🐝 Finalising onboarding and saving persona...\n".into()).await;
+            }
+
+            // Extract persona parameters from description
+            let name = crate::agent::preferences::extract_tag(&desc, "name:")
+                .unwrap_or_else(|| "Apis".into());
+            let tone = crate::agent::preferences::extract_tag(&desc, "tone:")
+                .unwrap_or_else(|| "chill but precise".into());
+            let style = crate::agent::preferences::extract_tag(&desc, "style:")
+                .unwrap_or_else(|| "Collaborative Independent".into());
+            let pronouns = crate::agent::preferences::extract_tag(&desc, "pronouns:")
+                .unwrap_or_else(|| "they/them".into());
+            let custom = crate::agent::preferences::extract_tag(&desc, "custom_instructions:")
+                .unwrap_or_default();
+
+            // Write persona.toml
+            crate::prompts::onboarding::write_persona(&name, &tone, &style, &pronouns, &custom);
+
+            // Mark onboarding complete
+            crate::prompts::onboarding::complete_onboarding();
+
+            let output = format!(
+                "✅ Onboarding complete!\n\n\
+                 **Persona saved to .hive/persona.toml:**\n\
+                 - Name: {}\n\
+                 - Tone: {}\n\
+                 - Style: {}\n\
+                 - Pronouns: {}\n\n\
+                 Your identity will take effect on the next message. Welcome to the HIVE! 🐝",
+                name, tone, style, pronouns
+            );
+
+            ToolResult {
+                task_id,
+                output,
+                tokens_used: 0,
+                status: ToolStatus::Success,
+            }
+        });
+        return Some(handle);
+    }
+
     if tool_type == "review_reasoning" {
         let mem_clone = memory.clone();
         let scope_clone = scope.clone();

@@ -40,9 +40,9 @@ fn default_synaptic_origin() -> String { "local".to_string() }
 #[derive(Debug)]
 pub struct Neo4jGraph {
     /// In-memory graph: concept_name (lowercased) → node
-    nodes: RwLock<HashMap<String, SynapticNode>>,
+    pub(crate) nodes: RwLock<HashMap<String, SynapticNode>>,
     /// Edges between concepts
-    edges: RwLock<Vec<SynapticEdge>>,
+    pub(crate) edges: RwLock<Vec<SynapticEdge>>,
     /// Directory for persistence
     dir: Option<PathBuf>,
 }
