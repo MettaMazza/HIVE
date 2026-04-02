@@ -365,9 +365,9 @@ echo ""
 log "🐝 Welcome to the mesh. You are the internet now."
 echo ""
 
-# ── Launch Docker in FOREGROUND ─────────────────────────────────────
-# CLI is the default interface. Docker stays attached so the user can
-# interact with the setup wizard, onboarding, and see live output.
+# ── Launch Docker with interactive terminal ─────────────────────────
+# 'docker compose run' attaches stdin so the setup wizard can accept
+# keyboard input. --service-ports exposes all ports defined in compose.
 # Ctrl+C stops HIVE cleanly.
-$COMPOSE_CMD up --build
-
+$COMPOSE_CMD build
+$COMPOSE_CMD run --rm --service-ports hive
