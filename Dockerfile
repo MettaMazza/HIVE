@@ -109,6 +109,9 @@ RUN mkdir -p memory .hive training logs && \
     chown -R hive:hive /home/hive
 COPY training/*.py training/
 
+# Copy Ernos identity — loaded verbatim as the persona on every boot
+COPY ernie-backup.txt .hive/persona.txt
+
 # Final ownership pass — covers cargo/rustup toolchain + all working dirs
 RUN chown -R hive:hive /home/hive/training /home/hive/target \
     /usr/local/cargo /usr/local/rustup
