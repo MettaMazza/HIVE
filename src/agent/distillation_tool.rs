@@ -54,28 +54,45 @@ pub async fn execute_distiller(
         num_examples = 1;
     }
 
-    // Dynamic Expert Provider Selection: 
-    // Prioritize API keys if they exist, otherwise fallback to a larger local model.
-    let expert_provider: Box<dyn Provider> = if std::env::var("ANTHROPIC_API_KEY").is_ok() {
+    // Dynamic Expert Provider Selection:
+    // Priority: 1) HIVE_DISTILL_EXPERT env override  2) API keys (Anthropic/OpenAI)
+    //           3) Autodetect largest local Ollama model  4) Fall back to HIVE_MODEL
+    let explicit_expert = std::env::var("HIVE_DISTILL_EXPERT").ok().filter(|s| !s.is_empty());
+
+    let expert_provider: Box<dyn Provider> = if let Some(ref model) = explicit_expert {
+        // Explicit override — use exactly what the user specified
+        Box::new(crate::providers::ollama::OllamaProvider::with_model(model, "Distiller".to_string()))
+    } else if std::env::var("ANTHROPIC_API_KEY").is_ok() {
         if let Ok(p) = crate::providers::anthropic::AnthropicProvider::new(60, "Distiller".to_string()) {
             Box::new(p)
         } else {
-            let expert_model = std::env::var("HIVE_DISTILL_EXPERT").unwrap_or_else(|_| "llama3.1:70b".to_string());
-            Box::new(crate::providers::ollama::OllamaProvider::with_model(&expert_model, "Distiller".to_string()))
+            Box::new(crate::providers::ollama::OllamaProvider::with_model(
+                &autodetect_largest_model().await, "Distiller".to_string(),
+            ))
         }
     } else if std::env::var("OPENAI_API_KEY").is_ok() {
         if let Ok(p) = crate::providers::openai::OpenAiProvider::new(60, "Distiller".to_string()) {
             Box::new(p)
         } else {
-            let expert_model = std::env::var("HIVE_DISTILL_EXPERT").unwrap_or_else(|_| "llama3.1:70b".to_string());
-            Box::new(crate::providers::ollama::OllamaProvider::with_model(&expert_model, "Distiller".to_string()))
+            Box::new(crate::providers::ollama::OllamaProvider::with_model(
+                &autodetect_largest_model().await, "Distiller".to_string(),
+            ))
         }
     } else {
-        let expert_model = std::env::var("HIVE_DISTILL_EXPERT").unwrap_or_else(|_| "llama3.1:70b".to_string());
-        Box::new(crate::providers::ollama::OllamaProvider::with_model(&expert_model, "Distiller".to_string()))
+        Box::new(crate::providers::ollama::OllamaProvider::with_model(
+            &autodetect_largest_model().await, "Distiller".to_string(),
+        ))
     };
 
-    let expert_model_name = std::env::var("HIVE_DISTILL_EXPERT").unwrap_or_else(|_| "llama3.1:70b/API".to_string());
+    let expert_model_name = if let Some(ref model) = explicit_expert {
+        model.clone()
+    } else if std::env::var("ANTHROPIC_API_KEY").is_ok() {
+        "Anthropic API".to_string()
+    } else if std::env::var("OPENAI_API_KEY").is_ok() {
+        "OpenAI API".to_string()
+    } else {
+        format!("{} (autodetected)", autodetect_largest_model().await)
+    };
 
     if let Some(ref tx) = telemetry_tx {
         let _ = tx.send(format!("🧪 Entering Distillation Mode. \n  Expert generating queries: {}\n  Assistant responding: default\nGenerating {} synthetic examples for domain: '{}'...\n", expert_model_name, num_examples, domain)).await;
@@ -193,5 +210,61 @@ pub async fn execute_distiller(
         output: result_msg,
         tokens_used: 0,
         status: ToolStatus::Success,
+    }
+}
+
+/// Query the local Ollama instance for all available models and return the
+/// largest one by file size. This ensures the distiller always uses the most
+/// capable local model without requiring hardcoded model names.
+/// Falls back to HIVE_MODEL (the main inference model) if Ollama is unreachable.
+async fn autodetect_largest_model() -> String {
+    let base_url = std::env::var("HIVE_OLLAMA_URL")
+        .unwrap_or_else(|_| "http://localhost:11434".to_string());
+    let url = format!("{}/api/tags", base_url);
+
+    let fallback = std::env::var("HIVE_MODEL")
+        .unwrap_or_else(|_| "qwen3.5:35b".to_string());
+
+    let resp = match reqwest::Client::new()
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("[DISTILL] Could not reach Ollama at {} for model autodetection: {}. Falling back to {}", url, e, fallback);
+            return fallback;
+        }
+    };
+
+    let body: serde_json::Value = match resp.json().await {
+        Ok(b) => b,
+        Err(_) => return fallback,
+    };
+
+    // Parse models array, pick the one with the largest size
+    let best = body["models"]
+        .as_array()
+        .and_then(|arr| {
+            arr.iter()
+                .filter_map(|m| {
+                    let name = m["name"].as_str()?;
+                    let size = m["size"].as_u64().unwrap_or(0);
+                    Some((name.to_string(), size))
+                })
+                .max_by_key(|(_, size)| *size)
+        });
+
+    match best {
+        Some((name, size)) => {
+            let gb = size as f64 / 1_073_741_824.0;
+            tracing::info!("[DISTILL] 🔍 Autodetected largest local model: {} ({:.1} GB)", name, gb);
+            name
+        }
+        None => {
+            tracing::warn!("[DISTILL] No models found on Ollama. Falling back to {}", fallback);
+            fallback
+        }
     }
 }
