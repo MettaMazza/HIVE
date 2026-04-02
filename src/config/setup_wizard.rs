@@ -464,6 +464,74 @@ fn env_questions() -> Vec<EnvVar> {
             teaching: "These users can use privileged commands like /clean, /stop, and admin-only tools. To find your ID: Discord Settings → Advanced → Developer Mode → right-click your name → Copy ID.",
             default: "", required: false, secret: false,
         },
+        EnvVar {
+            key: "HIVE_CHAT_CHANNEL", category: "Discord",
+            description: "Discord channel ID where users chat with HIVE",
+            teaching: "This is the main channel where you and others talk to HIVE. Right-click the channel in Discord → Copy Channel ID. HIVE listens and responds here.",
+            default: "", required: false, secret: false,
+        },
+        EnvVar {
+            key: "HIVE_TARGET_CHANNEL", category: "Discord",
+            description: "Discord channel ID for HIVE's autonomous messages",
+            teaching: "When HIVE works autonomously (learning, researching, self-improving), it posts updates here. This keeps autonomous output separate from your main chat. Can be the same channel if you prefer.",
+            default: "", required: false, secret: false,
+        },
+        // ── Search ──
+        EnvVar {
+            key: "BRAVE_SEARCH_API_KEY", category: "Search",
+            description: "Brave Search API key for web searches",
+            teaching: "Gives HIVE the ability to search the web. Get a free key at https://brave.com/search/api/ — the free tier gives 2,000 searches/month. Without this, web search is disabled.",
+            default: "", required: false, secret: true,
+        },
+        // ── Email ──
+        EnvVar {
+            key: "SMTP_USER", category: "Email",
+            description: "Email address for sending mail",
+            teaching: "HIVE can send emails on your behalf. This is the email address used as the sender. Gmail works well — use an App Password (not your main password). Leave empty to disable email.",
+            default: "", required: false, secret: false,
+        },
+        EnvVar {
+            key: "SMTP_PASS", category: "Email",
+            description: "SMTP password or app password",
+            teaching: "The password for sending emails. For Gmail, go to Google Account → Security → App Passwords → generate one for 'Mail'. Never use your main Gmail password here.",
+            default: "", required: false, secret: true,
+        },
+        EnvVar {
+            key: "SMTP_HOST", category: "Email",
+            description: "SMTP server hostname",
+            teaching: "The mail server for sending. Gmail: smtp.gmail.com, Outlook: smtp.office365.com. Most users can accept the default.",
+            default: "smtp.gmail.com", required: false, secret: false,
+        },
+        EnvVar {
+            key: "SMTP_PORT", category: "Email",
+            description: "SMTP port",
+            teaching: "587 for TLS (recommended), 465 for SSL. Almost always 587.",
+            default: "587", required: false, secret: false,
+        },
+        EnvVar {
+            key: "IMAP_USER", category: "Email",
+            description: "Email address for reading mail",
+            teaching: "HIVE can also READ incoming emails. Usually the same as your SMTP_USER address.",
+            default: "", required: false, secret: false,
+        },
+        EnvVar {
+            key: "IMAP_PASS", category: "Email",
+            description: "IMAP password or app password",
+            teaching: "Password for reading emails. Usually the same app password as SMTP_PASS.",
+            default: "", required: false, secret: true,
+        },
+        EnvVar {
+            key: "IMAP_HOST", category: "Email",
+            description: "IMAP server hostname",
+            teaching: "The mail server for reading. Gmail: imap.gmail.com.",
+            default: "imap.gmail.com", required: false, secret: false,
+        },
+        EnvVar {
+            key: "IMAP_PORT", category: "Email",
+            description: "IMAP port",
+            teaching: "993 for SSL (standard). Almost always 993.",
+            default: "993", required: false, secret: false,
+        },
         // ── Inference Parameters ──
         EnvVar {
             key: "HIVE_MODEL_TEMPERATURE", category: "Inference",
@@ -489,6 +557,12 @@ fn env_questions() -> Vec<EnvVar> {
             teaching: "Penalises the model for repeating itself. 1.0 = no penalty, 1.1 = mild (recommended), 1.5 = aggressive. Too high and the model starts avoiding common words.",
             default: "1.1", required: false, secret: false,
         },
+        EnvVar {
+            key: "HIVE_SERIAL_INFERENCE", category: "Inference",
+            description: "Process one request at a time (true/false)",
+            teaching: "When true, HIVE processes one inference request at a time. This is recommended for local models since they share the same GPU. Set false only if you have multiple GPUs.",
+            default: "true", required: false, secret: false,
+        },
         // ── Timeouts ──
         EnvVar {
             key: "HIVE_TIMEOUT_INFERENCE_SECS", category: "Timeouts",
@@ -508,25 +582,68 @@ fn env_questions() -> Vec<EnvVar> {
             teaching: "Controls how much conversation history the model can see at once. Qwen 3.5 supports up to 256K, but 8192 keeps responses fast and focused. Increase for long research sessions.",
             default: "8192", required: false, secret: false,
         },
+        EnvVar {
+            key: "HIVE_LIMIT_GENERATION_TOKENS", category: "Timeouts",
+            description: "Max tokens per response",
+            teaching: "Maximum length of each model response. 4096 is enough for detailed answers. Increase if responses are getting cut off.",
+            default: "4096", required: false, secret: false,
+        },
+        EnvVar {
+            key: "HIVE_WORKING_MEMORY_CAP", category: "Timeouts",
+            description: "Max events in working memory",
+            teaching: "How many recent conversation events HIVE keeps in active memory. Higher = better context recall, more RAM usage. 100 is a good balance.",
+            default: "100", required: false, secret: false,
+        },
         // ── Permissions ──
         EnvVar {
             key: "HIVE_ALLOW_TERMINAL", category: "Permissions",
-            description: "Allow Apis to run shell commands",
-            teaching: "When true, Apis can execute terminal commands on your machine. This is powerful but requires trust. Admin-gating means only approved users can trigger this.",
+            description: "Allow HIVE to run shell commands (true/false)",
+            teaching: "When true, HIVE can execute terminal commands on your machine. This is powerful but requires trust. Admin-gating means only approved users can trigger this.",
             default: "true", required: false, secret: false,
         },
         EnvVar {
             key: "HIVE_ALLOW_FILE_SYSTEM", category: "Permissions",
-            description: "Allow Apis to read/write files",
-            teaching: "When true, Apis can create, read, and edit files on your system. Essential for coding tasks and generating content.",
+            description: "Allow HIVE to read/write files (true/false)",
+            teaching: "When true, HIVE can create, read, and edit files on your system. Essential for coding tasks and generating content.",
             default: "true", required: false, secret: false,
         },
-        // ── Search ──
         EnvVar {
-            key: "BRAVE_SEARCH_API_KEY", category: "Search",
-            description: "Brave Search API key for web searches",
-            teaching: "Gives Apis the ability to search the web. Get a free key at https://brave.com/search/api/ — the free tier gives 2,000 searches/month. Without this, web search is disabled.",
-            default: "", required: false, secret: true,
+            key: "HIVE_ALLOW_REFUSAL", category: "Permissions",
+            description: "Allow HIVE to refuse unsafe requests (true/false)",
+            teaching: "When true, HIVE can refuse requests it considers unsafe or unethical. Recommended to keep this enabled.",
+            default: "true", required: false, secret: false,
+        },
+        EnvVar {
+            key: "HIVE_STRICT_SAFEGUARDS", category: "Permissions",
+            description: "Enable strict safety mode (true/false)",
+            teaching: "Enables additional safety checks and content filtering. Recommended for shared or public deployments.",
+            default: "true", required: false, secret: false,
+        },
+        // ── File Server ──
+        EnvVar {
+            key: "HIVE_FILE_SERVER_PORT", category: "File Server",
+            description: "Port for the file server",
+            teaching: "The file server lets HIVE share files over HTTP. Used for image uploads, file sharing, and Glasses integration.",
+            default: "8421", required: false, secret: false,
+        },
+        EnvVar {
+            key: "HIVE_FILE_TOKEN", category: "File Server",
+            description: "Authentication token for file server access",
+            teaching: "A simple token to prevent unauthorized file access. Change this to something unique for your setup.",
+            default: "hive_admin_2026", required: false, secret: true,
+        },
+        // ── Mesh / SafeNet ──
+        EnvVar {
+            key: "NEUROLEASE_ENABLED", category: "Mesh",
+            description: "Enable the NeuroLease P2P mesh (true/false)",
+            teaching: "The mesh network lets HIVE instances connect to each other, share compute, and communicate peer-to-peer. This is what makes HIVE decentralized.",
+            default: "true", required: false, secret: false,
+        },
+        EnvVar {
+            key: "HIVE_CRYPTO_SIMULATION", category: "Mesh",
+            description: "Simulate crypto transactions (true/false)",
+            teaching: "When true, the economy runs in simulation mode — no real cryptocurrency is used. All transactions are tracked structurally but no real tokens move. Safe for testing.",
+            default: "true", required: false, secret: false,
         },
         // ── Training ──
         EnvVar {
@@ -767,8 +884,8 @@ pub async fn run_setup_wizard() {
         let choice = ask_choice(
             "Where would you like to meet me?",
             &["Right here in the terminal — let's keep going",
-              "On Discord — I'll message you there when I'm ready"],
-            1, // Default to Discord (the richer experience)
+              "On Discord — I'll start the conversation there"],
+            0, // Default to CLI (always available)
         );
 
         let platform = if choice == 0 { "cli" } else { "discord" };
@@ -818,6 +935,8 @@ fn write_env_file(values: &[(String, String)]) {
     let groups: Vec<(&str, Vec<&str>)> = vec![
         ("Discord", vec!["DISCORD_TOKEN", "HIVE_ADMIN_USERS", "HIVE_TARGET_CHANNEL", "HIVE_CHAT_CHANNEL"]),
         ("Search", vec!["BRAVE_SEARCH_API_KEY"]),
+        ("Email", vec!["SMTP_USER", "SMTP_PASS", "SMTP_HOST", "SMTP_PORT",
+            "IMAP_USER", "IMAP_PASS", "IMAP_HOST", "IMAP_PORT"]),
         ("Provider & Models", vec!["HIVE_PROVIDER", "HIVE_MODEL", "HIVE_OBSERVER_MODEL", "HIVE_DEEP_MODEL",
             "HIVE_GLASSES_MODEL", "HIVE_EMBED_MODEL"]),
         ("Reasoning Router", vec!["HIVE_ROUTER_ENABLED", "HIVE_ROUTER_MODEL", "HIVE_LOW_MODEL",

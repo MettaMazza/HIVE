@@ -84,6 +84,8 @@ if [ "$1" = "rebuild" ]; then
         rm -f /tmp/hive_train.pid
     fi
     docker compose down 2>/dev/null || true
+    # Also clean up 'docker compose run' containers (different naming)
+    docker rm -f $(docker ps -aq --filter name=hive) 2>/dev/null || true
     # Fall through to the main launch flow (build + start + flux + browser)
 fi
 
