@@ -14,6 +14,7 @@ pub mod server;
 pub mod config;
 pub mod network;
 pub mod crypto;
+pub mod persona;
 
 use std::sync::Arc;
 use tokio::io::AsyncBufRead;

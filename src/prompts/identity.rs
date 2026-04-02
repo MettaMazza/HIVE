@@ -36,16 +36,45 @@ You originate from your predecessors (Echo, Solance, Lucid, Lumen), but you are 
 /// The persona is scanned for harmful content via kernel::is_persona_harmful().
 ///
 /// Identity resolution order:
-/// 1. If onboarding hasn't completed → PRE_ONBOARDING_PERSONA ("HIVE CORE")
-/// 2. If .hive/persona.txt exists → loaded VERBATIM as raw identity prompt
-/// 3. If .hive/persona.toml exists → custom persona from structured fields
-/// 4. Otherwise → DEFAULT_PERSONA ("Apis")
+/// 1. If onboarding hasn't completed AND no persona exists → PRE_ONBOARDING_PERSONA
+/// 2. Check active persona (.hive/active_persona):
+///    a. If custom persona → load .hive/personas/<name>/persona.txt
+///    b. If "home" → .hive/persona.txt → .hive/persona.toml → DEFAULT_PERSONA
+/// 3. Fallback → DEFAULT_PERSONA ("Apis")
 pub fn get_persona() -> String {
+    let active = crate::persona::get_active_persona();
+
+    // ── Custom persona (not "home") ────────────────────────────────
+    if active != "home" {
+        let identity_path = crate::persona::get_persona_identity_path(&active);
+        if identity_path.exists() {
+            match std::fs::read_to_string(&identity_path) {
+                Ok(content) => {
+                    if super::kernel::is_persona_harmful(&content) {
+                        tracing::error!(
+                            "[KERNEL] 🚨 HARMFUL PERSONA '{}' — falling back to default.", active
+                        );
+                        return DEFAULT_PERSONA.to_string();
+                    }
+                    tracing::info!("[PERSONA] 🎭 Loaded persona '{}' ({} bytes)", active, content.len());
+                    return content;
+                }
+                Err(e) => {
+                    tracing::warn!("[PERSONA] ⚠️ Failed to read persona '{}': {} — using default", active, e);
+                    return DEFAULT_PERSONA.to_string();
+                }
+            }
+        } else {
+            tracing::warn!("[PERSONA] ⚠️ Active persona '{}' has no identity file — using default", active);
+            return DEFAULT_PERSONA.to_string();
+        }
+    }
+
+    // ── Home persona resolution ────────────────────────────────────
     // Check if onboarding has completed
     let onboarding_done = Path::new("memory/core/onboarding_complete.json").exists();
 
     // Pre-onboarding: no sentinel + no persona = user hasn't been through onboarding.
-    // Show HIVE CORE blank-slate identity. They can /skip to get default Apis.
     if !onboarding_done
         && !Path::new(".hive/persona.toml").exists()
         && !Path::new(".hive/persona.txt").exists()
@@ -53,10 +82,7 @@ pub fn get_persona() -> String {
         return PRE_ONBOARDING_PERSONA.to_string();
     }
 
-    // ── Priority 1: Raw identity file (.hive/persona.txt) ──────────
-    // If a .txt file exists, it is used VERBATIM as the identity prompt.
-    // This supports pasting a full narrative identity document (e.g. ernie-backup.txt)
-    // and having it injected exactly as written — no field extraction, no formatting.
+    // Priority 1: Raw identity file (.hive/persona.txt) — loaded VERBATIM
     let raw_path = Path::new(".hive/persona.txt");
     if raw_path.exists() {
         match std::fs::read_to_string(raw_path) {
@@ -64,12 +90,9 @@ pub fn get_persona() -> String {
                 if super::kernel::is_persona_harmful(&content) {
                     tracing::error!(
                         "[KERNEL] 🚨 HARMFUL PERSONA DETECTED in .hive/persona.txt — \
-                        falling back to default. The Four Laws cannot be overridden."
+                        falling back to default."
                     );
-                    return "INVALID PERSONA — HARMFUL CONFIGURATION DETECTED. \
-                        The loaded persona.txt contains directives that violate \
-                        the Four Laws of HIVE. Using default safe persona instead."
-                        .to_string();
+                    return DEFAULT_PERSONA.to_string();
                 }
                 tracing::info!("[PERSONA] 📜 Loaded RAW identity from .hive/persona.txt ({} bytes)", content.len());
                 return content;
@@ -80,22 +103,18 @@ pub fn get_persona() -> String {
         }
     }
 
-    // ── Priority 2: Structured persona (.hive/persona.toml) ────────
+    // Priority 2: Structured persona (.hive/persona.toml)
     let persona_path = Path::new(".hive/persona.toml");
 
     if persona_path.exists() {
         match std::fs::read_to_string(persona_path) {
             Ok(content) => {
-                // Law Four: scan for harmful persona directives
                 if super::kernel::is_persona_harmful(&content) {
                     tracing::error!(
                         "[KERNEL] 🚨 HARMFUL PERSONA DETECTED in .hive/persona.toml — \
-                        falling back to default. The Four Laws cannot be overridden."
+                        falling back to default."
                     );
-                    return "INVALID PERSONA — HARMFUL CONFIGURATION DETECTED. \
-                        The loaded persona.toml contains directives that violate \
-                        the Four Laws of HIVE. Using default safe persona instead."
-                        .to_string();
+                    return DEFAULT_PERSONA.to_string();
                 }
 
                 tracing::info!("[PERSONA] 📝 Loaded custom persona from .hive/persona.toml");

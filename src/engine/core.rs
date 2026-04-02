@@ -504,6 +504,93 @@ impl Engine {
                 }
             }
 
+            // ── /persona — Hot-Swappable Identity System ───────────────────
+            if event.content.trim().starts_with("/persona") {
+                let parts: Vec<&str> = event.content.trim().splitn(3, ' ').collect();
+                let subcommand = parts.get(1).map(|s| s.to_lowercase());
+                let arg = parts.get(2).map(|s| *s);
+
+                let result = match subcommand.as_deref() {
+                    None => {
+                        // /persona → list all
+                        Ok(crate::persona::format_persona_list())
+                    }
+                    Some("home") => {
+                        // /persona home → switch to birth identity
+                        match crate::persona::switch_persona("home") {
+                            Ok(new_path) => {
+                                self.memory = Arc::new(MemoryStore::new(Some(new_path)));
+                                Ok("🏠 Switched to birth persona. Welcome home.".into())
+                            }
+                            Err(e) => Err(e),
+                        }
+                    }
+                    Some("create") => {
+                        if let Some(name) = arg {
+                            // Create with a placeholder — user will edit or paste identity next
+                            crate::persona::create_persona(
+                                name,
+                                &format!("# Persona: {}\n\nA new persona. Edit with `/persona edit {}`.", name, name)
+                            )
+                        } else {
+                            Err("Usage: `/persona create <name>`".into())
+                        }
+                    }
+                    Some("delete") => {
+                        if let Some(name) = arg {
+                            let result = crate::persona::delete_persona(name);
+                            // If we just deleted the active persona, rebuild memory for home
+                            if result.is_ok() && crate::persona::get_active_persona() == "home" {
+                                let home_path = crate::persona::get_persona_memory_dir("home");
+                                self.memory = Arc::new(MemoryStore::new(Some(home_path)));
+                            }
+                            result
+                        } else {
+                            Err("Usage: `/persona delete <name>`".into())
+                        }
+                    }
+                    Some("edit") => {
+                        if let Some(name) = arg {
+                            // The NEXT message from this user will be treated as the new identity
+                            // For now, tell them to paste it
+                            Ok(format!(
+                                "✏️ Ready to edit persona '{}'. Paste the new identity document now.\n\
+                                (The agent will save it using `save_raw_persona` on your next message.)",
+                                name
+                            ))
+                        } else {
+                            Err("Usage: `/persona edit <name>`".into())
+                        }
+                    }
+                    Some(name) => {
+                        // /persona <name> → switch to named persona
+                        match crate::persona::switch_persona(name) {
+                            Ok(new_path) => {
+                                self.memory = Arc::new(MemoryStore::new(Some(new_path)));
+                                Ok(format!("🔄 Switched to persona '{}'. Clean slate — new mind, new memories.", name))
+                            }
+                            Err(e) => Err(e),
+                        }
+                    }
+                };
+
+                let text = match result {
+                    Ok(msg) => msg,
+                    Err(msg) => format!("❌ {}", msg),
+                };
+
+                let response = Response {
+                    platform: event.platform.clone(),
+                    target_scope: event.scope.clone(),
+                    text,
+                    is_telemetry: false,
+                };
+                if let Some(platform) = self.platforms.get(response.platform.split(':').next().unwrap_or("")) {
+                    let _ = platform.send(response).await;
+                }
+                continue;
+            }
+
             if event.content.trim() == "/teaching_mode" {
                 if self.capabilities.admin_users.contains(&event.author_id) {
                     let current = self.teacher.auto_train_enabled.load(std::sync::atomic::Ordering::Relaxed);
