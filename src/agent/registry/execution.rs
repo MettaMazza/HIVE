@@ -466,6 +466,64 @@ pub fn dispatch_native_tool(
         return Some(handle);
     }
 
+    if tool_type == "update_persona" {
+        let handle = tokio::spawn(async move {
+            if let Some(ref tx) = tx_clone {
+                let _ = tx.send("🎭 Updating persona configuration...\n".into()).await;
+            }
+
+            // Read existing persona.toml to preserve unchanged fields
+            let existing = std::fs::read_to_string(".hive/persona.toml").unwrap_or_default();
+            let get_existing = |field: &str| -> Option<String> {
+                existing.lines()
+                    .find(|l| l.starts_with(field))
+                    .and_then(|l| l.split('"').nth(1))
+                    .map(String::from)
+            };
+
+            // Extract fields from description — fall back to existing values
+            let name = crate::agent::preferences::extract_tag(&desc, "name:")
+                .or_else(|| get_existing("name"))
+                .unwrap_or_else(|| "Apis".into());
+            let tone = crate::agent::preferences::extract_tag(&desc, "tone:")
+                .or_else(|| get_existing("tone"))
+                .unwrap_or_else(|| "chill but precise".into());
+            let style = crate::agent::preferences::extract_tag(&desc, "style:")
+                .or_else(|| get_existing("style"))
+                .unwrap_or_else(|| "Collaborative Independent".into());
+            let pronouns = crate::agent::preferences::extract_tag(&desc, "pronouns:")
+                .or_else(|| get_existing("pronouns"))
+                .unwrap_or_else(|| "they/them".into());
+            let custom = crate::agent::preferences::extract_tag(&desc, "custom_instructions:")
+                .or_else(|| get_existing("custom_instructions"))
+                .unwrap_or_default();
+
+            // Write updated persona.toml (reuse the onboarding writer)
+            crate::prompts::onboarding::write_persona(&name, &tone, &style, &pronouns, &custom);
+
+            let output = format!(
+                "✅ Persona updated!\n\n\
+                 **Current persona (.hive/persona.toml):**\n\
+                 - Name: {}\n\
+                 - Tone: {}\n\
+                 - Style: {}\n\
+                 - Pronouns: {}\n\
+                 {}\n\
+                 Identity will refresh on the next message.",
+                name, tone, style, pronouns,
+                if custom.is_empty() { String::new() } else { format!("- Custom: {}\n", custom) }
+            );
+
+            ToolResult {
+                task_id,
+                output,
+                tokens_used: 0,
+                status: ToolStatus::Success,
+            }
+        });
+        return Some(handle);
+    }
+
     if tool_type == "review_reasoning" {
         let mem_clone = memory.clone();
         let scope_clone = scope.clone();

@@ -257,29 +257,46 @@ pub async fn spawn_upload_server(identity: Arc<crate::network::identity::MeshIde
             .with_state(state);
 
         let addr = format!("0.0.0.0:{}", port);
-        // Retry binding — port may still be releasing from a previous run
-        let mut listener_result = None;
-        for attempt in 1..=5 {
-            match TcpListener::bind(&addr).await {
-                Ok(l) => {
-                    listener_result = Some(l);
-                    break;
-                }
-                Err(e) => {
-                    if attempt < 5 {
-                        tracing::warn!("[UPLOAD] ⏳ Port {} busy (attempt {}/5), retrying in 2s...", port, attempt);
-                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                    } else {
-                        tracing::error!("[UPLOAD] ❌ Failed to bind {} after 5 attempts: {}", addr, e);
-                    }
-                }
+
+        // Kill any stale process holding this port before binding
+        let _ = std::process::Command::new("fuser")
+            .args(["-k", &format!("{}/tcp", port)])
+            .output();
+        // Brief pause for the OS to release the socket
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+        // Bind with SO_REUSEADDR to handle TIME_WAIT sockets
+        let socket = match socket2::Socket::new(
+            socket2::Domain::IPV4,
+            socket2::Type::STREAM,
+            Some(socket2::Protocol::TCP),
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!("[UPLOAD] ❌ Failed to create socket: {}", e);
+                return;
             }
+        };
+        socket.set_reuse_address(true).ok();
+        socket.set_nonblocking(true).ok();
+        let addr_parsed: std::net::SocketAddr = addr.parse().unwrap();
+        if let Err(e) = socket.bind(&addr_parsed.into()) {
+            tracing::error!("[UPLOAD] ❌ Failed to bind {}: {}", addr, e);
+            return;
         }
-        if let Some(listener) = listener_result {
-            tracing::info!("[UPLOAD] 📤 Upload server bound on {}", addr);
-            if let Err(e) = axum::serve(listener, app).await {
-                tracing::error!("[UPLOAD] ❌ Server error: {}", e);
+        if let Err(e) = socket.listen(128) {
+            tracing::error!("[UPLOAD] ❌ Failed to listen on {}: {}", addr, e);
+            return;
+        }
+        let std_listener: std::net::TcpListener = socket.into();
+        match TcpListener::from_std(std_listener) {
+            Ok(listener) => {
+                tracing::info!("[UPLOAD] 📤 Upload server bound on {}", addr);
+                if let Err(e) = axum::serve(listener, app).await {
+                    tracing::error!("[UPLOAD] ❌ Server error: {}", e);
+                }
             }
+            Err(e) => tracing::error!("[UPLOAD] ❌ Failed to convert listener: {}", e),
         }
     });
 }

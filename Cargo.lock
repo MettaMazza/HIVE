@@ -39,6 +39,7 @@ dependencies = [
  "serde_json",
  "serenity",
  "sha2 0.10.9",
+ "socket2 0.5.10",
  "solana-client",
  "solana-sdk",
  "spl-associated-token-account",

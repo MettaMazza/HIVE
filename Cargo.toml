@@ -41,6 +41,7 @@ rcgen = "0.13"
 mdns-sd = "0.12"
 rmp-serde = "1.3"
 lsp-types = "0.97"
+socket2 = "0.5"
 
 # ── HIVE Coin: Solana blockchain + crypto ──────────────────────────
 solana-client = "2"

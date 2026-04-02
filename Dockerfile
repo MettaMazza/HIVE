@@ -34,7 +34,7 @@ FROM debian:trixie-slim AS runtime
 # This layer is separated so that adding system tools later
 # does NOT invalidate the expensive ~2GB PyTorch download.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl libssl3 python3 python3-pip \
+    ca-certificates curl libssl3 python3 python3-pip psmisc procps \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy ONLY requirements files first — this layer only changes when
