@@ -168,6 +168,11 @@ export OLLAMA_BASE_URL="${OLLAMA_URL}"
 export HIVE_FLUX_URL="http://host.docker.internal:8490"
 export HIVE_PYTHON_BIN="python3"
 
+# Kill any stale processes holding ports from a previous run
+for PORT in 3030 3031 3032 3033 3034 3035 3037 3038 8421 8480; do
+    fuser -k "${PORT}/tcp" 2>/dev/null || true
+done
+
 # Run HIVE in a restart loop for self-recompilation support.
 # Exit code 42 = "restart me with new binary" (self-recompile)
 # Any other exit code = normal shutdown (container stops)

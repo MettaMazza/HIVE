@@ -73,10 +73,10 @@ impl Platform for CliPlatform {
     async fn send(&self, response: Response) -> Result<(), PlatformError> {
         match response.target_scope {
             Scope::Public { .. } => {
-                tracing::info!("[\x1b[36mApis (Public)\x1b[0m] {}", response.text);
+                println!("\x1b[36m🐝 {}\x1b[0m", response.text);
             }
             Scope::Private { user_id } => {
-                tracing::info!("[\x1b[35mApis (Private DM to {})\x1b[0m] {}", user_id, response.text);
+                println!("\x1b[35m🐝 (DM → {}) {}\x1b[0m", user_id, response.text);
             }
         }
         Ok(())

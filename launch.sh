@@ -93,6 +93,19 @@ if [ "$1" != "rebuild" ]; then
     banner
 fi
 
+# ── Universal Cleanup: Kill ALL stale HIVE processes and containers ──
+# Runs on every start to prevent port conflicts and zombie containers.
+log "🧹 Cleaning up stale processes..."
+# Kill any existing HIVE containers (compose up AND compose run style)
+docker compose down 2>/dev/null || true
+docker rm -f $(docker ps -aq --filter name=hive) 2>/dev/null || true
+# Free all HIVE-used ports on the host
+for PORT in 3030 3031 3032 3033 3034 3035 3037 3038 8421 8480 8490 8491; do
+    lsof -ti:"$PORT" | xargs kill 2>/dev/null || true
+done
+# Clean up PID files
+rm -f /tmp/hive_flux.pid /tmp/hive_train.pid
+
 # ── Step 1: Check/Install Docker ────────────────────────────────────
 install_docker() {
     OS="$(uname -s)"

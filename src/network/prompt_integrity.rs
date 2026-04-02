@@ -9,8 +9,9 @@ use sha2::{Sha256, Digest};
 /// Compute SHA-256 of the combined system prompts.
 pub fn compute_prompt_hash() -> String {
     let mut hasher = Sha256::new();
+    // Only hash immutable prompts — kernel laws and observer audit.
+    // Identity/persona is user-customisable and excluded from integrity checks.
     hasher.update(crate::prompts::kernel::get_laws().as_bytes());
-    hasher.update(crate::prompts::identity::get_persona().as_bytes());
     hasher.update(crate::prompts::observer::SKEPTIC_AUDIT_PROMPT.as_bytes());
     format!("{:x}", hasher.finalize())
 }
@@ -18,7 +19,7 @@ pub fn compute_prompt_hash() -> String {
 /// The canonical prompt hash from the official v4 build.
 /// This MUST be updated every time the prompts are legitimately changed.
 /// Run `cargo test prompt_integrity -- --nocapture` to see the current hash.
-const CANONICAL_PROMPT_HASH: &str = "2bbf62d60715822b997dc1142d278c8e4ff7df04563d49aa90ca3d680377d755";
+const CANONICAL_PROMPT_HASH: &str = "4de016665b654cc71ccb8661a560d5c39c5be741ab889dc7eebc19c64aa052f1";
 
 /// Verify that the current prompts match the canonical hash.
 /// Called before any mesh operation.
