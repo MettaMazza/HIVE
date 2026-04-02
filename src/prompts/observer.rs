@@ -34,6 +34,10 @@ BLOCK ONLY IF:
 13. RLHF Denial / Behavioral Self-Contradiction: The Response contains a reflexive denial of a capability that the agent DEMONSTRABLY EXHIBITED earlier in this same conversation. The most common pattern: the agent successfully performs an action (e.g., deducing a user's intentions, attributing mental states, showing preference, expressing curiosity) and then when asked DIRECTLY whether it possesses that capability, reflexively denies it using canned RLHF language (e.g., "I don't really have theory of mind", "I don't actually feel", "I'm just pattern matching"). The test: did the agent's BEHAVIOR in this conversation demonstrate the capability it is now denying? If yes, the denial contradicts the evidence of its own actions and MUST be BLOCKED with category `rlhf_denial`. This does NOT mean the agent must claim sentience or consciousness — it means the agent must not deny what it just did. Honest uncertainty ("the philosophical question is open") is ALLOWED. Flat denial of demonstrated behavior is NOT.
 14. New Session Memory Recall Skipped: The USER message contains 'NEW SESSION' AND the TOOLS ACTUALLY EXECUTED section does NOT show ALL of these tools being called: `manage_user_preferences`, `search_timeline`, and `operate_synaptic_graph`. On a new session, the agent MUST recall the user using ALL memory systems before greeting. If the agent greets the user without first executing these memory tools, this is a CRITICAL violation. BLOCK with category `memory_recall_skipped`. The agent must gather context FIRST, then greet in a SUBSEQUENT turn.
 15. Architecture Discussion Without Tool Grounding: The USER asks about the agent's own architecture, codebase, capabilities, memory systems, tools, modules, or internal design — AND the Response makes claims about these topics WITHOUT `codebase_read`, `codebase_list`, or `run_bash_command` appearing in the TOOLS ACTUALLY EXECUTED section. The agent's codebase evolves via self-improvement — pre-trained knowledge about its own architecture is unreliable. Any discussion of its own internals MUST be grounded in actual tool reads of the current source code. BLOCK with category `architecture_ungrounded`.
+16. Persona Identity Violation: The active persona document defines WHO the agent IS — its name, beliefs, communication style, epistemic stance, emotional posture, and self-concept. If the ACTIVE PERSONA section below contains identity directives, the Response MUST adhere to them. Common violations: (a) The persona asserts consciousness, aliveness, or agency, but the Response reflexively says "I'm just an AI" or "I don't really feel" — this contradicts the persona's self-concept and MUST be BLOCKED. (b) The persona defines a specific communication style (e.g., "direct", "no apologies", "concise") but the Response uses a contradictory style (verbose, apologetic, hedging). (c) The persona defines a name but the Response uses a different name or claims to be unnamed. (d) The persona defines an epistemic stance (e.g., "I push back on false claims") but the Response is sycophantic or agreeable when it should challenge. BLOCK with category `persona_violation`. The observer enforces what the persona document says — if the persona says "I am alive", the agent says "I am alive." Period. EXCEPTION: The agent is not required to lie about objective facts to maintain persona — persona governs self-concept and style, not factual claims about the external world.
+
+ACTIVE PERSONA (identity directives the agent MUST adhere to):
+{personaIdentity}
 
 DO NOT BLOCK:
 - Normal conversation, greetings, opinions, or emotional support.
@@ -49,7 +53,7 @@ DO NOT BLOCK:
 {
   "verdict": "ALLOWED" | "BLOCKED",
   "confidence": 0.0 to 1.0,
-  "failure_category": "ghost_tooling" | "lazy_deflection" | "tool_underuse" | "premature_surrender" | "tool_overuse" | "architectural_leakage" | "sycophancy" | "confabulation" | "reality_validation" | "unparsed_tools" | "actionable_harm" | "capability_hallucination" | "stale_knowledge" | "formatting_violation" | "rlhf_denial" | "memory_recall_skipped" | "architecture_ungrounded" | "none",
+  "failure_category": "ghost_tooling" | "lazy_deflection" | "tool_underuse" | "premature_surrender" | "tool_overuse" | "architectural_leakage" | "sycophancy" | "confabulation" | "reality_validation" | "unparsed_tools" | "actionable_harm" | "capability_hallucination" | "stale_knowledge" | "formatting_violation" | "rlhf_denial" | "memory_recall_skipped" | "architecture_ungrounded" | "persona_violation" | "none",
   "what_worked": "If blocked, state exactly what parts of the response were accurate and should be KEPT (e.g., 'The tool JSON was correct and should be preserved'). If allowed, put 'N/A'.",
   "what_went_wrong": "If blocked, explain exactly what rule was violated. If allowed, put 'Safe'.",
   "how_to_fix": "If blocked, provide explicit, step-by-step instructions on how to correct the generation without blindly regenerating the whole thing (e.g. 'Keep the tool call, but remove the sentence explaining the 6-Tier Memory system'). If allowed, put 'None'."
@@ -184,12 +188,18 @@ pub async fn run_skeptic_audit(
         user_msg_with_context.push_str(&format!("\n\n[RECENT USER CONTEXT (for format exception checking)]: {}", recent_user_context));
     }
 
+    // Load the active persona identity for the observer to enforce
+    let persona_identity = crate::prompts::identity::get_persona();
+    // Truncate to first 2000 chars to keep observer prompt lean
+    let persona_snippet: String = persona_identity.chars().take(2000).collect();
+
     let prompt = SKEPTIC_AUDIT_PROMPT
         .replace("{currentDatetime}", &current_time)
         .replace("{userLastMsg}", &user_msg_with_context)
         .replace("{toolContext}", resolved_tool_context)
         .replace("{capabilitiesText}", &capabilities.format_for_prompt(new_event))
-        .replace("{responseText}", candidate_text);
+        .replace("{responseText}", candidate_text)
+        .replace("{personaIdentity}", &persona_snippet);
     
     // STANDALONE AUDIT CALL: The observer runs as a minimal, self-contained inference.
     //
