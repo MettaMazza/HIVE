@@ -42,7 +42,9 @@ pub struct PeerCapabilities {
 impl PeerCapabilities {
     /// Auto-detect local capabilities.
     pub fn detect_local(peer_id: &PeerId) -> Self {
-        let sys = sysinfo::System::new_all();
+        let mut sys = sysinfo::System::new();
+        sys.refresh_cpu_all();
+        sys.refresh_memory();
 
         let cpu_model = sys.cpus()
             .first()

@@ -197,7 +197,18 @@ pub async fn run_app() {
         has_terminal_access: config.allow_terminal,
         has_internet_access: true,
         admin_tools: {
-            let mut tools = vec!["download".into()];
+            // SECURITY: Every tool that can execute code, access the filesystem,
+            // control physical devices, or send external communications MUST be
+            // in this list. Non-admins will be blocked at the react loop gate.
+            let mut tools: Vec<String> = vec![
+                "download".into(),
+                "manage_skill".into(),       // executes Python/Bash scripts
+                "tool_forge".into(),         // creates and runs custom code
+                "system_recompile".into(),   // runs cargo build on host
+                "send_email".into(),         // sends real emails externally
+                "smart_home".into(),         // controls physical IoT devices
+                "opencode".into(),           // full coding agent with execution
+            ];
             if config.allow_terminal {
                 tools.push("run_bash_command".into());
                 tools.push("process_manager".into());

@@ -10,6 +10,18 @@ pub struct LatencyMetrics {
     pub total_ms: u64,
     pub prompt_tokens: u64,
     pub eval_tokens: u64,
+    /// Ollama-reported: time to load the model (nanoseconds). 0 if already loaded.
+    #[serde(default)]
+    pub load_duration_ms: u64,
+    /// Ollama-reported: time to evaluate the prompt / prefill (nanoseconds → ms).
+    #[serde(default)]
+    pub prompt_eval_ms: u64,
+    /// Ollama-reported: time to generate output tokens (nanoseconds → ms).
+    #[serde(default)]
+    pub eval_duration_ms: u64,
+    /// Wall clock: time from HTTP POST send() to HTTP 200 received.
+    #[serde(default)]
+    pub send_to_200_ms: u64,
 }
 
 pub async fn log_latency_to_path(metrics: LatencyMetrics, path: &std::path::Path) {
@@ -31,8 +43,8 @@ pub async fn log_latency_to_path(metrics: LatencyMetrics, path: &std::path::Path
 }
 
 pub async fn log_latency(metrics: LatencyMetrics) {
-    tracing::debug!("[ENGINE:Telemetry] 📊 Latency metric: model={} ttft={}ms total={}ms prompt_tokens={} eval_tokens={} history_len={}",
-        metrics.model, metrics.ttft_ms, metrics.total_ms, metrics.prompt_tokens, metrics.eval_tokens, metrics.history_len);
+    tracing::info!("[ENGINE:Telemetry] 📊 model={} send→200={}ms ollama_load={}ms ollama_prompt_eval={}ms ollama_gen={}ms | prompt_tokens={} eval_tokens={} history_len={}",
+        metrics.model, metrics.send_to_200_ms, metrics.load_duration_ms, metrics.prompt_eval_ms, metrics.eval_duration_ms, metrics.prompt_tokens, metrics.eval_tokens, metrics.history_len);
     log_latency_to_path(metrics, std::path::Path::new("logs/telemetry.jsonl")).await
 }
 
@@ -54,6 +66,10 @@ mod tests {
             total_ms: 50,
             prompt_tokens: 10,
             eval_tokens: 20,
+            load_duration_ms: 0,
+            prompt_eval_ms: 500,
+            eval_duration_ms: 40,
+            send_to_200_ms: 600,
         };
 
         log_latency_to_path(metrics, &file_path).await;

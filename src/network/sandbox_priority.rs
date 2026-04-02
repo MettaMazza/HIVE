@@ -183,21 +183,30 @@ impl PriorityManager {
         )
     }
 
-    /// Spawn the monitoring loop (runs every 5 seconds).
+    /// Spawn the monitoring loop.
+    /// Uses spawn_blocking to avoid stalling the tokio async runtime —
+    /// sysinfo::refresh_all is a heavy blocking syscall on macOS.
     pub fn spawn_monitor(self: Arc<Self>) {
         tokio::spawn(async move {
-            let mut sys = sysinfo::System::new_all();
             loop {
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                tokio::time::sleep(std::time::Duration::from_secs(15)).await;
 
-                sys.refresh_all();
-                let cpu_pct = sys.global_cpu_usage() as f64;
-                let total_ram = sys.total_memory() as f64;
-                let used_ram = sys.used_memory() as f64;
-                let ram_pct = if total_ram > 0.0 { (used_ram / total_ram) * 100.0 } else { 0.0 };
-                let available_gb = (total_ram - used_ram) / (1024.0 * 1024.0 * 1024.0);
+                // Run sysinfo on a blocking thread — never stall the async runtime
+                let snapshot = tokio::task::spawn_blocking(|| {
+                    let mut sys = sysinfo::System::new();
+                    sys.refresh_cpu_all();
+                    sys.refresh_memory();
+                    let cpu_pct = sys.global_cpu_usage() as f64;
+                    let total_ram = sys.total_memory() as f64;
+                    let used_ram = sys.used_memory() as f64;
+                    let ram_pct = if total_ram > 0.0 { (used_ram / total_ram) * 100.0 } else { 0.0 };
+                    let available_gb = (total_ram - used_ram) / (1024.0 * 1024.0 * 1024.0);
+                    (cpu_pct, ram_pct, available_gb)
+                }).await;
 
-                self.update_resources(cpu_pct, ram_pct, available_gb).await;
+                if let Ok((cpu_pct, ram_pct, available_gb)) = snapshot {
+                    self.update_resources(cpu_pct, ram_pct, available_gb).await;
+                }
             }
         });
     }

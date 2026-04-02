@@ -340,6 +340,9 @@ impl Provider for OllamaProvider {
         let mut raw_buffer = String::new();
         let mut final_prompt_tokens = 0;
         let mut final_eval_tokens = 0;
+        let mut ollama_load_ns: u64 = 0;
+        let mut ollama_prompt_eval_ns: u64 = 0;
+        let mut ollama_eval_ns: u64 = 0;
         let mut ttft_duration = tokio::time::Duration::from_secs(0);
         let start_time = tokio::time::Instant::now();
         let mut total_chunks: u64 = 0;
@@ -434,6 +437,10 @@ impl Provider for OllamaProvider {
                     if parsed.get("done").and_then(|v| v.as_bool()).unwrap_or(false) {
                         final_prompt_tokens = parsed.get("prompt_eval_count").and_then(|v| v.as_u64()).unwrap_or(0);
                         final_eval_tokens = parsed.get("eval_count").and_then(|v| v.as_u64()).unwrap_or(0);
+                        // Ollama reports durations in nanoseconds
+                        ollama_load_ns = parsed.get("load_duration").and_then(|v| v.as_u64()).unwrap_or(0);
+                        ollama_prompt_eval_ns = parsed.get("prompt_eval_duration").and_then(|v| v.as_u64()).unwrap_or(0);
+                        ollama_eval_ns = parsed.get("eval_duration").and_then(|v| v.as_u64()).unwrap_or(0);
                         break;
                     }
 
@@ -457,6 +464,10 @@ impl Provider for OllamaProvider {
             total_ms: total_time.as_millis() as u64,
             prompt_tokens: final_prompt_tokens,
             eval_tokens: final_eval_tokens,
+            load_duration_ms: ollama_load_ns / 1_000_000,
+            prompt_eval_ms: ollama_prompt_eval_ns / 1_000_000,
+            eval_duration_ms: ollama_eval_ns / 1_000_000,
+            send_to_200_ms: send_elapsed.as_millis() as u64,
         };
 
         tokio::spawn(async move {

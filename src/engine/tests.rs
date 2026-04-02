@@ -404,6 +404,19 @@ string ending with an unescaped quote \" and an emoji 😊.",
         assert!(result.contains("\\n"), "Newlines were not escaped");
     }
 
+    #[test]
+    fn test_repair_bare_json_with_internal_backticks() {
+        // Regression test: bare JSON containing markdown code fences inside
+        // a string value. The fence stripper must NOT strip these because
+        // the JSON starts with '{' — any backticks are content, not wrappers.
+        let input = "{\n  \"thought\": [\"test\"],\n  \"tasks\": [\n    {\n      \"task_id\": \"1\",\n      \"tool_type\": \"reply_to_request\",\n      \"description\": \"Here is ASCII art:\\n```\\n  ╭───╮\\n  │ • │\\n  ╰───╯\\n```\\nDone.\",\n      \"depends_on\": []\n    }\n  ]\n}";
+        let result = crate::engine::repair::repair_planner_json(input);
+        assert!(!result.is_empty(), "Bare JSON with internal backticks must not be destroyed by fence stripping");
+        // The result should be parseable as an AgentPlan
+        let parsed = serde_json::from_str::<crate::agent::planner::AgentPlan>(&result);
+        assert!(parsed.is_ok(), "Result should be valid JSON: {:?}", parsed.err());
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn test_engine_observer_retry_loop() {
         use crate::providers::MockProvider;

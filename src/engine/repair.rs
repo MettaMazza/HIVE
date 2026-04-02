@@ -9,24 +9,28 @@ pub fn repair_planner_json(raw: &str) -> String {
     // Strip BOM
     s = s.trim_start_matches('\u{feff}').to_string();
 
-    // Check if there is a json code block within conversational text
+    // Strip markdown code fences that WRAP the JSON output.
+    // CRITICAL: Only do this if the text does NOT start with bare JSON.
+    // If it starts with '{' or '[', any backticks found are INSIDE JSON
+    // string values (e.g. markdown code blocks in a description field),
+    // not wrapping the JSON. Stripping them destroys the JSON structure.
     let json_start_marker = "```json";
     let generic_start_marker = "```";
+    let looks_like_bare_json = s.starts_with('{') || s.starts_with('[');
 
-    if let Some(start_idx) = s.find(json_start_marker) {
-        tracing::trace!("[ENGINE:Repair] Found ```json fence at offset {}", start_idx);
-        // Found a ```json block, extract everything after the marker
-        s = s[start_idx + json_start_marker.len()..].to_string();
-        // Find the first closing fence (not rfind)
-        if let Some(end_idx) = s.rfind("```") {
-            s = s[..end_idx].to_string();
-        }
-    } else if let Some(start_idx) = s.find(generic_start_marker) {
-        tracing::trace!("[ENGINE:Repair] Found generic ``` fence at offset {}", start_idx);
-         // Found a generic ``` block
-        s = s[start_idx + generic_start_marker.len()..].to_string();
-        if let Some(end_idx) = s.rfind("```") {
-             s = s[..end_idx].to_string();
+    if !looks_like_bare_json {
+        if let Some(start_idx) = s.find(json_start_marker) {
+            tracing::trace!("[ENGINE:Repair] Found ```json fence at offset {}", start_idx);
+            s = s[start_idx + json_start_marker.len()..].to_string();
+            if let Some(end_idx) = s.rfind("```") {
+                s = s[..end_idx].to_string();
+            }
+        } else if let Some(start_idx) = s.find(generic_start_marker) {
+            tracing::trace!("[ENGINE:Repair] Found generic ``` fence at offset {}", start_idx);
+            s = s[start_idx + generic_start_marker.len()..].to_string();
+            if let Some(end_idx) = s.rfind("```") {
+                 s = s[..end_idx].to_string();
+            }
         }
     }
 

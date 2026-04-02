@@ -436,7 +436,8 @@ impl PoolManager {
 
     /// Get local hardware info for heartbeat.
     pub fn local_hardware() -> (f64, String) {
-        let sys = sysinfo::System::new_all();
+        let mut sys = sysinfo::System::new();
+        sys.refresh_memory();
         let ram_gb = sys.total_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
         let model = std::env::var("HIVE_MODEL")
             .unwrap_or_else(|_| "qwen3.5:32b".to_string());

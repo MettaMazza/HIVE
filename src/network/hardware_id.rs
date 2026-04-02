@@ -47,7 +47,9 @@ pub struct HardwareFingerprint {
 impl HardwareFingerprint {
     /// Collect hardware fingerprint from the local system.
     pub fn collect() -> Self {
-        let sys = sysinfo::System::new_all();
+        let mut sys = sysinfo::System::new();
+        sys.refresh_cpu_all();
+        sys.refresh_memory();
 
         let cpu_model = sys.cpus()
             .first()

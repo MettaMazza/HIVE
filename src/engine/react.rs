@@ -82,46 +82,21 @@ pub async fn execute_react_loop(
     };
 
     // ── Context Consolidation Engine ──────────────────────────────────
-    // Before the system prompt is assembled, check if the working memory
-    // for this scope is approaching the cap. If so, summarize the events
-    // about to be dropped and inject the summary as a synthetic event.
-    {
+    // Check if consolidation is needed, but do NOT run it on the hot path.
+    // The consolidator uses the observer model (9b) while inference uses the
+    // main model (35b). With serial inference, this forces a model swap
+    // (load 9b → consolidate → unload → load 35b) adding 30-60s to TTFT.
+    // Instead, defer consolidation to a fire-and-forget background task that
+    // runs AFTER the react loop completes.
+    let consolidation_needed = {
         use crate::engine::consolidator::ContextConsolidator;
         let absolute_count = memory.working.get_absolute_count(&event.scope).await;
         let cap: usize = std::env::var("HIVE_WORKING_MEMORY_CAP")
             .unwrap_or_else(|_| "100".to_string())
             .parse()
             .unwrap_or(100);
-
-        if ContextConsolidator::needs_consolidation(absolute_count, cap) {
-            let all_events = memory.working.get_all_events().await;
-            let scope_events: Vec<crate::models::message::Event> = all_events.into_iter()
-                .filter(|e| event.scope.can_read(&e.scope))
-                .collect();
-            let candidates = ContextConsolidator::gather_candidates(&scope_events, cap);
-
-            if !candidates.is_empty() {
-                tracing::info!(
-                    "[CONSOLIDATOR] Scope '{}': {} total events, cap={}, {} candidates for consolidation",
-                    event.scope.to_key(), absolute_count, cap, candidates.len()
-                );
-                let existing = ContextConsolidator::read_existing_summary(&event.scope).await;
-                let summary = ContextConsolidator::consolidate(
-                    observer_provider.clone(),
-                    &candidates,
-                    existing.as_deref(),
-                    &event.scope,
-                ).await;
-
-                if !summary.is_empty() {
-                    ContextConsolidator::write_summary(&event.scope, &summary).await;
-                    let summary_event = ContextConsolidator::make_summary_event(&summary, &event.scope);
-                    memory.add_event(summary_event).await;
-                    tracing::info!("[CONSOLIDATOR] Summary injected into working memory for scope '{}'", event.scope.to_key());
-                }
-            }
-        }
-    }
+        ContextConsolidator::needs_consolidation(absolute_count, cap)
+    };
 
     let mut base_system_prompt = crate::prompts::SystemPromptBuilder::assemble(&event.scope, memory.clone()).await;
 
@@ -831,6 +806,47 @@ pub async fn execute_react_loop(
 
     // Reset the stop flag so it doesn't persist and kill the next request
     stop_flag.store(false, Ordering::SeqCst);
+
+    // ── DEFERRED CONSOLIDATION ───────────────────────────────────────
+    // If consolidation was needed, run it NOW (after delivery) in a
+    // fire-and-forget background task. This keeps the observer model's
+    // LLM call off the hot path, avoiding model swap latency.
+    if consolidation_needed {
+        let bg_observer = observer_provider.clone();
+        let bg_memory = memory.clone();
+        let bg_scope = event.scope.clone();
+        tokio::spawn(async move {
+            use crate::engine::consolidator::ContextConsolidator;
+            let cap: usize = std::env::var("HIVE_WORKING_MEMORY_CAP")
+                .unwrap_or_else(|_| "100".to_string())
+                .parse()
+                .unwrap_or(100);
+            let all_events = bg_memory.working.get_all_events().await;
+            let scope_events: Vec<crate::models::message::Event> = all_events.into_iter()
+                .filter(|e| bg_scope.can_read(&e.scope))
+                .collect();
+            let candidates = ContextConsolidator::gather_candidates(&scope_events, cap);
+            if !candidates.is_empty() {
+                tracing::info!(
+                    "[CONSOLIDATOR] Deferred: {} candidates for scope '{}'",
+                    candidates.len(), bg_scope.to_key()
+                );
+                let existing = ContextConsolidator::read_existing_summary(&bg_scope).await;
+                let summary = ContextConsolidator::consolidate(
+                    bg_observer,
+                    &candidates,
+                    existing.as_deref(),
+                    &bg_scope,
+                ).await;
+                if !summary.is_empty() {
+                    ContextConsolidator::write_summary(&bg_scope, &summary).await;
+                    let summary_event = ContextConsolidator::make_summary_event(&summary, &bg_scope);
+                    bg_memory.add_event(summary_event).await;
+                    tracing::info!("[CONSOLIDATOR] Deferred summary injected for scope '{}'", bg_scope.to_key());
+                }
+            }
+        });
+    }
 
     (final_response_text, current_turn, completed_tools)
 }

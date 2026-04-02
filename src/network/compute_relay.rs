@@ -239,7 +239,8 @@ impl ComputeRelay {
 
     /// Generate a heartbeat message for broadcasting.
     pub fn generate_heartbeat(&self) -> (PeerId, String, u32, f64, u32) {
-        let sys = sysinfo::System::new_all();
+        let mut sys = sysinfo::System::new();
+        sys.refresh_memory();
         let ram_gb = sys.total_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
 
         (
