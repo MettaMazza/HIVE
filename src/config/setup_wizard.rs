@@ -712,13 +712,30 @@ pub async fn run_setup_wizard() {
             t.display(i);
         }
 
+        // If re-running setup, detect existing model choice and default to that tier
+        let existing_model = std::fs::read_to_string(".env").ok()
+            .and_then(|content| {
+                content.lines()
+                    .find(|l| l.starts_with("HIVE_MODEL="))
+                    .map(|l| l.trim_start_matches("HIVE_MODEL=").trim().trim_matches('"').to_string())
+            });
+        let default_tier = if let Some(ref model) = existing_model {
+            tiers.iter().position(|t| t.main_model == *model).unwrap_or(1)
+        } else {
+            1 // Default to balanced
+        };
+
+        if existing_model.is_some() {
+            print_info(&format!("Your current model is: {} (option {})", existing_model.as_ref().unwrap(), default_tier + 1));
+        }
+
         println!();
         let choice = ask_choice(
             "Which configuration would you like?",
             &["Conservative — safe, fast, plenty of headroom",
               "Balanced — recommended for most users",
               "Power — maximum quality, uses more resources"],
-            1, // Default to balanced
+            default_tier,
         );
 
         print_success(&format!("Selected: {} — {}", tiers[choice].emoji, tiers[choice].name));
@@ -773,6 +790,27 @@ pub async fn run_setup_wizard() {
 
     let mut env_values: Vec<(String, String)> = Vec::new();
 
+    // Load existing .env values to use as defaults on re-run
+    let existing_env: std::collections::HashMap<String, String> = std::fs::read_to_string(".env")
+        .ok()
+        .map(|content| {
+            content.lines()
+                .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+                .filter_map(|l| {
+                    let mut parts = l.splitn(2, '=');
+                    let key = parts.next()?.trim().to_string();
+                    let val = parts.next()?.trim().trim_matches('"').to_string();
+                    Some((key, val))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if !existing_env.is_empty() {
+        print_info(&format!("Found existing .env with {} settings — using as defaults.", existing_env.len()));
+        println!();
+    }
+
     // Add model settings from the selected tier
     if let Some(ref tier) = selected_tier {
         env_values.push(("HIVE_PROVIDER".into(), "ollama".into()));
@@ -796,19 +834,33 @@ pub async fn run_setup_wizard() {
             current_category = q.category;
         }
 
+        // Use existing .env value as default if available
+        let effective_default = existing_env.get(q.key)
+            .map(|s| s.as_str())
+            .unwrap_or(q.default);
+
         println!("    {BOLD}{}{RESET}", q.key);
         println!("    {DIM}{}{RESET}", q.teaching);
+        if existing_env.contains_key(q.key) && !q.secret {
+            println!("    {CYAN}(current: {}){RESET}", effective_default);
+        } else if existing_env.contains_key(q.key) && q.secret {
+            println!("    {CYAN}(previously set){RESET}");
+        }
         println!();
 
         let value = if auto_mode && !q.required && !q.secret {
-            print_info(&format!("Auto-set to: {}", if q.default.is_empty() { "(skipped)" } else { q.default }));
-            q.default.to_string()
-        } else if q.secret && q.default.is_empty() {
+            print_info(&format!("Auto-set to: {}", if effective_default.is_empty() { "(skipped)" } else { effective_default }));
+            effective_default.to_string()
+        } else if q.secret && effective_default.is_empty() {
             // Always ask for secrets — but make optional
             let v = ask_input(&format!("{} (leave blank to skip):", q.description), "");
             v
+        } else if q.secret && !effective_default.is_empty() {
+            // Secret with existing value — keep it unless user types a new one
+            let v = ask_input(&format!("{} (Enter to keep current):", q.description), "");
+            if v.is_empty() { effective_default.to_string() } else { v }
         } else {
-            ask_input(q.description, q.default)
+            ask_input(q.description, effective_default)
         };
 
         if !value.is_empty() {

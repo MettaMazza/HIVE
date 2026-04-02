@@ -257,14 +257,29 @@ pub async fn spawn_upload_server(identity: Arc<crate::network::identity::MeshIde
             .with_state(state);
 
         let addr = format!("0.0.0.0:{}", port);
-        match TcpListener::bind(&addr).await {
-            Ok(listener) => {
-                tracing::info!("[UPLOAD] 📤 Upload server bound on {}", addr);
-                if let Err(e) = axum::serve(listener, app).await {
-                    tracing::error!("[UPLOAD] ❌ Server error: {}", e);
+        // Retry binding — port may still be releasing from a previous run
+        let mut listener_result = None;
+        for attempt in 1..=5 {
+            match TcpListener::bind(&addr).await {
+                Ok(l) => {
+                    listener_result = Some(l);
+                    break;
+                }
+                Err(e) => {
+                    if attempt < 5 {
+                        tracing::warn!("[UPLOAD] ⏳ Port {} busy (attempt {}/5), retrying in 2s...", port, attempt);
+                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                    } else {
+                        tracing::error!("[UPLOAD] ❌ Failed to bind {} after 5 attempts: {}", addr, e);
+                    }
                 }
             }
-            Err(e) => tracing::error!("[UPLOAD] ❌ Failed to bind {}: {}", addr, e),
+        }
+        if let Some(listener) = listener_result {
+            tracing::info!("[UPLOAD] 📤 Upload server bound on {}", addr);
+            if let Err(e) = axum::serve(listener, app).await {
+                tracing::error!("[UPLOAD] ❌ Server error: {}", e);
+            }
         }
     });
 }

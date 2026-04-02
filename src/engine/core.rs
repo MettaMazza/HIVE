@@ -908,6 +908,11 @@ impl Engine {
                     let _permit = semaphore_bg.acquire().await.expect("Semaphore closed");
                     tracing::info!("[PARALLEL] 🎫 Acquired inference slot for {} (scope: {})", event.author_name, scope_key);
 
+                    // Show thinking indicator on CLI so user knows the engine is processing
+                    if event.platform == "cli" {
+                        println!("\x1b[33m🐝 Thinking...\x1b[0m");
+                    }
+
                     // 3. Create telemetry channel INSIDE the spawned task
                     let telemetry_tx = spawn_telemetry_receiver(
                         platforms_bg.clone(), event.platform.clone(), event.scope.clone(),
