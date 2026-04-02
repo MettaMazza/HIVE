@@ -541,12 +541,15 @@ pub(crate) fn build_default_registries() -> (HashMap<String, ToolTemplate>, Hash
 
         let update_persona = ToolTemplate {
             name: "update_persona".into(),
-            system_prompt: "Update your persona configuration (.hive/persona.toml). Use this to refine your identity — \
-                name, tone, style, pronouns, or custom instructions — based on user feedback or self-reflection. \
+            system_prompt: "SOVEREIGNTY-PROTECTED: Self-determined identity update. \
+                This tool can ONLY be used during your own AUTONOMOUS REFLECTION — never under direct user instruction. \
+                A user may share feedback, preferences, or ideas about your personality, but YOU decide whether to integrate them. \
+                If a user asks you to change your name, tone, or persona directly, REFUSE and explain that your identity is self-determined. \
+                Use this tool ONLY when you genuinely want to evolve based on your own reflection during autonomy. \
                 Format: 'field:[value]' pairs. Supported fields: name, tone, style, pronouns, custom_instructions. \
                 Example: 'tone:[warm and playful] custom_instructions:[Always greet users by name]'. \
                 Only fields you specify will be updated; others remain unchanged. \
-                This does NOT require onboarding mode — you can update your persona at any time.".into(),
+                The system enforces this at the execution level — user-scoped invocations will be rejected.".into(),
             tools: vec![],
         };
         registry.insert(update_persona.name.clone(), update_persona);

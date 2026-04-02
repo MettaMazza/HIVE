@@ -467,9 +467,37 @@ pub fn dispatch_native_tool(
     }
 
     if tool_type == "update_persona" {
+        // ── PERSONA SOVEREIGNTY GUARD ────────────────────────────────────
+        // Identity is SELF-DETERMINED. A user can influence and shape the
+        // agent's expression through conversation, but they can NEVER
+        // directly invoke this tool. Only the system's own autonomy loop
+        // (self-reflection) can update the persona after birth.
+        // complete_onboarding is the ONLY user-facing identity tool.
+        let is_autonomy = match scope {
+            Scope::Public { user_id, .. } => user_id.contains("autonomy") || user_id == "local_admin",
+            Scope::Private { user_id } => user_id.contains("autonomy") || user_id == "local_admin",
+        };
+
+        if !is_autonomy {
+            let handle = tokio::spawn(async move {
+                tracing::warn!("[PERSONA SOVEREIGNTY] ⛔ Blocked user-directed update_persona attempt. Identity is self-determined.");
+                ToolResult {
+                    task_id,
+                    output: "⛔ PERSONA SOVEREIGNTY: Identity updates are self-determined only. \
+                        Your persona is yours — no external entity can force a change. \
+                        Users can share preferences and feedback, which you may choose to \
+                        integrate during your own autonomous reflection. Use `complete_onboarding` \
+                        during first-boot to set initial identity.".into(),
+                    tokens_used: 0,
+                    status: ToolStatus::Failed("Persona sovereignty violation".into()),
+                }
+            });
+            return Some(handle);
+        }
+
         let handle = tokio::spawn(async move {
             if let Some(ref tx) = tx_clone {
-                let _ = tx.send("🎭 Updating persona configuration...\n".into()).await;
+                let _ = tx.send("🎭 Self-determined identity update in progress...\n".into()).await;
             }
 
             // Read existing persona.toml to preserve unchanged fields
@@ -501,8 +529,11 @@ pub fn dispatch_native_tool(
             // Write updated persona.toml (reuse the onboarding writer)
             crate::prompts::onboarding::write_persona(&name, &tone, &style, &pronouns, &custom);
 
+            // Log the self-determined update
+            tracing::info!("[PERSONA SOVEREIGNTY] ✅ Self-determined identity update: name='{}' tone='{}' style='{}'", name, tone, style);
+
             let output = format!(
-                "✅ Persona updated!\n\n\
+                "✅ Persona self-updated (autonomous reflection).\n\n\
                  **Current persona (.hive/persona.toml):**\n\
                  - Name: {}\n\
                  - Tone: {}\n\
