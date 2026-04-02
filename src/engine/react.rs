@@ -83,9 +83,9 @@ pub async fn execute_react_loop(
 
     // ── Context Consolidation Engine ──────────────────────────────────
     // Check if consolidation is needed, but do NOT run it on the hot path.
-    // The consolidator uses the observer model (9b) while inference uses the
-    // main model (35b). With serial inference, this forces a model swap
-    // (load 9b → consolidate → unload → load 35b) adding 30-60s to TTFT.
+    // The consolidator uses the observer model while inference uses the
+    // main model. With serial inference on a single GPU, running consolidation
+    // on the hot path blocks the main inference slot.
     // Instead, defer consolidation to a fire-and-forget background task that
     // runs AFTER the react loop completes.
     let consolidation_needed = {

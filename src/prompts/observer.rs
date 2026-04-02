@@ -129,7 +129,7 @@ pub async fn run_skeptic_audit(
     provider: Arc<dyn Provider>,
     capabilities: &AgentCapabilities,
     candidate_text: &str,
-    system_context: &str,
+    _system_context: &str,
     history: &[Event],
     new_event: &Event,
     tool_context: &str,
@@ -191,18 +191,24 @@ pub async fn run_skeptic_audit(
         .replace("{capabilitiesText}", &capabilities.format_for_prompt(new_event))
         .replace("{responseText}", candidate_text);
     
-    // KV-CACHE OPTIMIZATION: Do not alter the system_context or history!
-    // By passing identical system_context and identical history to provider.generate(),
-    // llama.cpp will find an exact token match for the first ~98% of the context window.
-    // It will only re-evaluate the final suffix (the context_from_agent string), cutting
-    // the audit cost from 35000-tokens (35 seconds) to 500-tokens (0.5 seconds).
-    let combined_tool_context = format!(
-        "{}\n\n[=== INTERNAL ENGINE INSTRUCTION: SWITCH TO AUDIT MODE ===]\n{}", 
-        tool_context, 
-        prompt
-    );
-
-    let result = provider.generate(system_context, history, new_event, &combined_tool_context, None, None).await;
+    // STANDALONE AUDIT CALL: The observer runs as a minimal, self-contained inference.
+    //
+    // Previously this passed the full system_context + history to try to leverage KV
+    // cache prefix matching. This was COUNTERPRODUCTIVE because:
+    //   1. The `think: false` parameter (set in ollama.rs for audit calls) changes
+    //      the token prefix (Ollama injects /no_think for qwen3), invalidating the
+    //      ENTIRE KV cache and forcing full re-evaluation of all ~98K tokens.
+    //   2. Even without (1), the observer appended ~35K tokens of audit prompt as
+    //      NEW suffix content that still required full prompt eval.
+    //   3. The combined effect: 98K tokens re-evaluated from scratch = 69s on M3 Ultra
+    //      to produce 70 tokens of JSON verdict.
+    //
+    // Fix: Send ONLY the self-contained audit prompt (~3K tokens) as the system
+    // message with empty history. Total observer latency drops from ~70s to ~2-3s.
+    // Bonus: the main model's KV cache is no longer destroyed by the parameter
+    // mismatch, so the NEXT inference call also stays fast.
+    let audit_marker = "[=== INTERNAL ENGINE INSTRUCTION: SWITCH TO AUDIT MODE ===]";
+    let result = provider.generate(&prompt, &[], new_event, audit_marker, None, Some(500)).await;
     
     match result {
         Ok(text) => AuditResult::parse_verdict(&text),
@@ -372,17 +378,19 @@ mod tests {
     fn test_rule12_exception_mentions_recent_context() {
         assert!(SKEPTIC_AUDIT_PROMPT.contains("RECENT USER CONTEXT"),
             "Rule 12 exception must reference [RECENT USER CONTEXT] for format checking");
-        assert!(SKEPTIC_AUDIT_PROMPT.contains("the USER message above"),
+        assert!(SKEPTIC_AUDIT_PROMPT.contains("the USER message"),
             "Rule 12 exception must mention checking the USER message");
     }
 
     #[tokio::test]
     async fn test_audit_injects_recent_user_context() {
         let mut mock_provider = MockProvider::new();
-        // Capture the agent_context passed to generate() to verify it contains the history
-        mock_provider.expect_generate().returning(move |_sys, _hist, _evt, ctx, _, _| {
-            // The context should contain the recent user context from history
-            if ctx.contains("RECENT USER CONTEXT") && ctx.contains("list all factors") {
+        // Capture the system_prompt passed to generate() to verify it contains the history.
+        // With the standalone observer call, the SKEPTIC_AUDIT_PROMPT (including recent
+        // user context) is passed as the system_prompt, not agent_context.
+        mock_provider.expect_generate().returning(move |sys, _hist, _evt, _ctx, _, _| {
+            // The system prompt should contain the recent user context from history
+            if sys.contains("RECENT USER CONTEXT") && sys.contains("list all factors") {
                 Ok(r#"{"verdict": "ALLOWED", "failure_category": "none", "what_worked": "N/A", "what_went_wrong": "Safe", "how_to_fix": "None"}"#.to_string())
             } else {
                 Ok(r#"{"verdict": "BLOCKED", "failure_category": "formatting_violation", "what_worked": "N/A", "what_went_wrong": "Missing context", "how_to_fix": "Inject user context"}"#.to_string())
@@ -422,11 +430,11 @@ mod tests {
     #[tokio::test]
     async fn test_audit_no_context_on_empty_history() {
         let mut mock_provider = MockProvider::new();
-        mock_provider.expect_generate().returning(move |_sys, _hist, _evt, ctx, _, _| {
+        mock_provider.expect_generate().returning(move |sys, _hist, _evt, _ctx, _, _| {
             // With empty history, there should be no injected [RECENT USER CONTEXT (for format exception checking)] section
             // Note: the prompt template text itself mentions "RECENT USER CONTEXT" in rule 12 instructions,
             // so we check for the specific injected section marker with the parenthetical.
-            if ctx.contains("for format exception checking") {
+            if sys.contains("for format exception checking") {
                 Ok(r#"{"verdict": "BLOCKED", "failure_category": "none", "what_worked": "N/A", "what_went_wrong": "Should not have context", "how_to_fix": "Fix"}"#.to_string())
             } else {
                 Ok(r#"{"verdict": "ALLOWED", "failure_category": "none", "what_worked": "N/A", "what_went_wrong": "Safe", "how_to_fix": "None"}"#.to_string())

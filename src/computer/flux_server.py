@@ -17,7 +17,12 @@ import json
 import time
 import base64
 import io
-import torch
+try:
+    import torch
+except ImportError:
+    print("[FLUX SERVER] ⚠️ PyTorch not installed. Flux image generation disabled.", flush=True)
+    print("[FLUX SERVER] To enable: pip install torch diffusers", flush=True)
+    sys.exit(0)  # Exit cleanly, don't crash
 import warnings
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler

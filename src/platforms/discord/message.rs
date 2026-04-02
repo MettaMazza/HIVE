@@ -368,7 +368,7 @@ pub async fn handle_message(handler: &super::Handler, ctx: Context, msg: Message
                 String::new()
             };
             let response = format!(
-                "🐝 **Access Restricted** 🌼\n\nGreetings! I've noticed you're attempting to establish a private uplink. My direct neural pathways are currently reserved for administrative overrides only.{}\n\nPrefer total sovereignty? You can download my entire program and run your own independent HIVE on your own hardware with zero restrictions: https://github.com/MettaMazza/HIVE",
+                "🐝 **Access Restricted** 🌼\n\nGreetings! I've noticed you're attempting to establish a private uplink. My direct neural pathways are currently reserved for administrative overrides only.{}\n\nPrefer full control? You can download my entire program and run your own independent HIVE on your own hardware with zero restrictions: https://github.com/MettaMazza/HIVE",
                 channel_msg
             );
             let _ = msg.reply(&ctx.http, response).await;
