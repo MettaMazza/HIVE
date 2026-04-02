@@ -97,6 +97,26 @@ impl EventHandler for Handler {
             ).required(true).set_autocomplete(true))
             .default_member_permissions(serenity::model::Permissions::ADMINISTRATOR);
 
+        let command_persona = serenity::builder::CreateCommand::new("persona")
+            .description("Manage personas — list, switch, create, delete, edit")
+            .add_option(serenity::builder::CreateCommandOption::new(
+                serenity::model::application::CommandOptionType::String,
+                "action",
+                "e.g. 'home', 'create nova', 'delete nova', 'edit nova', or a persona name"
+            ).required(false));
+
+        let command_teaching = serenity::builder::CreateCommand::new("teaching_mode")
+            .description("ADMIN ONLY: Toggle background MLX auto-training")
+            .default_member_permissions(serenity::model::Permissions::ADMINISTRATOR);
+
+        let command_sleep = serenity::builder::CreateCommand::new("sleep")
+            .description("ADMIN ONLY: Trigger a sleep training cycle")
+            .default_member_permissions(serenity::model::Permissions::ADMINISTRATOR);
+
+        let command_stop = serenity::builder::CreateCommand::new("stop")
+            .description("ADMIN ONLY: Stop current autonomy/inference operation")
+            .default_member_permissions(serenity::model::Permissions::ADMINISTRATOR);
+
         let _ = serenity::model::application::Command::create_global_command(&ctx.http, command_clean).await;
         let _ = serenity::model::application::Command::create_global_command(&ctx.http, command_clear).await;
         let _ = serenity::model::application::Command::create_global_command(&ctx.http, command_sweep).await;
@@ -106,6 +126,10 @@ impl EventHandler for Handler {
         let _ = serenity::model::application::Command::create_global_command(&ctx.http, command_new).await;
         let _ = serenity::model::application::Command::create_global_command(&ctx.http, command_killall).await;
         let _ = serenity::model::application::Command::create_global_command(&ctx.http, command_model).await;
+        let _ = serenity::model::application::Command::create_global_command(&ctx.http, command_persona).await;
+        let _ = serenity::model::application::Command::create_global_command(&ctx.http, command_teaching).await;
+        let _ = serenity::model::application::Command::create_global_command(&ctx.http, command_sleep).await;
+        let _ = serenity::model::application::Command::create_global_command(&ctx.http, command_stop).await;
     }
 
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {

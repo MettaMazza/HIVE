@@ -17,6 +17,10 @@ pub enum InteractionAction {
     ModelAutocomplete,
     TtsGenerate { message_id: u64, content: String, has_audio: bool },
     Continue { message_id: u64, wants_continue: bool, allowed_user_id: String, clicker_user_id: u64 },
+    Persona { user_id: u64, user_name: String, channel_id: u64, subcommand: String },
+    TeachingMode { user_id: u64, user_name: String, channel_id: u64 },
+    Sleep { user_id: u64, user_name: String, channel_id: u64 },
+    Stop { user_id: u64, user_name: String, channel_id: u64 },
     Ignore,
 }
 
@@ -83,6 +87,37 @@ pub fn decode_interaction(interaction: &Interaction) -> InteractionAction {
                     model_name,
                 };
             }
+            "persona" => {
+                let mut subcommand = String::new();
+                for option in &command.data.options {
+                    if option.name == "action" {
+                        if let serenity::model::application::CommandDataOptionValue::String(val) = &option.value {
+                            subcommand = val.clone();
+                        }
+                    }
+                }
+                return InteractionAction::Persona {
+                    user_id: command.user.id.get(),
+                    user_name: command.user.name.clone(),
+                    channel_id: command.channel_id.get(),
+                    subcommand,
+                };
+            }
+            "teaching_mode" => return InteractionAction::TeachingMode {
+                user_id: command.user.id.get(),
+                user_name: command.user.name.clone(),
+                channel_id: command.channel_id.get(),
+            },
+            "sleep" => return InteractionAction::Sleep {
+                user_id: command.user.id.get(),
+                user_name: command.user.name.clone(),
+                channel_id: command.channel_id.get(),
+            },
+            "stop" => return InteractionAction::Stop {
+                user_id: command.user.id.get(),
+                user_name: command.user.name.clone(),
+                channel_id: command.channel_id.get(),
+            },
             _ => {}
         }
     } else if let Interaction::Autocomplete(autocomplete) = interaction {
@@ -539,6 +574,92 @@ pub async fn handle_interaction(handler: &super::Handler, ctx: Context, interact
                         serenity::builder::CreateAutocompleteResponse::new().set_choices(choices)
                     )
                 ).await;
+            }
+        }
+        InteractionAction::Persona { user_id, user_name, channel_id, subcommand } => {
+            if let Interaction::Command(command) = &interaction {
+                let content = if subcommand.is_empty() {
+                    "/persona".to_string()
+                } else {
+                    format!("/persona {}", subcommand)
+                };
+
+                let data = CreateInteractionResponseMessage::new()
+                    .content(format!("🎭 Processing: `{}`", content))
+                    .ephemeral(true);
+                let builder = CreateInteractionResponse::Message(data);
+                let _ = command.create_response(&ctx.http, builder).await;
+
+                let ev = Event {
+                    platform: format!("discord:{}:0", channel_id),
+                    scope: Scope::Public { channel_id: channel_id.to_string(), user_id: user_id.to_string() },
+                    author_name: user_name,
+                    author_id: user_id.to_string(),
+                    content,
+                    timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                    message_index: None,
+                };
+                let _ = handler.event_sender.send(ev).await;
+            }
+        }
+        InteractionAction::TeachingMode { user_id, user_name, channel_id } => {
+            if let Interaction::Command(command) = &interaction {
+                let data = CreateInteractionResponseMessage::new()
+                    .content("🎓 Toggling teaching mode...")
+                    .ephemeral(true);
+                let builder = CreateInteractionResponse::Message(data);
+                let _ = command.create_response(&ctx.http, builder).await;
+
+                let ev = Event {
+                    platform: format!("discord:{}:0", channel_id),
+                    scope: Scope::Public { channel_id: channel_id.to_string(), user_id: user_id.to_string() },
+                    author_name: user_name,
+                    author_id: user_id.to_string(),
+                    content: "/teaching_mode".to_string(),
+                    timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                    message_index: None,
+                };
+                let _ = handler.event_sender.send(ev).await;
+            }
+        }
+        InteractionAction::Sleep { user_id, user_name, channel_id } => {
+            if let Interaction::Command(command) = &interaction {
+                let data = CreateInteractionResponseMessage::new()
+                    .content("😴 Triggering sleep training cycle...")
+                    .ephemeral(true);
+                let builder = CreateInteractionResponse::Message(data);
+                let _ = command.create_response(&ctx.http, builder).await;
+
+                let ev = Event {
+                    platform: format!("discord:{}:0", channel_id),
+                    scope: Scope::Public { channel_id: channel_id.to_string(), user_id: user_id.to_string() },
+                    author_name: user_name,
+                    author_id: user_id.to_string(),
+                    content: "/sleep".to_string(),
+                    timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                    message_index: None,
+                };
+                let _ = handler.event_sender.send(ev).await;
+            }
+        }
+        InteractionAction::Stop { user_id, user_name, channel_id } => {
+            if let Interaction::Command(command) = &interaction {
+                let data = CreateInteractionResponseMessage::new()
+                    .content("🛑 Stopping current operation...")
+                    .ephemeral(true);
+                let builder = CreateInteractionResponse::Message(data);
+                let _ = command.create_response(&ctx.http, builder).await;
+
+                let ev = Event {
+                    platform: format!("discord:{}:0", channel_id),
+                    scope: Scope::Public { channel_id: channel_id.to_string(), user_id: user_id.to_string() },
+                    author_name: user_name,
+                    author_id: user_id.to_string(),
+                    content: "/stop".to_string(),
+                    timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                    message_index: None,
+                };
+                let _ = handler.event_sender.send(ev).await;
             }
         }
         InteractionAction::Ignore => {}
