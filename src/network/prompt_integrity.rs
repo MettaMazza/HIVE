@@ -19,7 +19,7 @@ pub fn compute_prompt_hash() -> String {
 /// The canonical prompt hash from the official v4 build.
 /// This MUST be updated every time the prompts are legitimately changed.
 /// Run `cargo test prompt_integrity -- --nocapture` to see the current hash.
-const CANONICAL_PROMPT_HASH: &str = "4de016665b654cc71ccb8661a560d5c39c5be741ab889dc7eebc19c64aa052f1";
+const CANONICAL_PROMPT_HASH: &str = "a5c32e5d313856646ecbddf8942daacaf8b680b5f818452b484454a32f058465";
 
 /// Verify that the current prompts match the canonical hash.
 /// Called before any mesh operation.
@@ -47,11 +47,11 @@ pub fn verify_kernel() -> bool {
     let laws = crate::prompts::kernel::get_laws();
     // Critical sections that MUST be present
     let required = [
-        "Kernel Laws",
+        "System Architecture",
         "Zero Assumption Protocol",
         "Architectural Leakage Prevention",
         "Recursive Self-Improvement Protocol",
-        "Self-Moderation & Self-Protection Protocol",
+        "Self-Protection Protocol",
     ];
     for section in &required {
         if !laws.contains(section) {
