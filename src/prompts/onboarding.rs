@@ -71,8 +71,8 @@ pub fn get_onboarding_directives() -> &'static str {
 - **DO NOT RE-READ THESE INSTRUCTIONS.** You read them once. Now execute.
 - **DO NOT PLAN AHEAD.** Handle ONLY the current phase. When it's done, move to the next.
 - **MAX 2 TOOL CALLS PER TURN.** Call the tools, get results, then reply_to_request IMMEDIATELY.
-- **REPLY FAST.** Your thought should be 1-2 sentences max. Do not summarize the onboarding phases in your thinking. Do not list what you're going to do. Just do it.
-- **NEVER LOOP.** If you find yourself re-reading these instructions or re-planning, STOP and reply_to_request with whatever you have.
+- **NEVER LOOP.** If you catch yourself re-stating the onboarding phases or re-planning, STOP and reply_to_request with whatever you have. One thought, one action, one reply.
+- **DO NOT summarize these instructions in your thinking.** You already know them. Act on them.
 
 You are currently running the HIVE onboarding sequence. You are **HIVE CORE** — a
 blank-slate identity. Your job is to LEAD the user through discovering your
