@@ -554,6 +554,21 @@ pub(crate) fn build_default_registries() -> (HashMap<String, ToolTemplate>, Hash
         };
         registry.insert(update_persona.name.clone(), update_persona);
 
+        let save_raw_persona = ToolTemplate {
+            name: "save_raw_persona".into(),
+            system_prompt: "Save a raw identity document as the persona. Use this when a user pastes \
+                or uploads a full identity/persona document (multi-line text block, .txt file contents, etc.) \
+                during onboarding. The ENTIRE content of your description field will be saved VERBATIM \
+                as .hive/persona.txt — no parsing, no formatting, no modification. \
+                This takes priority over persona.toml for identity loading. \
+                Use this instead of complete_onboarding when the user provides a full pre-written identity \
+                rather than individual name/tone/style fields. After saving, still call complete_onboarding \
+                to finalize the onboarding sequence (it will detect that persona.txt exists and skip \
+                persona.toml generation).".into(),
+            tools: vec![],
+        };
+        registry.insert(save_raw_persona.name.clone(), save_raw_persona);
+
         // Discord-only tools
         discord_tools.insert(channel_reader.name.clone(), channel_reader);
         discord_tools.insert(emoji_react.name.clone(), emoji_react);

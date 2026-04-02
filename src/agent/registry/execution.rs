@@ -466,6 +466,60 @@ pub fn dispatch_native_tool(
         return Some(handle);
     }
 
+    if tool_type == "save_raw_persona" {
+        let handle = tokio::spawn(async move {
+            if let Some(ref tx) = tx_clone {
+                let _ = tx.send("📜 Saving raw identity document...\n".into()).await;
+            }
+
+            let _ = std::fs::create_dir_all(".hive");
+
+            // The entire description IS the persona document — save verbatim
+            let content = desc.trim().to_string();
+
+            if content.len() < 50 {
+                return ToolResult {
+                    task_id,
+                    output: "❌ Identity document too short. The raw persona should be a full \
+                        identity document (at least 50 characters). Did the user paste the \
+                        full document?".into(),
+                    tokens_used: 0,
+                    status: ToolStatus::Failed("Document too short".into()),
+                };
+            }
+
+            match std::fs::write(".hive/persona.txt", &content) {
+                Ok(_) => {
+                    tracing::info!(
+                        "[PERSONA] 📜 Saved RAW identity document to .hive/persona.txt ({} bytes)",
+                        content.len()
+                    );
+                    ToolResult {
+                        task_id,
+                        output: format!(
+                            "✅ Raw identity document saved to .hive/persona.txt ({} bytes).\n\
+                            This will be loaded VERBATIM as the identity prompt on every boot.\n\
+                            Now call complete_onboarding to finalize the onboarding sequence.",
+                            content.len()
+                        ),
+                        tokens_used: 0,
+                        status: ToolStatus::Success,
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("[PERSONA] ❌ Failed to write persona.txt: {}", e);
+                    ToolResult {
+                        task_id,
+                        output: format!("❌ Failed to save identity document: {}", e),
+                        tokens_used: 0,
+                        status: ToolStatus::Failed(format!("Write failed: {}", e)),
+                    }
+                }
+            }
+        });
+        return Some(handle);
+    }
+
     if tool_type == "update_persona" {
         // ── PERSONA SOVEREIGNTY GUARD ────────────────────────────────────
         // Identity is SELF-DETERMINED. A user can influence and shape the

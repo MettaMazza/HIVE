@@ -302,11 +302,11 @@ fn calculate_tiers(hw: &HardwareProfile) -> Vec<ModelTier> {
     } else {
         // 256+ GB (e.g., M3 Ultra 512GB)
         vec![
-            tier("Conservative", "🟢", "122B primary with lightweight support models",
-                 "122b", "9b", "122b", "9b", 162.0, 170.0),
-            tier("Balanced",     "🟡", "122B primary with 27B support chain",
-                 "122b", "27b", "122b", "27b", 180.0, 200.0),
-            tier("Maximum",      "🔴", "Flagship — 122B everywhere that matters",
+            tier("Conservative", "🟢", "Fast and responsive — 9B snaps back instantly",
+                 "9b", "4b", "35b", "4b", 18.0, 30.0),
+            tier("Balanced",     "🟡", "35B primary — strong quality with speed",
+                 "35b", "9b", "122b", "9b", 100.0, 112.0),
+            tier("Maximum",      "🔴", "Full 122B flagship — maximum intelligence",
                  "122b", "35b", "122b", "35b", 210.0, 215.0),
         ]
     }
