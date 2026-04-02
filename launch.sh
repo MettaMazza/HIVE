@@ -293,6 +293,26 @@ if [ ! -f ".env" ]; then
     fi
 fi
 
+# ── Step 3.7: Detect host hardware for the setup wizard ─────────────
+# Docker only sees the VM's resources, not the actual host. Pass real
+# hardware info into the container so the setup wizard recommends
+# correct model sizes.
+OS_TYPE="$(uname -s)"
+if [ "$OS_TYPE" = "Darwin" ]; then
+    HOST_RAM_BYTES=$(sysctl -n hw.memsize 2>/dev/null || echo "0")
+    HOST_CPU_MODEL=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo "Unknown")
+    HOST_CPU_CORES=$(sysctl -n hw.ncpu 2>/dev/null || echo "1")
+else
+    HOST_RAM_BYTES=$(grep MemTotal /proc/meminfo 2>/dev/null | awk '{print $2 * 1024}' || echo "0")
+    HOST_CPU_MODEL=$(grep 'model name' /proc/cpuinfo 2>/dev/null | head -1 | cut -d: -f2 | xargs || echo "Unknown")
+    HOST_CPU_CORES=$(nproc 2>/dev/null || echo "1")
+fi
+HOST_RAM_GB=$(echo "$HOST_RAM_BYTES" | awk '{printf "%.0f", $1 / 1073741824}')
+export HIVE_HOST_RAM_GB="$HOST_RAM_GB"
+export HIVE_HOST_CPU_MODEL="$HOST_CPU_MODEL"
+export HIVE_HOST_CPU_CORES="$HOST_CPU_CORES"
+log "🖥️  Host: $HOST_CPU_MODEL ($HOST_CPU_CORES cores, ${HOST_RAM_GB}GB RAM)"
+
 # ── Step 4: Build & Launch ──────────────────────────────────────────
 echo ""
 log "🔨 Building HIVE container (this takes ~5 min first time)..."
@@ -368,6 +388,11 @@ echo ""
 # ── Launch Docker with interactive terminal ─────────────────────────
 # 'docker compose run' attaches stdin so the setup wizard can accept
 # keyboard input. --service-ports exposes all ports defined in compose.
+# Pass host hardware info so the wizard sees real specs, not the VM.
 # Ctrl+C stops HIVE cleanly.
 $COMPOSE_CMD build
-$COMPOSE_CMD run --rm --service-ports hive
+$COMPOSE_CMD run --rm --service-ports \
+    -e HIVE_HOST_RAM_GB="$HIVE_HOST_RAM_GB" \
+    -e HIVE_HOST_CPU_MODEL="$HIVE_HOST_CPU_MODEL" \
+    -e HIVE_HOST_CPU_CORES="$HIVE_HOST_CPU_CORES" \
+    hive

@@ -124,15 +124,32 @@ impl HardwareProfile {
         sys.refresh_cpu_all();
         sys.refresh_memory();
 
-        let cpu_model = sys.cpus()
-            .first()
-            .map(|c| c.brand().to_string())
-            .unwrap_or_else(|| "Unknown CPU".to_string());
+        // Prefer host hardware info passed from launch.sh (Docker sees VM, not host)
+        let cpu_model = std::env::var("HIVE_HOST_CPU_MODEL").ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| {
+                sys.cpus().first()
+                    .map(|c| c.brand().to_string())
+                    .unwrap_or_else(|| "Unknown CPU".to_string())
+            });
 
-        let ram_gb = sys.total_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
+        let cpu_cores = std::env::var("HIVE_HOST_CPU_CORES").ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or_else(|| sys.cpus().len());
+
+        let ram_gb = std::env::var("HIVE_HOST_RAM_GB").ok()
+            .and_then(|s| s.parse::<f64>().ok())
+            .unwrap_or_else(|| sys.total_memory() as f64 / (1024.0 * 1024.0 * 1024.0));
+
         let arch = std::env::consts::ARCH.to_string();
-        let os = std::env::consts::OS.to_string();
-        let is_apple_silicon = cfg!(target_os = "macos") && arch == "aarch64";
+        let os = std::env::var("HIVE_HOST_CPU_MODEL").ok()
+            .filter(|s| s.contains("Apple"))
+            .map(|_| "macos".to_string())
+            .unwrap_or_else(|| std::env::consts::OS.to_string());
+
+        let is_apple_silicon = os == "macos" && arch == "aarch64"
+            || std::env::var("HIVE_HOST_CPU_MODEL").ok()
+                .map_or(false, |s| s.contains("Apple"));
 
         let vram_gb = if is_apple_silicon { ram_gb } else { 0.0 };
 
@@ -142,7 +159,7 @@ impl HardwareProfile {
             .map(|d| d.available_space() as f64 / (1024.0 * 1024.0 * 1024.0))
             .unwrap_or(0.0);
 
-        Self { cpu_model, cpu_cores: sys.cpus().len(), ram_gb, vram_gb, arch, os, disk_free_gb, is_apple_silicon }
+        Self { cpu_model, cpu_cores, ram_gb, vram_gb, arch, os, disk_free_gb, is_apple_silicon }
     }
 
     fn display(&self) {
