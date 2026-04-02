@@ -44,9 +44,9 @@ services:
       - HIVE_OLLAMA_URL=http://host.docker.internal:11434
       # Model selection comes from .env — do NOT hardcode models here
       - HIVE_PYTHON_BIN=python3
-      # Suppress verbose tracing — user sees clean println! messages.
-      # Override with RUST_LOG=HIVE=info for debugging.
-      - RUST_LOG=HIVE=error
+      # Show warnings and errors — enough to see activity, not debug spam.
+      # Override with RUST_LOG=HIVE=info for full debugging.
+      - RUST_LOG=HIVE=warn
 
     # Allow container to reach host services (Ollama)
     extra_hosts:

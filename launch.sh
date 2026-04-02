@@ -392,7 +392,11 @@ echo ""
 # keyboard input. --service-ports exposes all ports defined in compose.
 # Pass host hardware info so the wizard sees real specs, not the VM.
 # Ctrl+C stops HIVE cleanly.
-$COMPOSE_CMD build
+BUILD_FLAGS=""
+if [ "$1" = "rebuild" ]; then
+    BUILD_FLAGS="--no-cache"
+fi
+$COMPOSE_CMD build $BUILD_FLAGS
 $COMPOSE_CMD run --rm --service-ports \
     -e HIVE_HOST_RAM_GB="$HIVE_HOST_RAM_GB" \
     -e HIVE_HOST_CPU_MODEL="$HIVE_HOST_CPU_MODEL" \
