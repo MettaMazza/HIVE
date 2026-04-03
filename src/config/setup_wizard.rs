@@ -488,8 +488,8 @@ pub fn run() {
     // ── Step 6: Persona Document ───────────────────────────────
     print_step(6, "Identity / Persona (optional)");
     println!("  {DIM}If you have a persona/identity file, paste it below.{RESET}");
-    println!("  {DIM}Type {WHITE}END{DIM} on its own line when done, or Ctrl+D.{RESET}");
-    println!("  {DIM}Press Enter to skip — the AI will ask you during onboarding.{RESET}");
+    println!("  {DIM}Press Enter 3 times when done.{RESET}");
+    println!("  {DIM}Or just press Enter to skip — the AI will ask you during onboarding.{RESET}");
     println!();
     print!("  {GREEN}▸{RESET} Paste persona (or Enter to skip): ");
     io::stdout().flush().unwrap();
@@ -497,6 +497,7 @@ pub fn run() {
     let stdin = io::stdin();
     let mut persona_lines: Vec<String> = Vec::new();
     let mut first_line = true;
+    let mut consecutive_blanks: u32 = 0;
 
     for line in stdin.lock().lines() {
         match line {
@@ -507,9 +508,23 @@ pub fn run() {
                 }
                 first_line = false;
 
-                // "END" on its own line signals completion
+                // "END" on its own line also works as a terminator
                 if l.trim().eq_ignore_ascii_case("END") {
                     break;
+                }
+
+                if l.trim().is_empty() {
+                    consecutive_blanks += 1;
+                    if consecutive_blanks >= 3 {
+                        // 3 blank lines in a row = done
+                        // Remove trailing blanks from buffer
+                        while persona_lines.last().map(|s| s.trim().is_empty()).unwrap_or(false) {
+                            persona_lines.pop();
+                        }
+                        break;
+                    }
+                } else {
+                    consecutive_blanks = 0;
                 }
                 persona_lines.push(l);
             }
@@ -527,6 +542,8 @@ pub fn run() {
                     persona_content.len(),
                     persona_lines.len()
                 ));
+                // Also mark onboarding complete — persona is set, no need for conversational onboarding
+                crate::prompts::onboarding::complete_onboarding();
             }
             Err(e) => {
                 eprintln!("  {YELLOW}⚠{RESET} Failed to save persona: {e}");
