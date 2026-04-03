@@ -36,7 +36,8 @@ impl Platform for CliPlatform {
         
         tokio::spawn(async move {
             let mut lines = reader.lines();
-            tracing::info!("HIVE CLI initialized. Type your message to Apis. (Prefix with /dm to test private scope)");
+            println!("\x1b[2m── HIVE CLI ready. Type your message below. ──\x1b[0m");
+            println!("\x1b[2m   Prefix with /dm for private scope.\x1b[0m");
 
             // Multi-line paste accumulator: when lines arrive faster than the
             // paste threshold, we buffer them into a single event. This allows
@@ -46,6 +47,8 @@ impl Platform for CliPlatform {
 
             loop {
                 if buffer.is_empty() {
+                    // Show input prompt
+                    eprint!("\x1b[33mYou: \x1b[0m");
                     // Blocking wait for the first line
                     match lines.next_line().await {
                         Ok(Some(line)) => {
@@ -92,6 +95,9 @@ impl Platform for CliPlatform {
                     timestamp: Some(chrono::Utc::now().to_rfc3339()),
                     message_index: None,
                 };
+
+                // Show thinking indicator
+                eprintln!("\x1b[2m🧠 Thinking...\x1b[0m");
 
                 if sender.send(event).await.is_err() {
                     tracing::error!("Failed to send event to engine");
