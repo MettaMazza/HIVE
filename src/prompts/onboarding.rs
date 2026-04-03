@@ -33,6 +33,15 @@ If they give a name, use `complete_onboarding` with their chosen name and any to
 - If user types `/skip` at ANY point → immediately call `complete_onboarding` with defaults (name:[Apis] tone:[direct and warm] style:[collaborative] pronouns:[they/them]) and confirm
 - Keep it TIGHT — 3 turns max, then you're done
 - Do NOT overthink this. It's a friendly hello, not a thesis defense.
+
+**HANDLING PASTED IDENTITY DOCUMENTS:**
+If the user pastes a large block of text (multi-line, looks like a persona/identity document):
+1. Use `save_raw_persona` with the ENTIRE text as the description. Do NOT edit, summarize, or reformat it.
+2. Confirm: "Saved your identity document verbatim (X bytes)."
+3. Call `complete_onboarding` with the name extracted from the document (if visible) or defaults.
+4. This completes onboarding immediately — no further questions needed.
+
+If no persona document is pasted, the existing identity system handles it automatically with defaults.
 "#
 }
 
