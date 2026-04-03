@@ -434,6 +434,57 @@ pub fn run() {
     print_step(5, "Generate Configuration");
     write_env(&config);
 
+    // ── Step 6: Persona Document ───────────────────────────────
+    print_step(6, "Identity / Persona (optional)");
+    println!("  {DIM}If you have a persona/identity file, paste it below.{RESET}");
+    println!("  {DIM}Type {WHITE}END{DIM} on its own line when done, or Ctrl+D.{RESET}");
+    println!("  {DIM}Press Enter to skip — the AI will ask you during onboarding.{RESET}");
+    println!();
+    print!("  {GREEN}▸{RESET} Paste persona (or Enter to skip): ");
+    io::stdout().flush().unwrap();
+
+    let stdin = io::stdin();
+    let mut persona_lines: Vec<String> = Vec::new();
+    let mut first_line = true;
+
+    for line in stdin.lock().lines() {
+        match line {
+            Ok(l) => {
+                if first_line && l.trim().is_empty() {
+                    // User pressed Enter immediately — skip
+                    break;
+                }
+                first_line = false;
+
+                // "END" on its own line signals completion
+                if l.trim().eq_ignore_ascii_case("END") {
+                    break;
+                }
+                persona_lines.push(l);
+            }
+            Err(_) => break,
+        }
+    }
+
+    if !persona_lines.is_empty() {
+        let persona_content = persona_lines.join("\n");
+        let _ = std::fs::create_dir_all(".hive");
+        match std::fs::write(".hive/persona.txt", &persona_content) {
+            Ok(_) => {
+                print_ok(&format!(
+                    "Persona saved to .hive/persona.txt ({} bytes, {} lines)",
+                    persona_content.len(),
+                    persona_lines.len()
+                ));
+            }
+            Err(e) => {
+                eprintln!("  {YELLOW}⚠{RESET} Failed to save persona: {e}");
+            }
+        }
+    } else {
+        println!("  {DIM}Skipped — the AI will walk you through it.{RESET}");
+    }
+
     // ── Summary ────────────────────────────────────────────────
     println!();
     println!("{CYAN}╔══════════════════════════════════════════════════════╗{RESET}");
@@ -448,6 +499,8 @@ pub fn run() {
         if config.brave_api_key.is_empty() { "Not configured" } else { "Configured ✓" });
     println!("{CYAN}║{RESET}  Email:           {WHITE}{:<35}{RESET}{CYAN}║{RESET}",
         if config.smtp_user.is_empty() { "Not configured" } else { "Configured ✓" });
+    println!("{CYAN}║{RESET}  Persona:         {WHITE}{:<35}{RESET}{CYAN}║{RESET}",
+        if persona_lines.is_empty() { "Default (onboarding)" } else { "Custom ✓" });
     println!("{CYAN}╠══════════════════════════════════════════════════════╣{RESET}");
     println!("{CYAN}║{RESET}  {DIM}Configuration written to .env{RESET}                       {CYAN}║{RESET}");
     println!("{CYAN}║{RESET}  {DIM}HIVE will now boot with these settings.{RESET}             {CYAN}║{RESET}");
