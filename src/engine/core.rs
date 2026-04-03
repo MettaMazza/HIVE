@@ -117,12 +117,12 @@ impl Engine {
         event_sender: Option<mpsc::Sender<Event>>,
         event_receiver: mpsc::Receiver<Event>,
     ) -> Self {
-        // Serial inference mode: when Ollama cannot parallelize the active model,
-        // force semaphore to 1 so all inference calls serialize.
-        // Default: parallel (false). Set HIVE_SERIAL_INFERENCE=true only if needed.
+        // Serial inference mode: Qwen 3.5 on Ollama cannot parallelize,
+        // so all inference calls must serialize through a single slot.
+        // Set HIVE_SERIAL_INFERENCE=false only if your model supports parallel.
         let serial_mode = std::env::var("HIVE_SERIAL_INFERENCE")
-            .map(|v| v == "true" || v == "1")
-            .unwrap_or(false);
+            .map(|v| v != "false" && v != "0")
+            .unwrap_or(true);
 
         let max_parallel: usize = if serial_mode {
             1
