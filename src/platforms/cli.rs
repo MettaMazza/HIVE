@@ -111,12 +111,21 @@ impl Platform for CliPlatform {
 
     #[cfg(not(tarpaulin_include))]
     async fn send(&self, response: Response) -> Result<(), PlatformError> {
+        if response.is_telemetry {
+            // Telemetry: show only the first line (quirk + elapsed), overwrite in place
+            let status_line = response.text.lines().next().unwrap_or("🧠 Thinking...");
+            eprint!("\r\x1b[35m{}\x1b[0m\x1b[K", status_line);
+            return Ok(());
+        }
+
+        // Final reply — clear the telemetry line first, then print in white
+        eprintln!("\r\x1b[K"); // Clear telemetry line
         match response.target_scope {
             Scope::Public { .. } => {
-                println!("\x1b[36m🐝 {}\x1b[0m", response.text);
+                println!("\x1b[97m🐝 {}\x1b[0m", response.text);
             }
-            Scope::Private { user_id } => {
-                println!("\x1b[35m🐝 (DM → {}) {}\x1b[0m", user_id, response.text);
+            Scope::Private { .. } => {
+                println!("\x1b[97m🐝 {}\x1b[0m", response.text);
             }
         }
         Ok(())
