@@ -83,7 +83,9 @@ COPY --from=builder /build/target/release/HIVE /usr/local/bin/hive
 RUN mkdir -p target/release && cp /usr/local/bin/hive target/release/HIVE
 
 # Copy configuration files
-COPY .env.example .env
+# .env is NOT pre-copied — the Setup Wizard generates it on first boot
+# Copy .env.example as a reference only
+COPY .env.example .env.example
 COPY README.md .
 # Copy persona example as reference (NOT as live persona — onboarding creates that)
 COPY persona.toml.example .hive/persona.toml.example

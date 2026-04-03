@@ -33,6 +33,7 @@ services:
       - .env
 
     volumes:
+      - ./.env:/home/hive/.env                # Bind-mount so Setup Wizard writes persist on host
       - ./.git:/home/hive/.git               # Inject native Git history dynamically
       - hive-memory:/home/hive/memory        # Persistent memory
       - hive-data:/home/hive/.hive           # Keys and config

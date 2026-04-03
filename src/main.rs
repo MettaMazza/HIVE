@@ -49,16 +49,27 @@ pub async fn run_app() {
     dotenv::dotenv().ok(); // Load .env file manually first
 
     // ── First-Time Setup Wizard ─────────────────────────────────────
-    // Intercept boot before anything else. If the user has never completed
-    // setup, the wizard walks them through hardware scanning, model
-    // selection, downloading, and .env configuration.
-    if !std::path::Path::new(".env").exists() {
+    // Intercept boot before anything else. If .env is missing, empty,
+    // or just a stub (no DISCORD_TOKEN configured), run the full wizard.
+    // launch.sh creates a minimal stub to satisfy docker-compose's
+    // env_file requirement — the Rust wizard handles ALL real config.
+    let needs_setup = if let Ok(content) = std::fs::read_to_string(".env") {
+        // Stub, empty, or placeholder .env — no real config yet
+        !content.contains("DISCORD_TOKEN=")
+            || content.contains("DISCORD_TOKEN=\"\"")
+            || content.contains("DISCORD_TOKEN=your_")
+            || content.len() < 100  // Stub file from launch.sh
+    } else {
+        true // File doesn't exist at all
+    };
+
+    if needs_setup {
         use std::io::IsTerminal;
         if std::io::stdout().is_terminal() {
             crate::config::setup_wizard::run();
         } else {
             tracing::info!("HIVE is running in non-interactive mode. Generating default .env...");
-            let _ = crate::config::setup_wizard::run_defaults();
+            crate::config::setup_wizard::run_defaults();
         }
         // Reload .env after wizard writes it
         dotenv::dotenv().ok();

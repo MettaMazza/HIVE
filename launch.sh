@@ -260,52 +260,16 @@ fi
 log "✅ Compose: $($COMPOSE_CMD version 2>/dev/null | head -1)"
 
 # ── Step 3.5: Ensure .env exists ────────────────────────────────────
-# Docker-compose needs .env on the host. If it doesn't exist, create it
-# from the example and prompt for essential configuration.
+# Docker-compose requires env_file to exist. We create a minimal stub
+# here — the FULL interactive Setup Wizard runs inside the Rust binary
+# on first boot. It handles hardware scanning, model selection, Discord
+# channels, API keys, email, and everything else comprehensively.
 if [ ! -f ".env" ]; then
-    if [ -f ".env.example" ]; then
-        echo ""
-        warn "No .env file found. Creating from .env.example..."
-        cp .env.example .env
-
-        echo ""
-        echo -e "${BOLD}  🐝 Quick Setup — Just a few things before we start:${NC}"
-        echo ""
-
-        # Ask for Discord token (essential for communication)
-        echo -e "  ${YELLOW}Discord Bot Token${NC} (required for Discord integration)"
-        echo -e "  Get one at: https://discord.com/developers/applications"
-        echo -n "  Token (or press Enter to skip): "
-        read -r DISCORD_TOKEN
-        if [ -n "$DISCORD_TOKEN" ]; then
-            # Use a delimiter that won't appear in tokens
-            sed -i.bak "s|DISCORD_TOKEN=.*|DISCORD_TOKEN=\"$DISCORD_TOKEN\"|" .env
-            rm -f .env.bak
-            log "✅ Discord token saved."
-        else
-            warn "Skipped — you can add it later in .env"
-        fi
-
-        # Ask for admin user ID
-        echo ""
-        echo -e "  ${YELLOW}Your Discord User ID${NC} (for admin access)"
-        echo -e "  Right-click your name in Discord → Copy User ID"
-        echo -n "  User ID (or press Enter to skip): "
-        read -r ADMIN_ID
-        if [ -n "$ADMIN_ID" ]; then
-            sed -i.bak "s|HIVE_ADMIN_USERS=.*|HIVE_ADMIN_USERS=\"$ADMIN_ID\"|" .env
-            rm -f .env.bak
-            log "✅ Admin user set."
-        fi
-
-        echo ""
-        log "📝 Configuration saved to .env"
-        log "   Edit .env anytime to change settings."
-        echo ""
-    else
-        error "No .env or .env.example found. Cannot continue."
-        exit 1
-    fi
+    echo ""
+    log "🐣 First boot detected — the Setup Wizard will configure everything."
+    log "   Creating minimal .env stub for Docker..."
+    echo "# HIVE — Generated stub. Full config created by Setup Wizard on first boot." > .env
+    echo ""
 fi
 
 # ── Step 3.7: Detect host hardware for the setup wizard ─────────────
