@@ -302,28 +302,65 @@ if ! command -v ollama &>/dev/null; then
     log "❌ Ollama is not installed!"
     log ""
     log "   HIVE requires Ollama for local AI inference."
-    log "   Install it from: https://ollama.com/download"
     log ""
-    log "   After installing, start it with:  ollama serve"
-    log ""
-    read -p "[HIVE] Continue anyway? (y/N): " SKIP_OLLAMA
-    if [ "$SKIP_OLLAMA" != "y" ] && [ "$SKIP_OLLAMA" != "Y" ]; then
-        echo ""
-        log "Exiting. Install Ollama and try again."
-        exit 1
+    read -p "[HIVE] Install Ollama now? (Y/n): " INSTALL_OLLAMA
+    if [ "$INSTALL_OLLAMA" != "n" ] && [ "$INSTALL_OLLAMA" != "N" ]; then
+        log "📦 Installing Ollama..."
+        if [ "$OS_TYPE" = "Darwin" ]; then
+            # macOS: use the official install script
+            curl -fsSL https://ollama.com/install.sh | sh
+        else
+            # Linux: use the official install script
+            curl -fsSL https://ollama.com/install.sh | sh
+        fi
+
+        if command -v ollama &>/dev/null; then
+            log "✅ Ollama installed successfully!"
+            # Start Ollama in the background
+            log "🚀 Starting Ollama server..."
+            ollama serve &>/dev/null &
+            sleep 3
+            if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
+                log "✅ Ollama is running on localhost:11434"
+            else
+                log "⚠️  Ollama installed but server may need a moment to start."
+                log "   If issues persist, run: ollama serve"
+            fi
+        else
+            log "❌ Installation failed. Install manually from: https://ollama.com/download"
+            read -p "[HIVE] Continue anyway? (y/N): " SKIP_OLLAMA
+            if [ "$SKIP_OLLAMA" != "y" ] && [ "$SKIP_OLLAMA" != "Y" ]; then
+                exit 1
+            fi
+        fi
+    else
+        log ""
+        log "   Install manually from: https://ollama.com/download"
+        log "   After installing, start it with:  ollama serve"
+        log ""
+        read -p "[HIVE] Continue without Ollama? (y/N): " SKIP_OLLAMA
+        if [ "$SKIP_OLLAMA" != "y" ] && [ "$SKIP_OLLAMA" != "Y" ]; then
+            exit 1
+        fi
     fi
 elif ! curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
     echo ""
     log "⚠️  Ollama is installed but not running!"
     log ""
-    log "   Start it with:  ollama serve"
-    log "   Or open the Ollama app from your Applications folder."
-    log ""
-    read -p "[HIVE] Continue anyway? (y/N): " SKIP_OLLAMA
-    if [ "$SKIP_OLLAMA" != "y" ] && [ "$SKIP_OLLAMA" != "Y" ]; then
-        echo ""
-        log "Exiting. Start Ollama and try again."
-        exit 1
+    log "   Starting Ollama for you..."
+    ollama serve &>/dev/null &
+    sleep 3
+    if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
+        log "✅ Ollama is now running on localhost:11434"
+    else
+        log "⚠️  Could not auto-start Ollama."
+        log "   Start it manually:  ollama serve"
+        log "   Or open the Ollama app from your Applications folder."
+        log ""
+        read -p "[HIVE] Continue anyway? (y/N): " SKIP_OLLAMA
+        if [ "$SKIP_OLLAMA" != "y" ] && [ "$SKIP_OLLAMA" != "Y" ]; then
+            exit 1
+        fi
     fi
 else
     log "✅ Ollama is running on localhost:11434"
