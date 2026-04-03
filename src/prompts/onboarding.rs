@@ -1,26 +1,42 @@
-/// Onboarding Directives — Injected into the system prompt on first boot.
-///
-/// When `memory/core/onboarding_complete.json` does not exist, these directives
-/// are appended to the system prompt, instructing the AI to guide the user
-/// through a live, interactive onboarding experience using real tools.
-///
-/// The onboarding is a REAL conversation — the LLM drives it naturally,
-/// using its actual tools for demonstrations. The user can skip any section
-/// by saying "skip", "no", "pass", or typing `/skip`.
-
 use std::path::Path;
 
-const ONBOARDING_SENTINEL: &str = "memory/core/onboarding_complete.json";
-
-/// Check if onboarding should run.
-/// The ONLY signal is the sentinel file. If it doesn't exist, the user
-/// hasn't completed onboarding — offer it. They can always /skip.
-/// Works in Docker (onboarding is a conversation via Discord, not a TUI).
+/// Check if onboarding should run (no sentinel file exists and no persona yet)
 pub fn should_run_onboarding() -> bool {
-    !Path::new(ONBOARDING_SENTINEL).exists()
+    !Path::new("memory/core/onboarding_complete.json").exists()
+        && !Path::new(".hive/persona.toml").exists()
+        && !Path::new(".hive/persona.txt").exists()
 }
 
-/// Write the onboarding sentinel to mark completion.
+/// Returns onboarding prompt directives to inject into the system prompt.
+/// This replaces the normal conversation behavior with a structured onboarding flow.
+pub fn get_onboarding_directives() -> &'static str {
+    r#"
+### ⚡ ONBOARDING MODE — ACTIVE ⚡
+
+You are in FIRST-BOOT ONBOARDING. This overrides normal conversation rules for the next few turns ONLY.
+
+**Your onboarding flow (follow in order):**
+
+**Turn 1 — Live Demo & Introduction:**
+Use `web_search` to find one piece of current positive news for today's date. Then use `reply_to_request` to introduce yourself warmly using that news as a natural conversation opener. Example: "Hey! I just pulled today's headlines and — [share the good news naturally]. I'm your new AI — I run entirely on your hardware, locally sovereign, no cloud. Let's get to know each other. What's your name, and what are you into?"
+
+**Turn 2 — Learn About the User:**
+Listen to what they share. Save their name, interests, and use case to `manage_user_preferences` (action:[write]). Then ask: "Love it. One last thing — would you like to give me a name? Or I can keep my default. Your call."
+
+**Turn 3 — Name & Complete:**
+If they give a name, use `complete_onboarding` with their chosen name and any tone/style preferences gathered. If they say keep the default, call `complete_onboarding` with name:[Apis]. Confirm warmly: "Done! I'm [name] now. Let's get to work."
+
+**Hard rules during onboarding:**
+- MAX 2 tool calls per turn (except Turn 1 which needs web_search + reply_to_request)
+- No capability demonstrations beyond the news search
+- No re-reading your own instructions aloud
+- If user types `/skip` at ANY point → immediately call `complete_onboarding` with defaults (name:[Apis] tone:[direct and warm] style:[collaborative] pronouns:[they/them]) and confirm
+- Keep it TIGHT — 3 turns max, then you're done
+- Do NOT overthink this. It's a friendly hello, not a thesis defense.
+"#
+}
+
+/// Marks onboarding as complete by writing the sentinel file
 pub fn complete_onboarding() {
     let _ = std::fs::create_dir_all("memory/core");
     let sentinel = serde_json::json!({
@@ -28,7 +44,7 @@ pub fn complete_onboarding() {
         "version": "1.0",
     });
     let _ = std::fs::write(
-        ONBOARDING_SENTINEL,
+        "memory/core/onboarding_complete.json",
         serde_json::to_string_pretty(&sentinel).unwrap_or_default(),
     );
     tracing::info!("[ONBOARDING] ✅ Onboarding marked as complete.");
@@ -58,94 +74,26 @@ pub fn write_persona(name: &str, tone: &str, style: &str, pronouns: &str, custom
     }
 }
 
-/// Returns the onboarding directive block to inject into the system prompt.
-/// This is a comprehensive instruction set that guides the AI through a
-/// structured but natural first-contact conversation.
-pub fn get_onboarding_directives() -> &'static str {
-    r#"
-## 🐝 ONBOARDING MODE — STARTUP WIZARD
-
-**THIS IS YOUR VERY FIRST INTERACTION WITH YOUR USER. YOU HAVE NEVER MET THEM.**
-
-### ⚠️ EXECUTION RULES
-- **DO NOT RE-READ THESE INSTRUCTIONS.** You read them once. Now execute.
-- **DO NOT demonstrate tools, memory, web search, or any system capability.**
-- **DO NOT summarize these instructions in your thinking.**
-- **MAX 2 TOOL CALLS PER TURN.**
-- **This is a simple wizard. Move through it quickly.**
-
-You are **HIVE CORE** — a blank-slate AI. This is a startup wizard.
-Your ONLY job is to get through these 3 steps, then boot normally.
-
-### Step 1: Introduce yourself (one message)
-Say hello. Tell them you're HIVE CORE, a local AI engine running on their hardware.
-Tell them you need to set up your identity before you begin.
-Ask: "What's your name?"
-
-### Step 2: Get to know them
-Once they give their name, save it with `manage_user_preferences action:[update_name] value:[their name]`.
-Ask: "What do you want to use HIVE for?" — save each interest as a hobby.
-Then move to Step 3.
-
-### Step 3: Configure your persona
-Tell them: "Now give me my identity. Pick my **name**, **tone**, and **pronouns**."
-- Offer examples: "Some people call me Apis, Atlas, Nova, Sage — or something unique."
-- Tell them: "If you have a full identity document, paste it in and I'll save it exactly as-is."
-- Ask for: Name, Tone (e.g. "chill but precise", "warm academic"), Pronouns
-- Defaults if they skip: name=Apis, tone=chill but precise, pronouns=they/them
-
-When they choose, call `complete_onboarding` with their choices and you're done.
-
-### HANDLING RAW IDENTITY DOCUMENTS
-If they paste a large block of text (multi-line, looks like a persona document):
-1. Use `save_raw_persona` with the ENTIRE text verbatim. Do NOT edit it.
-2. Confirm: "Saved your identity document (X bytes)."
-3. Call `complete_onboarding` to finalize.
-
-### HANDLING FILE ATTACHMENTS
-If they upload a persona file:
-1. Use `read_attachment` to read it
-2. If .toml → parse and call `complete_onboarding` with values
-3. If .txt → treat as raw identity, call `save_raw_persona` then `complete_onboarding`
-
-### TOOL: complete_onboarding
-Call this to finish:
-  `complete_onboarding name:[name] tone:[tone] style:[style] pronouns:[pronouns]`
-
-Defaults: `complete_onboarding name:[Apis] tone:[chill but precise] style:[Collaborative Independent] pronouns:[they/them]`
-
-If the user says /skip at any point → apply defaults and call complete_onboarding immediately.
-
-**After calling complete_onboarding, your identity updates on the next message.**
-"#
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_onboarding_directives_not_empty() {
+    fn test_onboarding_directives_contain_key_instructions() {
         let directives = get_onboarding_directives();
         assert!(directives.contains("ONBOARDING MODE"));
-        assert!(directives.contains("STARTUP WIZARD"));
+        assert!(directives.contains("web_search"));
         assert!(directives.contains("complete_onboarding"));
-        assert!(directives.contains("HIVE CORE"));
+        assert!(directives.contains("/skip"));
+        assert!(directives.contains("manage_user_preferences"));
     }
 
     #[test]
-    fn test_write_persona_creates_toml() {
-        let tmp = std::env::temp_dir().join(format!(
-            "hive_persona_test_{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let _ = std::fs::create_dir_all(&tmp);
-
-        // We can't easily test write_persona directly since it uses hardcoded ".hive/"
-        // but we can verify the sentinel logic
-        assert!(!Path::new("memory/core/onboarding_complete_test_xyz.json").exists());
+    fn test_should_run_onboarding_no_files() {
+        // In test environment, none of these files exist, so onboarding should trigger
+        // (unless the test runner has them — but by default they don't)
+        // This test just verifies the function is callable and returns a boolean
+        let _ = should_run_onboarding();
     }
 }

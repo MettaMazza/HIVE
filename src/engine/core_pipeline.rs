@@ -288,6 +288,7 @@ pub(crate) fn spawn_telemetry_receiver(
         }
 
         // Final message: just show completion. Thoughts were already streamed live.
+        let elapsed_str = format_elapsed(start_time.elapsed().as_secs());
         let status = format!("✅ Complete ({})", elapsed_str);
         let update_res = Response {
             platform: platform_id.clone(),

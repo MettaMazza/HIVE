@@ -52,8 +52,14 @@ pub async fn run_app() {
     // Intercept boot before anything else. If the user has never completed
     // setup, the wizard walks them through hardware scanning, model
     // selection, downloading, and .env configuration.
-    if crate::config::setup_wizard::should_run_setup() {
-        crate::config::setup_wizard::run_setup_wizard().await;
+    if !std::path::Path::new(".env").exists() {
+        use std::io::IsTerminal;
+        if std::io::stdout().is_terminal() {
+            crate::config::setup_wizard::run();
+        } else {
+            tracing::info!("HIVE is running in non-interactive mode. Generating default .env...");
+            let _ = crate::config::setup_wizard::run_defaults();
+        }
         // Reload .env after wizard writes it
         dotenv::dotenv().ok();
     }

@@ -1,1069 +1,538 @@
-/// First-Time Setup Wizard — Guided onboarding for new HIVE users.
-///
-/// When no `memory/core/setup_complete.json` exists, this module intercepts
-/// boot and walks the user through:
-///   1. Apis introduction
-///   2. Hardware scan (with permission)
-///   3. Model tier recommendations (min/med/max for their RAM)
-///   4. Model download via Ollama API
-///   5. Full .env configuration walkthrough with teaching
-///
-/// The wizard writes `.env` and the sentinel file, then returns control
-/// to `run_app()` for normal boot.
-
 use std::io::{self, Write, BufRead};
 
-// ═══════════════════════════════════════════════════════════════════
-// ANSI Terminal Helpers
-// ═══════════════════════════════════════════════════════════════════
-
-const GOLD: &str = "\x1b[38;2;255;170;0m";
-const GREEN: &str = "\x1b[38;2;100;220;100m";
-const BLUE: &str = "\x1b[38;2;100;180;255m";
-const RED: &str = "\x1b[38;2;255;100;100m";
-const CYAN: &str = "\x1b[36m";
-const DIM: &str = "\x1b[2m";
+// ── ANSI Color Helpers ──────────────────────────────────────────
 const BOLD: &str = "\x1b[1m";
+const DIM: &str = "\x1b[2m";
 const RESET: &str = "\x1b[0m";
+const CYAN: &str = "\x1b[36m";
+const GREEN: &str = "\x1b[32m";
 const YELLOW: &str = "\x1b[33m";
+const MAGENTA: &str = "\x1b[35m";
+const WHITE: &str = "\x1b[97m";
 
-fn print_banner() {
+// ── Box Drawing ─────────────────────────────────────────────────
+fn print_header() {
     println!();
-    println!("{GOLD}╔══════════════════════════════════════════════════════════════╗{RESET}");
-    println!("{GOLD}║                                                              ║{RESET}");
-    println!("{GOLD}║    {BOLD}🐝  H I V E  —  First Time Setup{RESET}{GOLD}                          ║{RESET}");
-    println!("{GOLD}║    {DIM}Human Internet Viable Ecosystem{RESET}{GOLD}                            ║{RESET}");
-    println!("{GOLD}║                                                              ║{RESET}");
-    println!("{GOLD}╚══════════════════════════════════════════════════════════════╝{RESET}");
+    println!("{CYAN}╔══════════════════════════════════════════════════════╗{RESET}");
+    println!("{CYAN}║{RESET}  {BOLD}{WHITE}🐝  W E L C O M E   T O   H I V E{RESET}                   {CYAN}║{RESET}");
+    println!("{CYAN}║{RESET}  {DIM}The Locally Sovereign AI Engine{RESET}                     {CYAN}║{RESET}");
+    println!("{CYAN}╠══════════════════════════════════════════════════════╣{RESET}");
+    println!("{CYAN}║{RESET}                                                      {CYAN}║{RESET}");
+    println!("{CYAN}║{RESET}  {DIM}This wizard will configure your environment.{RESET}        {CYAN}║{RESET}");
+    println!("{CYAN}║{RESET}  {DIM}Every step is optional — press Enter to skip.{RESET}       {CYAN}║{RESET}");
+    println!("{CYAN}║{RESET}                                                      {CYAN}║{RESET}");
+    println!("{CYAN}╚══════════════════════════════════════════════════════╝{RESET}");
     println!();
 }
 
-fn print_section(title: &str) {
+fn print_step(number: u8, title: &str) {
     println!();
-    println!("{GOLD}── {BOLD}{title}{RESET} {GOLD}─────────────────────────────────────────{RESET}");
-    println!();
+    println!("{MAGENTA}  ┌──────────────────────────────────────────────────┐{RESET}");
+    println!("{MAGENTA}  │{RESET}  {BOLD}Step {number}{RESET}: {WHITE}{title}{RESET}");
+    println!("{MAGENTA}  └──────────────────────────────────────────────────┘{RESET}");
 }
 
-fn print_apis(msg: &str) {
-    println!("  {GOLD}🐝 Apis:{RESET} {msg}");
+fn prompt(question: &str, default: &str) -> String {
+    if default.is_empty() {
+        print!("  {GREEN}▸{RESET} {question}: ");
+    } else {
+        print!("  {GREEN}▸{RESET} {question} {DIM}[{default}]{RESET}: ");
+    }
+    io::stdout().flush().unwrap();
+    let mut input = String::new();
+    io::stdin().lock().read_line(&mut input).unwrap_or(0);
+    let trimmed = input.trim().to_string();
+    if trimmed.is_empty() { default.to_string() } else { trimmed }
+}
+
+fn prompt_yn(question: &str, default_yes: bool) -> bool {
+    let hint = if default_yes { "Y/n" } else { "y/N" };
+    let answer = prompt(&format!("{question} [{hint}]"), "");
+    if answer.is_empty() {
+        default_yes
+    } else {
+        answer.to_lowercase().starts_with('y')
+    }
+}
+
+fn print_ok(msg: &str) {
+    println!("  {GREEN}✓{RESET} {msg}");
 }
 
 fn print_info(msg: &str) {
-    println!("  {BLUE}ℹ{RESET}  {DIM}{msg}{RESET}");
+    println!("  {DIM}{msg}{RESET}");
 }
 
-fn print_success(msg: &str) {
-    println!("  {GREEN}✅{RESET} {msg}");
-}
+// ── Model Tier Tables ───────────────────────────────────────────
 
-fn print_warn(msg: &str) {
-    println!("  {YELLOW}⚠️{RESET}  {msg}");
-}
-
-fn print_error(msg: &str) {
-    println!("  {RED}❌{RESET} {msg}");
-}
-
-fn read_line() -> String {
-    print!("  {GOLD}▸{RESET} ");
-    io::stdout().flush().ok();
-    let mut input = String::new();
-    io::stdin().lock().read_line(&mut input).unwrap_or_default();
-    input.trim().to_string()
-}
-
-fn ask_yes_no(question: &str, default_yes: bool) -> bool {
-    let hint = if default_yes { "[Y/n]" } else { "[y/N]" };
-    print_apis(&format!("{question} {DIM}{hint}{RESET}"));
-    let input = read_line().to_lowercase();
-    if input.is_empty() {
-        return default_yes;
-    }
-    input.starts_with('y')
-}
-
-fn ask_choice(prompt: &str, options: &[&str], default: usize) -> usize {
-    print_apis(prompt);
-    for (i, opt) in options.iter().enumerate() {
-        let marker = if i == default { &format!("{GOLD}→{RESET}") } else { " " };
-        println!("    {marker} {BOLD}{}{RESET}  {opt}", i + 1);
-    }
-    print_info(&format!("Press Enter for default [{}], or type a number:", default + 1));
-    let input = read_line();
-    if input.is_empty() {
-        return default;
-    }
-    input.parse::<usize>().unwrap_or(default + 1).saturating_sub(1).min(options.len() - 1)
-}
-
-fn ask_input(prompt: &str, default: &str) -> String {
-    print_apis(&format!("{prompt} {DIM}[default: {default}]{RESET}"));
-    let input = read_line();
-    if input.is_empty() { default.to_string() } else { input }
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// Hardware Profile
-// ═══════════════════════════════════════════════════════════════════
-
-#[derive(Debug, Clone)]
-struct HardwareProfile {
-    cpu_model: String,
-    cpu_cores: usize,
-    ram_gb: f64,
-    vram_gb: f64,
-    arch: String,
-    os: String,
-    disk_free_gb: f64,
-    is_apple_silicon: bool,
-}
-
-impl HardwareProfile {
-    fn detect() -> Self {
-        let mut sys = sysinfo::System::new();
-        sys.refresh_cpu_all();
-        sys.refresh_memory();
-
-        // Prefer host hardware info passed from launch.sh (Docker sees VM, not host)
-        let cpu_model = std::env::var("HIVE_HOST_CPU_MODEL").ok()
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| {
-                sys.cpus().first()
-                    .map(|c| c.brand().to_string())
-                    .unwrap_or_else(|| "Unknown CPU".to_string())
-            });
-
-        let cpu_cores = std::env::var("HIVE_HOST_CPU_CORES").ok()
-            .and_then(|s| s.parse::<usize>().ok())
-            .unwrap_or_else(|| sys.cpus().len());
-
-        let ram_gb = std::env::var("HIVE_HOST_RAM_GB").ok()
-            .and_then(|s| s.parse::<f64>().ok())
-            .unwrap_or_else(|| sys.total_memory() as f64 / (1024.0 * 1024.0 * 1024.0));
-
-        let arch = std::env::consts::ARCH.to_string();
-        let os = std::env::var("HIVE_HOST_CPU_MODEL").ok()
-            .filter(|s| s.contains("Apple"))
-            .map(|_| "macos".to_string())
-            .unwrap_or_else(|| std::env::consts::OS.to_string());
-
-        let is_apple_silicon = os == "macos" && arch == "aarch64"
-            || std::env::var("HIVE_HOST_CPU_MODEL").ok()
-                .map_or(false, |s| s.contains("Apple"));
-
-        let vram_gb = if is_apple_silicon { ram_gb } else { 0.0 };
-
-        let disk_free_gb = sysinfo::Disks::new_with_refreshed_list()
-            .list()
-            .first()
-            .map(|d| d.available_space() as f64 / (1024.0 * 1024.0 * 1024.0))
-            .unwrap_or(0.0);
-
-        Self { cpu_model, cpu_cores, ram_gb, vram_gb, arch, os, disk_free_gb, is_apple_silicon }
-    }
-
-    fn display(&self) {
-        print_section("Hardware Scan Results");
-        println!("    {BOLD}CPU:{RESET}          {} ({} cores)", self.cpu_model, self.cpu_cores);
-        println!("    {BOLD}RAM:{RESET}          {:.0} GB", self.ram_gb);
-        if self.is_apple_silicon {
-            println!("    {BOLD}GPU:{RESET}          Unified Memory ({:.0} GB shared)", self.vram_gb);
-        } else if self.vram_gb > 0.0 {
-            println!("    {BOLD}VRAM:{RESET}         {:.0} GB", self.vram_gb);
-        }
-        println!("    {BOLD}Disk Free:{RESET}    {:.0} GB", self.disk_free_gb);
-        println!("    {BOLD}OS/Arch:{RESET}      {} / {}", self.os, self.arch);
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// Model Tier System
-// ═══════════════════════════════════════════════════════════════════
-
-/// Qwen 3.5 model sizes on Ollama (disk/VRAM in GB)
-/// 0.8b=1.0, 2b=2.7, 4b=3.4, 9b=6.6, 27b=17, 35b=24, 122b=81
-/// nomic-embed-text ≈ 0.3 GB
-
-#[derive(Debug, Clone)]
 struct ModelTier {
-    name: String,
-    emoji: String,
-    description: String,
+    main: &'static str,
+    observer: &'static str,
+    deep: &'static str,
+}
+
+fn gemma4_tier(ram_gb: u64) -> ModelTier {
+    match ram_gb {
+        0..=15 => ModelTier { main: "gemma4:e2b", observer: "gemma4:e2b", deep: "gemma4:e2b" },
+        16..=31 => ModelTier { main: "gemma4:e4b", observer: "gemma4:e2b", deep: "gemma4:e4b" },
+        32..=95 => ModelTier { main: "gemma4:26b", observer: "gemma4:e2b", deep: "gemma4:26b" },
+        96..=255 => ModelTier { main: "gemma4:26b", observer: "gemma4:e2b", deep: "gemma4:31b" },
+        _ => ModelTier { main: "gemma4:26b", observer: "gemma4:e2b", deep: "gemma4:31b" },
+    }
+}
+
+fn qwen35_tier(ram_gb: u64) -> ModelTier {
+    match ram_gb {
+        0..=15 => ModelTier { main: "qwen3.5:2b", observer: "qwen3.5:0.8b", deep: "qwen3.5:2b" },
+        16..=31 => ModelTier { main: "qwen3.5:9b", observer: "qwen3.5:2b", deep: "qwen3.5:9b" },
+        32..=95 => ModelTier { main: "qwen3.5:27b", observer: "qwen3.5:2b", deep: "qwen3.5:35b" },
+        96..=255 => ModelTier { main: "qwen3.5:35b", observer: "qwen3.5:9b", deep: "qwen3.5:122b" },
+        _ => ModelTier { main: "qwen3.5:122b", observer: "qwen3.5:9b", deep: "qwen3.5:122b" },
+    }
+}
+
+// ── Hardware Detection ──────────────────────────────────────────
+
+fn detect_ram_gb() -> Option<u64> {
+    // macOS: sysctl hw.memsize
+    if let Ok(output) = std::process::Command::new("sysctl")
+        .arg("-n")
+        .arg("hw.memsize")
+        .output()
+    {
+        if output.status.success() {
+            if let Ok(bytes_str) = String::from_utf8(output.stdout) {
+                if let Ok(bytes) = bytes_str.trim().parse::<u64>() {
+                    return Some(bytes / (1024 * 1024 * 1024));
+                }
+            }
+        }
+    }
+    // Linux: /proc/meminfo
+    if let Ok(content) = std::fs::read_to_string("/proc/meminfo") {
+        for line in content.lines() {
+            if line.starts_with("MemTotal:") {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if let Some(kb_str) = parts.get(1) {
+                    if let Ok(kb) = kb_str.parse::<u64>() {
+                        return Some(kb / (1024 * 1024));
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn detect_cpu_info() -> String {
+    // macOS
+    if let Ok(output) = std::process::Command::new("sysctl")
+        .arg("-n")
+        .arg("machdep.cpu.brand_string")
+        .output()
+    {
+        if output.status.success() {
+            if let Ok(s) = String::from_utf8(output.stdout) {
+                let trimmed = s.trim().to_string();
+                if !trimmed.is_empty() {
+                    return trimmed;
+                }
+            }
+        }
+    }
+    // Apple Silicon (M-series)
+    if let Ok(output) = std::process::Command::new("sysctl")
+        .arg("-n")
+        .arg("hw.model")
+        .output()
+    {
+        if output.status.success() {
+            if let Ok(s) = String::from_utf8(output.stdout) {
+                return s.trim().to_string();
+            }
+        }
+    }
+    "Unknown CPU".to_string()
+}
+
+// ── .env Generation ─────────────────────────────────────────────
+
+struct EnvConfig {
+    discord_token: String,
+    admin_users: String,
+    target_channel: String,
+    chat_channel: String,
+    brave_api_key: String,
+    smtp_user: String,
+    smtp_pass: String,
+    smtp_host: String,
+    smtp_port: String,
+    imap_user: String,
+    imap_pass: String,
+    imap_host: String,
+    imap_port: String,
     main_model: String,
     observer_model: String,
     deep_model: String,
     glasses_model: String,
-    embed_model: String,
-    router_model: String,
-    low_model: String,
-    medium_model: String,
-    high_model: String,
-    estimated_vram_gb: f64,
-    estimated_disk_gb: f64,
 }
 
-impl ModelTier {
-    fn display(&self, index: usize) {
-        println!();
-        println!("    {BOLD}{} Option {} — {}{RESET}", self.emoji, index + 1, self.name);
-        println!("    {DIM}{}:{RESET}", self.description);
-        println!("      Main model:      {GREEN}{}{RESET}", self.main_model);
-        println!("      Observer:         {CYAN}{}{RESET}", self.observer_model);
-        println!("      Deep Think:      {BLUE}{}{RESET}", self.deep_model);
-        println!("      Glasses (voice): {DIM}{}{RESET}", self.glasses_model);
-        println!("      Embeddings:      {DIM}{}{RESET}", self.embed_model);
-        println!("      {DIM}VRAM needed: ~{:.0} GB | Disk: ~{:.0} GB{RESET}", self.estimated_vram_gb, self.estimated_disk_gb);
-    }
-}
-
-fn calculate_tiers(hw: &HardwareProfile) -> Vec<ModelTier> {
-    let ram = hw.ram_gb;
-
-    // Helper to build a tier
-    let tier = |name: &str, emoji: &str, desc: &str,
-                main: &str, observer: &str, deep: &str, glasses: &str,
-                vram: f64, disk: f64| -> ModelTier {
-        ModelTier {
-            name: name.into(), emoji: emoji.into(), description: desc.into(),
-            main_model: format!("qwen3.5:{main}"),
-            observer_model: format!("qwen3.5:{observer}"),
-            deep_model: format!("qwen3.5:{deep}"),
-            glasses_model: format!("qwen3.5:{glasses}"),
-            embed_model: "nomic-embed-text".into(),
-            router_model: format!("qwen3.5:{observer}"),
-            low_model: format!("qwen3.5:{}", if observer == "0.8b" { "0.8b" } else { observer }),
-            medium_model: format!("qwen3.5:{main}"),
-            high_model: format!("qwen3.5:{deep}"),
-            estimated_vram_gb: vram,
-            estimated_disk_gb: disk,
+impl EnvConfig {
+    fn defaults() -> Self {
+        Self {
+            discord_token: String::new(),
+            admin_users: String::new(),
+            target_channel: String::new(),
+            chat_channel: String::new(),
+            brave_api_key: String::new(),
+            smtp_user: String::new(),
+            smtp_pass: String::new(),
+            smtp_host: "smtp.gmail.com".into(),
+            smtp_port: "587".into(),
+            imap_user: String::new(),
+            imap_pass: String::new(),
+            imap_host: "imap.gmail.com".into(),
+            imap_port: "993".into(),
+            main_model: "gemma4:e2b".into(),
+            observer_model: "gemma4:e2b".into(),
+            deep_model: "gemma4:e2b".into(),
+            glasses_model: "gemma4:e2b".into(),
         }
-    };
+    }
 
-    if ram < 8.0 {
-        // Under 8GB — very constrained
-        vec![
-            tier("Micro",   "🟢", "Tiny models — will run but limited capability",
-                 "0.8b", "0.8b", "2b", "0.8b", 4.0, 5.0),
-            tier("Light",   "🟡", "Small models — decent for basic tasks",
-                 "2b", "0.8b", "4b", "0.8b", 6.0, 8.0),
-            tier("Stretch", "🔴", "Pushing your RAM — may be slow",
-                 "4b", "0.8b", "4b", "0.8b", 7.0, 8.0),
-        ]
-    } else if ram < 16.0 {
-        // 8–15 GB
-        vec![
-            tier("Conservative", "🟢", "Comfortable with room for OS overhead",
-                 "2b", "0.8b", "4b", "0.8b", 6.0, 8.0),
-            tier("Balanced",     "🟡", "Good performance for everyday use",
-                 "4b", "2b", "9b", "0.8b", 10.0, 14.0),
-            tier("Full",         "🔴", "Uses most of your RAM — close to the limit",
-                 "9b", "0.8b", "9b", "0.8b", 13.0, 14.0),
-        ]
-    } else if ram < 32.0 {
-        // 16–31 GB
-        vec![
-            tier("Conservative", "🟢", "Smooth sailing with headroom",
-                 "4b", "2b", "9b", "2b", 10.0, 16.0),
-            tier("Balanced",     "🟡", "Strong performance for most tasks",
-                 "9b", "4b", "9b", "2b", 14.0, 16.0),
-            tier("Power",        "🔴", "Pushes your 16GB — best quality possible",
-                 "9b", "4b", "27b", "2b", 20.0, 27.0),
-        ]
-    } else if ram < 64.0 {
-        // 32–63 GB
-        vec![
-            tier("Conservative", "🟢", "Plenty of headroom for multitasking",
-                 "9b", "4b", "9b", "4b", 14.0, 17.0),
-            tier("Balanced",     "🟡", "Strong across all tasks",
-                 "27b", "4b", "27b", "4b", 30.0, 38.0),
-            tier("Power",        "🔴", "Near-max utilisation — excellent quality",
-                 "35b", "9b", "27b", "4b", 42.0, 52.0),
-        ]
-    } else if ram < 128.0 {
-        // 64–127 GB
-        vec![
-            tier("Conservative", "🟢", "Comfortable with large models",
-                 "27b", "4b", "27b", "4b", 30.0, 38.0),
-            tier("Balanced",     "🟡", "Premium quality for demanding work",
-                 "35b", "9b", "35b", "4b", 48.0, 55.0),
-            tier("Power",        "🔴", "Maximum quality your system supports",
-                 "35b", "9b", "122b", "9b", 100.0, 112.0),
-        ]
-    } else if ram < 256.0 {
-        // 128–255 GB
-        vec![
-            tier("Conservative", "🟢", "Plenty of headroom even with the big model",
-                 "35b", "9b", "35b", "9b", 48.0, 55.0),
-            tier("Balanced",     "🟡", "122B for deep thinking — very powerful",
-                 "35b", "9b", "122b", "9b", 100.0, 112.0),
-            tier("Power",        "🔴", "Full 122B as primary — flagship experience",
-                 "122b", "9b", "122b", "9b", 162.0, 170.0),
-        ]
+    fn generate_env(&self) -> String {
+        format!(r#"# ═══════════════════════════════════════════════════════════════
+# HIVE Engine — Live Configuration
+# Generated by Setup Wizard
+# ═══════════════════════════════════════════════════════════════
+
+# ── Discord ──────────────────────────────────────────────────
+DISCORD_TOKEN="{}"
+HIVE_ADMIN_USERS={}
+HIVE_TARGET_CHANNEL={}
+HIVE_CHAT_CHANNEL={}
+# HIVE_WELCOME_CHANNEL=
+
+# ── Search ───────────────────────────────────────────────────
+BRAVE_SEARCH_API_KEY="{}"
+
+# ── Email ────────────────────────────────────────────────────
+SMTP_USER="{}"
+SMTP_PASS="{}"
+SMTP_HOST="{}"
+SMTP_PORT="{}"
+IMAP_USER="{}"
+IMAP_PASS="{}"
+IMAP_HOST="{}"
+IMAP_PORT="{}"
+
+# ── Provider & Models ────────────────────────────────────────
+HIVE_PROVIDER=ollama
+# HIVE_OLLAMA_URL=http://localhost:11434
+HIVE_MODEL={}
+HIVE_OBSERVER_MODEL={}
+HIVE_DEEP_MODEL={}
+HIVE_GLASSES_MODEL={}
+HIVE_EMBED_MODEL=nomic-embed-text
+# HIVE_MODEL_PULL=false
+
+# ── Reasoning Router ─────────────────────────────────────────
+HIVE_ROUTER_ENABLED=false
+HIVE_ROUTER_MODEL={}
+HIVE_LOW_MODEL={}
+HIVE_MEDIUM_MODEL={}
+HIVE_HIGH_MODEL={}
+
+# ── Inference Parameters ─────────────────────────────────────
+HIVE_MODEL_TEMPERATURE=0.7
+HIVE_MODEL_TOP_P=0.9
+HIVE_MODEL_TOP_K=40
+HIVE_MODEL_REPEAT_PENALTY=1.1
+HIVE_SERIAL_INFERENCE=false
+HIVE_MAX_PARALLEL=16
+
+# ── Engine Limits & Timeouts ─────────────────────────────────
+HIVE_TIMEOUT_INFERENCE_SECS=300
+HIVE_TIMEOUT_TOOL_SECS=30
+HIVE_TIMEOUT_COMPILE_SECS=15
+HIVE_LIMIT_CONTEXT_TOKENS=8192
+HIVE_LIMIT_GENERATION_TOKENS=4096
+HIVE_WORKING_MEMORY_CAP=100
+HIVE_HISTORY_MSG_CAP=1000000
+
+# ── Permissions ──────────────────────────────────────────────
+HIVE_ALLOW_TERMINAL=true
+HIVE_ALLOW_FILE_SYSTEM=true
+HIVE_ALLOW_REFUSAL=true
+HIVE_STRICT_SAFEGUARDS=true
+
+# ── Storage & Directories ───────────────────────────────────
+HIVE_STORAGE_ROOT=memory
+# HIVE_WORKSPACE_DIR=.
+# HIVE_ARTIFACTS_DIR=artifacts
+# HIVE_LOGS_DIR=logs
+# HIVE_DOWNLOADS_DIR=/tmp/hive
+# HIVE_CACHE_DIR=memory/cache/images
+# HIVE_PROJECT_DIR=.
+
+# ── Python & Training ───────────────────────────────────────
+# HIVE_PYTHON_BIN=python3
+HIVE_TRAINING_BACKEND=auto
+HIVE_SLEEP_INTERVAL_SECS=300
+
+# ── Persona & Identity ──────────────────────────────────────
+# Persona is edited through the kernel-protected system.
+
+# ── File Server ──────────────────────────────────────────────
+HIVE_FILE_SERVER_PORT=8421
+HIVE_FILE_TOKEN=hive_admin_2026
+
+# ── Glasses (WebSocket) ─────────────────────────────────────
+# HIVE_GLASSES_PORT=8421
+# HIVE_GLASSES_TOKEN=
+
+# ── UI & Dashboards ─────────────────────────────────────────
+# HIVE_UI_TITLE=HIVE Mesh
+# HIVE_UI_THEME_COLOR=#ff9900
+# HIVE_AUTO_OPEN=false
+
+# ═══════════════════════════════════════════════════════════════
+# SafeNet P2P Mesh
+# ═══════════════════════════════════════════════════════════════
+
+NEUROLEASE_ENABLED=true
+HIVE_CRYPTO_SIMULATION=true
+"#,
+            self.discord_token,
+            self.admin_users,
+            self.target_channel,
+            self.chat_channel,
+            self.brave_api_key,
+            self.smtp_user, self.smtp_pass, self.smtp_host, self.smtp_port,
+            self.imap_user, self.imap_pass, self.imap_host, self.imap_port,
+            self.main_model,
+            self.observer_model,
+            self.deep_model,
+            self.glasses_model,
+            // Router models (use observer as low, main as medium, deep as high)
+            self.observer_model,
+            self.observer_model,
+            self.main_model,
+            self.deep_model,
+        )
+    }
+}
+
+// ── Main Entry Points ───────────────────────────────────────────
+
+/// Run the wizard with all defaults (non-interactive mode)
+pub fn run_defaults() {
+    let config = EnvConfig::defaults();
+    write_env(&config);
+    eprintln!("[SETUP] Generated .env with safe defaults (gemma4:e2b)");
+}
+
+/// Run the full interactive wizard
+pub fn run() {
+    print_header();
+
+    let mut config = EnvConfig::defaults();
+    let mut ram_gb: u64 = 0;
+
+    // ── Step 1: Hardware Detection ──────────────────────────────
+    print_step(1, "Hardware Detection");
+    if prompt_yn("May I scan your hardware to recommend the best model?", true) {
+        if let Some(ram) = detect_ram_gb() {
+            ram_gb = ram;
+            let cpu = detect_cpu_info();
+            print_ok(&format!("RAM: {ram_gb} GB"));
+            print_ok(&format!("CPU: {cpu}"));
+        } else {
+            print_info("Could not detect hardware — you can select models manually.");
+        }
     } else {
-        // 256+ GB (e.g., M3 Ultra 512GB)
-        vec![
-            tier("Conservative", "🟢", "Fast and responsive — 9B snaps back instantly",
-                 "9b", "4b", "35b", "4b", 18.0, 30.0),
-            tier("Balanced",     "🟡", "35B primary — strong quality with speed",
-                 "35b", "9b", "122b", "9b", 100.0, 112.0),
-            tier("Maximum",      "🔴", "Full 122B flagship — maximum intelligence",
-                 "122b", "35b", "122b", "35b", 210.0, 215.0),
-        ]
+        print_info("Skipped hardware detection. You can select models manually.");
     }
-}
 
-/// Returns the unique set of models to pull for a given tier.
-fn models_to_pull(tier: &ModelTier) -> Vec<String> {
-    let mut models = vec![
-        tier.main_model.clone(),
-        tier.observer_model.clone(),
-        tier.deep_model.clone(),
-        tier.glasses_model.clone(),
-        tier.embed_model.clone(),
-    ];
-    models.sort();
-    models.dedup();
-    models
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// Sentinel Check
-// ═══════════════════════════════════════════════════════════════════
-
-const SENTINEL_PATH: &str = "memory/core/setup_complete.json";
-
-/// Check if first-time setup should run.
-/// Beta software — everyone goes through setup if they haven't completed it.
-pub fn should_run_setup() -> bool {
-    if std::path::Path::new(SENTINEL_PATH).exists() {
-        // Sentinel exists — offer re-run
-        return offer_rerun();
-    }
-    // No sentinel = hasn't done setup yet. Run it.
-    true
-}
-
-/// If the sentinel exists, ask the user if they want to re-run setup.
-fn offer_rerun() -> bool {
-    // Only offer if launched interactively (not in Docker)
-    if std::path::Path::new("/.dockerenv").exists() {
-        return false;
-    }
+    // ── Step 2: Model Configuration ────────────────────────────
+    print_step(2, "Model Configuration");
     println!();
-    print_apis("I see you've already completed setup before.");
-    if ask_yes_no("Would you like to re-run the setup wizard?", false) {
-        let _ = std::fs::remove_file(SENTINEL_PATH);
-        print_success("Setup reset! Starting fresh...");
-        true
-    } else {
-        false
-    }
-}
+    println!("  {BOLD}Choose a model family:{RESET}");
+    println!("    {GREEN}[1]{RESET} Gemma 4 {DIM}(Google, recommended){RESET}");
+    println!("    {GREEN}[2]{RESET} Qwen 3.5 {DIM}(Alibaba){RESET}");
+    println!("    {GREEN}[3]{RESET} Browse Ollama Library {DIM}(custom model){RESET}");
+    println!();
 
-// ═══════════════════════════════════════════════════════════════════
-// Model Pulling (Ollama API)
-// ═══════════════════════════════════════════════════════════════════
+    let family = prompt("Selection", "1");
 
-async fn pull_model(model: &str) -> bool {
-    let base_url = std::env::var("HIVE_OLLAMA_URL")
-        .unwrap_or_else(|_| "http://localhost:11434".to_string());
-
-    // First check if model already exists
-    if let Ok(resp) = reqwest::get(format!("{}/api/tags", base_url)).await {
-        if let Ok(json) = resp.json::<serde_json::Value>().await {
-            if let Some(models) = json.get("models").and_then(|m| m.as_array()) {
-                if models.iter().any(|m| m.get("name").and_then(|n| n.as_str()) == Some(model)) {
-                    print_success(&format!("{model} — already downloaded"));
-                    return true;
-                }
+    match family.as_str() {
+        "2" => {
+            let tier = qwen35_tier(ram_gb);
+            if ram_gb > 0 {
+                println!();
+                println!("  {BOLD}Recommended for {ram_gb}GB RAM:{RESET}");
+                println!("    Main:     {GREEN}{}{RESET}", tier.main);
+                println!("    Observer: {GREEN}{}{RESET}", tier.observer);
+                println!("    Deep:     {GREEN}{}{RESET}", tier.deep);
+                println!();
             }
+            config.main_model = prompt("Main model", tier.main);
+            config.observer_model = prompt("Observer model", tier.observer);
+            config.deep_model = prompt("Deep model", tier.deep);
+            config.glasses_model = prompt("Glasses model", tier.observer);
         }
-    }
-
-    print_apis(&format!("Downloading {BOLD}{model}{RESET}..."));
-
-    let client = reqwest::Client::new();
-    let resp = client.post(format!("{}/api/pull", base_url))
-        .json(&serde_json::json!({"name": model, "stream": true}))
-        .send()
-        .await;
-
-    match resp {
-        Ok(mut response) => {
-            let mut last_pct: i64 = -1;
-            let mut buf = String::new();
-            while let Ok(Some(chunk)) = response.chunk().await {
-                buf.push_str(&String::from_utf8_lossy(&chunk));
-                while let Some(nl) = buf.find('\n') {
-                    let line: String = buf.drain(..=nl).collect();
-                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(line.trim()) {
-                        if let Some(total) = json.get("total").and_then(|t| t.as_u64()) {
-                            if let Some(completed) = json.get("completed").and_then(|c| c.as_u64()) {
-                                let pct = (completed as f64 / total as f64 * 100.0) as i64;
-                                if pct != last_pct && pct % 5 == 0 {
-                                    let bar_len = (pct as usize) / 2;
-                                    let bar: String = "█".repeat(bar_len);
-                                    let empty: String = "░".repeat(50 - bar_len);
-                                    print!("\r    {GREEN}{bar}{DIM}{empty}{RESET} {pct}%");
-                                    io::stdout().flush().ok();
-                                    last_pct = pct;
-                                }
-                            }
-                        }
-                        if json.get("status").and_then(|s| s.as_str()) == Some("success") {
-                            println!();
-                            print_success(&format!("{model} — downloaded successfully"));
-                            return true;
-                        }
-                        if let Some(err) = json.get("error").and_then(|e| e.as_str()) {
-                            println!();
-                            print_error(&format!("Failed to pull {model}: {err}"));
-                            return false;
-                        }
-                    }
-                }
-            }
+        "3" => {
             println!();
-            print_success(&format!("{model} — download complete"));
-            true
+            println!("  {BOLD}Browse models at:{RESET} {CYAN}https://ollama.com/library{RESET}");
+            println!("  {DIM}Enter any model tag (e.g. llama3:70b, mistral:7b){RESET}");
+            println!();
+            config.main_model = prompt("Main model", "gemma4:e2b");
+            config.observer_model = prompt("Observer model", "gemma4:e2b");
+            config.deep_model = prompt("Deep model", &config.main_model);
+            config.glasses_model = prompt("Glasses model", &config.observer_model);
         }
-        Err(e) => {
-            print_error(&format!("Could not connect to Ollama: {e}"));
-            print_info("Make sure Ollama is running (try: ollama serve)");
-            false
+        _ => {
+            // Default: Gemma 4
+            let tier = gemma4_tier(ram_gb);
+            if ram_gb > 0 {
+                println!();
+                println!("  {BOLD}Recommended for {ram_gb}GB RAM:{RESET}");
+                println!("    Main:     {GREEN}{}{RESET}", tier.main);
+                println!("    Observer: {GREEN}{}{RESET}", tier.observer);
+                println!("    Deep:     {GREEN}{}{RESET}", tier.deep);
+                println!();
+            }
+            config.main_model = prompt("Main model", tier.main);
+            config.observer_model = prompt("Observer model", tier.observer);
+            config.deep_model = prompt("Deep model", tier.deep);
+            config.glasses_model = prompt("Glasses model", tier.observer);
         }
     }
+
+    // ── Step 3: Discord Bot ────────────────────────────────────
+    print_step(3, "Discord Bot (optional)");
+    print_info("Skip this step if you don't have a Discord bot yet.");
+    config.discord_token = prompt("Discord bot token", "");
+    if !config.discord_token.is_empty() {
+        config.admin_users = prompt("Admin user ID(s) (comma-separated)", "");
+        config.target_channel = prompt("Target channel ID (agent posts here)", "");
+        config.chat_channel = prompt("Chat channel ID (agent listens here)", "");
+    }
+
+    // ── Step 4: API Keys ───────────────────────────────────────
+    print_step(4, "API Keys (optional)");
+    config.brave_api_key = prompt("Brave Search API key", "");
+
+    if prompt_yn("Configure email (SMTP/IMAP)?", false) {
+        config.smtp_user = prompt("Email address", "");
+        config.smtp_pass = prompt("App password", "");
+        config.imap_user = config.smtp_user.clone();
+        config.imap_pass = config.smtp_pass.clone();
+    }
+
+    // ── Step 5: Write .env ─────────────────────────────────────
+    print_step(5, "Generate Configuration");
+    write_env(&config);
+
+    // ── Summary ────────────────────────────────────────────────
+    println!();
+    println!("{CYAN}╔══════════════════════════════════════════════════════╗{RESET}");
+    println!("{CYAN}║{RESET}  {GREEN}✓{RESET} {BOLD}Setup Complete!{RESET}                                   {CYAN}║{RESET}");
+    println!("{CYAN}╠══════════════════════════════════════════════════════╣{RESET}");
+    println!("{CYAN}║{RESET}  Main Model:     {WHITE}{:<35}{RESET}{CYAN}║{RESET}", config.main_model);
+    println!("{CYAN}║{RESET}  Observer Model:  {WHITE}{:<35}{RESET}{CYAN}║{RESET}", config.observer_model);
+    println!("{CYAN}║{RESET}  Deep Model:      {WHITE}{:<35}{RESET}{CYAN}║{RESET}", config.deep_model);
+    println!("{CYAN}║{RESET}  Discord:         {WHITE}{:<35}{RESET}{CYAN}║{RESET}",
+        if config.discord_token.is_empty() { "Not configured" } else { "Configured ✓" });
+    println!("{CYAN}║{RESET}  Search:          {WHITE}{:<35}{RESET}{CYAN}║{RESET}",
+        if config.brave_api_key.is_empty() { "Not configured" } else { "Configured ✓" });
+    println!("{CYAN}║{RESET}  Email:           {WHITE}{:<35}{RESET}{CYAN}║{RESET}",
+        if config.smtp_user.is_empty() { "Not configured" } else { "Configured ✓" });
+    println!("{CYAN}╠══════════════════════════════════════════════════════╣{RESET}");
+    println!("{CYAN}║{RESET}  {DIM}Configuration written to .env{RESET}                       {CYAN}║{RESET}");
+    println!("{CYAN}║{RESET}  {DIM}HIVE will now boot with these settings.{RESET}             {CYAN}║{RESET}");
+    println!("{CYAN}╚══════════════════════════════════════════════════════╝{RESET}");
+    println!();
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// Environment Walkthrough
-// ═══════════════════════════════════════════════════════════════════
-
-struct EnvVar {
-    key: &'static str,
-    description: &'static str,
-    teaching: &'static str,
-    default: &'static str,
-    category: &'static str,
-    required: bool,
-    secret: bool,
-}
-
-fn env_questions() -> Vec<EnvVar> {
-    vec![
-        // ── Discord ──
-        EnvVar {
-            key: "DISCORD_TOKEN", category: "Discord",
-            description: "Your Discord bot token",
-            teaching: "This is the secret key that lets HIVE connect to Discord as a bot. You get it from https://discord.com/developers → New Application → Bot → Token. Without this, HIVE still works via CLI and the web mesh — Discord is optional.",
-            default: "", required: false, secret: true,
-        },
-        EnvVar {
-            key: "HIVE_ADMIN_USERS", category: "Discord",
-            description: "Comma-separated Discord User IDs with admin access",
-            teaching: "These users can use privileged commands like /clean, /stop, and admin-only tools. To find your ID: Discord Settings → Advanced → Developer Mode → right-click your name → Copy ID.",
-            default: "", required: false, secret: false,
-        },
-        EnvVar {
-            key: "HIVE_CHAT_CHANNEL", category: "Discord",
-            description: "Discord channel ID where users chat with HIVE",
-            teaching: "This is the main channel where you and others talk to HIVE. Right-click the channel in Discord → Copy Channel ID. HIVE listens and responds here.",
-            default: "", required: false, secret: false,
-        },
-        EnvVar {
-            key: "HIVE_TARGET_CHANNEL", category: "Discord",
-            description: "Discord channel ID for HIVE's autonomous messages",
-            teaching: "When HIVE works autonomously (learning, researching, self-improving), it posts updates here. This keeps autonomous output separate from your main chat. Can be the same channel if you prefer.",
-            default: "", required: false, secret: false,
-        },
-        // ── Search ──
-        EnvVar {
-            key: "BRAVE_SEARCH_API_KEY", category: "Search",
-            description: "Brave Search API key for web searches",
-            teaching: "Gives HIVE the ability to search the web. Get a free key at https://brave.com/search/api/ — the free tier gives 2,000 searches/month. Without this, web search is disabled.",
-            default: "", required: false, secret: true,
-        },
-        // ── Email ──
-        EnvVar {
-            key: "SMTP_USER", category: "Email",
-            description: "Email address for sending mail",
-            teaching: "HIVE can send emails on your behalf. This is the email address used as the sender. Gmail works well — use an App Password (not your main password). Leave empty to disable email.",
-            default: "", required: false, secret: false,
-        },
-        EnvVar {
-            key: "SMTP_PASS", category: "Email",
-            description: "SMTP password or app password",
-            teaching: "The password for sending emails. For Gmail, go to Google Account → Security → App Passwords → generate one for 'Mail'. Never use your main Gmail password here.",
-            default: "", required: false, secret: true,
-        },
-        EnvVar {
-            key: "SMTP_HOST", category: "Email",
-            description: "SMTP server hostname",
-            teaching: "The mail server for sending. Gmail: smtp.gmail.com, Outlook: smtp.office365.com. Most users can accept the default.",
-            default: "smtp.gmail.com", required: false, secret: false,
-        },
-        EnvVar {
-            key: "SMTP_PORT", category: "Email",
-            description: "SMTP port",
-            teaching: "587 for TLS (recommended), 465 for SSL. Almost always 587.",
-            default: "587", required: false, secret: false,
-        },
-        EnvVar {
-            key: "IMAP_USER", category: "Email",
-            description: "Email address for reading mail",
-            teaching: "HIVE can also READ incoming emails. Usually the same as your SMTP_USER address.",
-            default: "", required: false, secret: false,
-        },
-        EnvVar {
-            key: "IMAP_PASS", category: "Email",
-            description: "IMAP password or app password",
-            teaching: "Password for reading emails. Usually the same app password as SMTP_PASS.",
-            default: "", required: false, secret: true,
-        },
-        EnvVar {
-            key: "IMAP_HOST", category: "Email",
-            description: "IMAP server hostname",
-            teaching: "The mail server for reading. Gmail: imap.gmail.com.",
-            default: "imap.gmail.com", required: false, secret: false,
-        },
-        EnvVar {
-            key: "IMAP_PORT", category: "Email",
-            description: "IMAP port",
-            teaching: "993 for SSL (standard). Almost always 993.",
-            default: "993", required: false, secret: false,
-        },
-        // ── Inference Parameters ──
-        EnvVar {
-            key: "HIVE_MODEL_TEMPERATURE", category: "Inference",
-            description: "Model creativity (0.0–2.0)",
-            teaching: "Temperature controls randomness. Lower values (0.2) = more focused and deterministic. Higher values (1.0) = more creative and varied. 0.7 is a great balance between accuracy and personality.",
-            default: "0.7", required: false, secret: false,
-        },
-        EnvVar {
-            key: "HIVE_MODEL_TOP_P", category: "Inference",
-            description: "Nucleus sampling threshold (0.0–1.0)",
-            teaching: "Top-P filters the model's word choices to the most likely ones. 0.9 means it considers tokens that make up the top 90% of probability mass. Lower = more focused, higher = more diverse.",
-            default: "0.9", required: false, secret: false,
-        },
-        EnvVar {
-            key: "HIVE_MODEL_TOP_K", category: "Inference",
-            description: "Top-K sampling limit",
-            teaching: "Limits the model to choosing from the top K most likely next tokens. 40 is a solid default. Lower = safer outputs, higher = more creative.",
-            default: "40", required: false, secret: false,
-        },
-        EnvVar {
-            key: "HIVE_MODEL_REPEAT_PENALTY", category: "Inference",
-            description: "Repetition penalty (1.0 = none)",
-            teaching: "Penalises the model for repeating itself. 1.0 = no penalty, 1.1 = mild (recommended), 1.5 = aggressive. Too high and the model starts avoiding common words.",
-            default: "1.1", required: false, secret: false,
-        },
-        EnvVar {
-            key: "HIVE_SERIAL_INFERENCE", category: "Inference",
-            description: "Process one request at a time (true/false)",
-            teaching: "When true, HIVE processes one inference request at a time. This is recommended for local models since they share the same GPU. Set false only if you have multiple GPUs.",
-            default: "true", required: false, secret: false,
-        },
-        // ── Timeouts ──
-        EnvVar {
-            key: "HIVE_TIMEOUT_INFERENCE_SECS", category: "Timeouts",
-            description: "Max seconds for a single inference call",
-            teaching: "How long to wait for the model to respond before timing out. Larger models on slower hardware need more time. 300s (5 min) is safe for most setups.",
-            default: "300", required: false, secret: false,
-        },
-        EnvVar {
-            key: "HIVE_TIMEOUT_TOOL_SECS", category: "Timeouts",
-            description: "Max seconds for a single tool execution",
-            teaching: "How long tools (file operations, web searches, etc.) are allowed to run. 30s prevents tools from hanging indefinitely.",
-            default: "30", required: false, secret: false,
-        },
-        EnvVar {
-            key: "HIVE_LIMIT_CONTEXT_TOKENS", category: "Timeouts",
-            description: "Max tokens in context window",
-            teaching: "Controls how much conversation history the model can see at once. Qwen 3.5 supports up to 256K, but 8192 keeps responses fast and focused. Increase for long research sessions.",
-            default: "8192", required: false, secret: false,
-        },
-        EnvVar {
-            key: "HIVE_LIMIT_GENERATION_TOKENS", category: "Timeouts",
-            description: "Max tokens per response",
-            teaching: "Maximum length of each model response. 4096 is enough for detailed answers. Increase if responses are getting cut off.",
-            default: "4096", required: false, secret: false,
-        },
-        EnvVar {
-            key: "HIVE_WORKING_MEMORY_CAP", category: "Timeouts",
-            description: "Max events in working memory",
-            teaching: "How many recent conversation events HIVE keeps in active memory. Higher = better context recall, more RAM usage. 100 is a good balance.",
-            default: "100", required: false, secret: false,
-        },
-        // ── Permissions ──
-        EnvVar {
-            key: "HIVE_ALLOW_TERMINAL", category: "Permissions",
-            description: "Allow HIVE to run shell commands (true/false)",
-            teaching: "When true, HIVE can execute terminal commands on your machine. This is powerful but requires trust. Admin-gating means only approved users can trigger this.",
-            default: "true", required: false, secret: false,
-        },
-        EnvVar {
-            key: "HIVE_ALLOW_FILE_SYSTEM", category: "Permissions",
-            description: "Allow HIVE to read/write files (true/false)",
-            teaching: "When true, HIVE can create, read, and edit files on your system. Essential for coding tasks and generating content.",
-            default: "true", required: false, secret: false,
-        },
-        EnvVar {
-            key: "HIVE_ALLOW_REFUSAL", category: "Permissions",
-            description: "Allow HIVE to refuse unsafe requests (true/false)",
-            teaching: "When true, HIVE can refuse requests it considers unsafe or unethical. Recommended to keep this enabled.",
-            default: "true", required: false, secret: false,
-        },
-        EnvVar {
-            key: "HIVE_STRICT_SAFEGUARDS", category: "Permissions",
-            description: "Enable strict safety mode (true/false)",
-            teaching: "Enables additional safety checks and content filtering. Recommended for shared or public deployments.",
-            default: "true", required: false, secret: false,
-        },
-        // ── File Server ──
-        EnvVar {
-            key: "HIVE_FILE_SERVER_PORT", category: "File Server",
-            description: "Port for the file server",
-            teaching: "The file server lets HIVE share files over HTTP. Used for image uploads, file sharing, and Glasses integration.",
-            default: "8421", required: false, secret: false,
-        },
-        EnvVar {
-            key: "HIVE_FILE_TOKEN", category: "File Server",
-            description: "Authentication token for file server access",
-            teaching: "A simple token to prevent unauthorized file access. Change this to something unique for your setup.",
-            default: "hive_admin_2026", required: false, secret: true,
-        },
-        // ── Mesh / SafeNet ──
-        EnvVar {
-            key: "NEUROLEASE_ENABLED", category: "Mesh",
-            description: "Enable the NeuroLease P2P mesh (true/false)",
-            teaching: "The mesh network lets HIVE instances connect to each other, share compute, and communicate peer-to-peer. This is what makes HIVE decentralized.",
-            default: "true", required: false, secret: false,
-        },
-        EnvVar {
-            key: "HIVE_CRYPTO_SIMULATION", category: "Mesh",
-            description: "Simulate crypto transactions (true/false)",
-            teaching: "When true, the economy runs in simulation mode — no real cryptocurrency is used. All transactions are tracked structurally but no real tokens move. Safe for testing.",
-            default: "true", required: false, secret: false,
-        },
-        // ── Training ──
-        EnvVar {
-            key: "HIVE_SLEEP_INTERVAL_SECS", category: "Training",
-            description: "Seconds between self-training cycles",
-            teaching: "HIVE can learn from its own conversations during 'sleep' cycles. This sets how often it checks for new training data. 300s (5 min) is the default. Set higher to reduce CPU usage.",
-            default: "300", required: false, secret: false,
-        },
-    ]
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// Main Wizard Orchestrator
-// ═══════════════════════════════════════════════════════════════════
-
-pub async fn run_setup_wizard() {
-    print_banner();
-
-    // ── Phase 1: Hello ──────────────────────────────────────────
-    print_section("Welcome");
-    print_apis(&format!("Hello! {BOLD}I'm Apis{RESET} — your AI companion inside the HIVE engine."));
-    println!();
-    print_apis("I'm going to help you get everything set up. This will only take a few minutes.");
-    print_apis("I'll scan your hardware, recommend the best AI models for your system,");
-    print_apis("download them, and configure your environment — all while teaching you");
-    print_apis("what each setting does.");
-    println!();
-    print_info("You can press Enter to accept defaults at any point. Minimal effort required!");
-    println!();
-
-    if !ask_yes_no("Ready to begin?", true) {
-        print_apis("No worries! I'll be here when you're ready. Booting with defaults...");
-        write_sentinel(None);
+fn write_env(config: &EnvConfig) {
+    let content = config.generate_env();
+    // Atomic write: .env.tmp → .env
+    if let Err(e) = std::fs::write(".env.tmp", &content) {
+        eprintln!("  {YELLOW}⚠{RESET} Failed to write .env.tmp: {e}");
+        // Direct fallback
+        if let Err(e2) = std::fs::write(".env", &content) {
+            eprintln!("  {YELLOW}⚠{RESET} Failed to write .env: {e2}");
+        }
         return;
     }
-
-    // ── Phase 2: Hardware Scan ──────────────────────────────────
-    print_section("Hardware Scan");
-    print_apis("First, I'd like to scan your hardware so I can recommend the best");
-    print_apis("AI models for your system. This checks CPU, RAM, and disk space.");
-    print_info("Nothing leaves your machine — this is 100% local.");
-    println!();
-
-    let hw = if ask_yes_no("May I scan your hardware?", true) {
-        let hw = HardwareProfile::detect();
-        hw.display();
-        println!();
-        print_success("Hardware scan complete!");
-        Some(hw)
-    } else {
-        print_apis("No problem! I'll use conservative defaults.");
-        None
-    };
-
-    // ── Phase 3: Model Recommendations ──────────────────────────
-    print_section("Model Selection");
-
-    let selected_tier = if let Some(ref hw) = hw {
-        let tiers = calculate_tiers(hw);
-
-        print_apis(&format!("Based on your {BOLD}{:.0} GB RAM{RESET}, here are three configurations:", hw.ram_gb));
-        print_apis("Each uses different Qwen 3.5 model sizes — bigger = smarter but slower.");
-        println!();
-
-        for (i, t) in tiers.iter().enumerate() {
-            t.display(i);
-        }
-
-        // If re-running setup, detect existing model choice and default to that tier
-        let existing_model = std::fs::read_to_string(".env").ok()
-            .and_then(|content| {
-                content.lines()
-                    .find(|l| l.starts_with("HIVE_MODEL="))
-                    .map(|l| l.trim_start_matches("HIVE_MODEL=").trim().trim_matches('"').to_string())
-            });
-        let default_tier = if let Some(ref model) = existing_model {
-            tiers.iter().position(|t| t.main_model == *model).unwrap_or(1)
-        } else {
-            1 // Default to balanced
-        };
-
-        if existing_model.is_some() {
-            print_info(&format!("Your current model is: {} (option {})", existing_model.as_ref().unwrap(), default_tier + 1));
-        }
-
-        println!();
-        let choice = ask_choice(
-            "Which configuration would you like?",
-            &["Conservative — safe, fast, plenty of headroom",
-              "Balanced — recommended for most users",
-              "Power — maximum quality, uses more resources"],
-            default_tier,
-        );
-
-        print_success(&format!("Selected: {} — {}", tiers[choice].emoji, tiers[choice].name));
-        Some(tiers[choice].clone())
-    } else {
-        // No hardware scan — use safe defaults
-        let default = ModelTier {
-            name: "Default".into(), emoji: "🟡".into(),
-            description: "Safe defaults without hardware scan".into(),
-            main_model: "qwen3.5:9b".into(),
-            observer_model: "qwen3.5:4b".into(),
-            deep_model: "qwen3.5:9b".into(),
-            glasses_model: "qwen3.5:2b".into(),
-            embed_model: "nomic-embed-text".into(),
-            router_model: "qwen3.5:4b".into(),
-            low_model: "qwen3.5:4b".into(),
-            medium_model: "qwen3.5:9b".into(),
-            high_model: "qwen3.5:9b".into(),
-            estimated_vram_gb: 14.0,
-            estimated_disk_gb: 16.0,
-        };
-        Some(default)
-    };
-
-    // ── Phase 4: Model Download ─────────────────────────────────
-    if let Some(ref tier) = selected_tier {
-        print_section("Model Download");
-        let to_pull = models_to_pull(tier);
-
-        print_apis(&format!("I need to download {} model(s). This may take a while depending", to_pull.len()));
-        print_apis("on your internet speed — some models are quite large.");
-        println!();
-
-        if ask_yes_no("Shall I download the models now?", true) {
-            for model in &to_pull {
-                pull_model(model).await;
-            }
-            println!();
-            print_success("All models ready!");
-        } else {
-            print_apis("No worries — you can pull them later with: ollama pull <model_name>");
-        }
+    if let Err(e) = std::fs::rename(".env.tmp", ".env") {
+        eprintln!("  {YELLOW}⚠{RESET} Failed to rename .env.tmp → .env: {e}");
+        // Fallback: just write directly
+        let _ = std::fs::write(".env", &content);
     }
-
-    // ── Phase 5: Environment Walkthrough ────────────────────────
-    print_section("Environment Configuration");
-    print_apis("Now let's configure your HIVE environment. I'll walk you through");
-    print_apis("each setting, explain what it does, and you can customise or accept defaults.");
-    println!();
-
-    let auto_mode = ask_yes_no("Want me to auto-configure everything? (You can still review each setting)", true);
-
-    let mut env_values: Vec<(String, String)> = Vec::new();
-
-    // Load existing .env values to use as defaults on re-run
-    let existing_env: std::collections::HashMap<String, String> = std::fs::read_to_string(".env")
-        .ok()
-        .map(|content| {
-            content.lines()
-                .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
-                .filter_map(|l| {
-                    let mut parts = l.splitn(2, '=');
-                    let key = parts.next()?.trim().to_string();
-                    let val = parts.next()?.trim().trim_matches('"').to_string();
-                    Some((key, val))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    if !existing_env.is_empty() {
-        print_info(&format!("Found existing .env with {} settings — using as defaults.", existing_env.len()));
-        println!();
-    }
-
-    // Add model settings from the selected tier
-    if let Some(ref tier) = selected_tier {
-        env_values.push(("HIVE_PROVIDER".into(), "ollama".into()));
-        env_values.push(("HIVE_MODEL".into(), tier.main_model.clone()));
-        env_values.push(("HIVE_OBSERVER_MODEL".into(), tier.observer_model.clone()));
-        env_values.push(("HIVE_DEEP_MODEL".into(), tier.deep_model.clone()));
-        env_values.push(("HIVE_GLASSES_MODEL".into(), tier.glasses_model.clone()));
-        env_values.push(("HIVE_EMBED_MODEL".into(), tier.embed_model.clone()));
-        env_values.push(("HIVE_ROUTER_MODEL".into(), tier.router_model.clone()));
-        env_values.push(("HIVE_LOW_MODEL".into(), tier.low_model.clone()));
-        env_values.push(("HIVE_MEDIUM_MODEL".into(), tier.medium_model.clone()));
-        env_values.push(("HIVE_HIGH_MODEL".into(), tier.high_model.clone()));
-    }
-
-    let questions = env_questions();
-    let mut current_category = "";
-
-    for q in &questions {
-        if q.category != current_category {
-            print_section(&format!("⚙️  {}", q.category));
-            current_category = q.category;
-        }
-
-        // Use existing .env value as default if available
-        let effective_default = existing_env.get(q.key)
-            .map(|s| s.as_str())
-            .unwrap_or(q.default);
-
-        println!("    {BOLD}{}{RESET}", q.key);
-        println!("    {DIM}{}{RESET}", q.teaching);
-        if existing_env.contains_key(q.key) && !q.secret {
-            println!("    {CYAN}(current: {}){RESET}", effective_default);
-        } else if existing_env.contains_key(q.key) && q.secret {
-            println!("    {CYAN}(previously set){RESET}");
-        }
-        println!();
-
-        let value = if auto_mode && !q.required && !q.secret {
-            print_info(&format!("Auto-set to: {}", if effective_default.is_empty() { "(skipped)" } else { effective_default }));
-            effective_default.to_string()
-        } else if q.secret && effective_default.is_empty() {
-            // Always ask for secrets — but make optional
-            let v = ask_input(&format!("{} (leave blank to skip):", q.description), "");
-            v
-        } else if q.secret && !effective_default.is_empty() {
-            // Secret with existing value — keep it unless user types a new one
-            let v = ask_input(&format!("{} (Enter to keep current):", q.description), "");
-            if v.is_empty() { effective_default.to_string() } else { v }
-        } else {
-            ask_input(q.description, effective_default)
-        };
-
-        if !value.is_empty() {
-            env_values.push((q.key.to_string(), value));
-        }
-    }
-
-    // Add standard defaults that don't need user interaction
-    let auto_defaults = vec![
-        ("HIVE_SERIAL_INFERENCE", "true"),
-        ("HIVE_STRICT_SAFEGUARDS", "true"),
-        ("HIVE_ALLOW_REFUSAL", "true"),
-        ("HIVE_STORAGE_ROOT", "memory"),
-        ("HIVE_WORKING_MEMORY_CAP", "100"),
-        ("HIVE_HISTORY_MSG_CAP", "1000000"),
-        ("HIVE_LIMIT_GENERATION_TOKENS", "4096"),
-        ("HIVE_FILE_SERVER_PORT", "8421"),
-        ("HIVE_FILE_TOKEN", "hive_admin_2026"),
-        ("HIVE_ROUTER_ENABLED", "false"),
-        ("NEUROLEASE_ENABLED", "true"),
-        ("HIVE_CRYPTO_SIMULATION", "true"),
-        ("HIVE_TRAINING_BACKEND", "auto"),
-    ];
-
-    for (k, v) in &auto_defaults {
-        if !env_values.iter().any(|(key, _)| key == k) {
-            env_values.push((k.to_string(), v.to_string()));
-        }
-    }
-
-    // ── Phase 6: Write .env & Finalize ──────────────────────────
-    print_section("Finalizing");
-    print_apis("Writing your configuration...");
-
-    write_env_file(&env_values);
-    write_sentinel(hw.as_ref());
-
-    println!();
-    print_success("Configuration saved to .env");
-    print_success("Setup complete!");
-    println!();
-    print_apis(&format!("{BOLD}Welcome to the HIVE. 🐝{RESET}"));
-    print_apis("Your engine is about to boot for the first time.");
-    print_apis("If you ever want to re-run this wizard, just launch HIVE again —");
-    print_apis("I'll ask if you'd like to start fresh.");
-    println!();
-
-    println!("{GOLD}═══════════════════════════════════════════════════════════════{RESET}");
-    println!("{GOLD}  Summary:{RESET}");
-    if let Some(ref tier) = selected_tier {
-        println!("    Main Model:   {GREEN}{}{RESET}", tier.main_model);
-        println!("    Observer:     {CYAN}{}{RESET}", tier.observer_model);
-        println!("    Deep Think:   {BLUE}{}{RESET}", tier.deep_model);
-        println!("    Glasses:      {DIM}{}{RESET}", tier.glasses_model);
-        println!("    Embeddings:   {DIM}{}{RESET}", tier.embed_model);
-    }
-    println!("{GOLD}═══════════════════════════════════════════════════════════════{RESET}");
-    println!();
-
-    // ── Phase 7: Onboarding Platform Choice ─────────────────────
-    // Ask the user where they'd like to do the interactive onboarding.
-    // If Discord is configured, offer it as an option; otherwise default to CLI.
-    let has_discord = env_values.iter().any(|(k, v)| k == "DISCORD_TOKEN" && !v.is_empty());
-
-    if has_discord {
-        print_section("Onboarding Location");
-        print_apis("Next up is the onboarding experience — where I'll introduce myself,");
-        print_apis("show you my systems, learn about you, and let you name me.");
-        println!();
-        print_apis("Since you've configured Discord, you can choose where to do this:");
-        println!();
-
-        let choice = ask_choice(
-            "Where would you like to meet me?",
-            &["Right here in the terminal — let's keep going",
-              "On Discord — I'll start the conversation there"],
-            0, // Default to CLI (always available)
-        );
-
-        let platform = if choice == 0 { "cli" } else { "discord" };
-
-        // Persist the choice so the engine knows where to inject the welcome event
-        let _ = std::fs::create_dir_all("memory/core");
-        let platform_json = serde_json::json!({
-            "platform": platform,
-            "chosen_at": chrono::Utc::now().to_rfc3339(),
-        });
-        let _ = std::fs::write(
-            "memory/core/onboarding_platform.json",
-            serde_json::to_string_pretty(&platform_json).unwrap_or_default(),
-        );
-
-        if platform == "discord" {
-            print_success("I'll meet you on Discord once I've finished booting. 🐝");
-        } else {
-            print_success("I'll greet you right here in the terminal. 🐝");
-        }
-    } else {
-        // No Discord — default to CLI silently
-        let _ = std::fs::create_dir_all("memory/core");
-        let platform_json = serde_json::json!({
-            "platform": "cli",
-            "chosen_at": chrono::Utc::now().to_rfc3339(),
-        });
-        let _ = std::fs::write(
-            "memory/core/onboarding_platform.json",
-            serde_json::to_string_pretty(&platform_json).unwrap_or_default(),
-        );
-    }
-
-    println!();
-    print_apis(&format!("{BOLD}Booting the HIVE Engine...{RESET}"));
-    println!();
+    print_ok("Configuration written to .env");
 }
 
-fn write_env_file(values: &[(String, String)]) {
-    let mut content = String::new();
-    content.push_str("# ═══════════════════════════════════════════════════════════════\n");
-    content.push_str("# HIVE Engine — Generated by Apis Setup Wizard\n");
-    content.push_str(&format!("# Generated: {}\n", chrono::Utc::now().to_rfc3339()));
-    content.push_str("# ═══════════════════════════════════════════════════════════════\n\n");
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    // Group by known categories
-    let groups: Vec<(&str, Vec<&str>)> = vec![
-        ("Discord", vec!["DISCORD_TOKEN", "HIVE_ADMIN_USERS", "HIVE_TARGET_CHANNEL", "HIVE_CHAT_CHANNEL"]),
-        ("Search", vec!["BRAVE_SEARCH_API_KEY"]),
-        ("Email", vec!["SMTP_USER", "SMTP_PASS", "SMTP_HOST", "SMTP_PORT",
-            "IMAP_USER", "IMAP_PASS", "IMAP_HOST", "IMAP_PORT"]),
-        ("Provider & Models", vec!["HIVE_PROVIDER", "HIVE_MODEL", "HIVE_OBSERVER_MODEL", "HIVE_DEEP_MODEL",
-            "HIVE_GLASSES_MODEL", "HIVE_EMBED_MODEL"]),
-        ("Reasoning Router", vec!["HIVE_ROUTER_ENABLED", "HIVE_ROUTER_MODEL", "HIVE_LOW_MODEL",
-            "HIVE_MEDIUM_MODEL", "HIVE_HIGH_MODEL"]),
-        ("Inference Parameters", vec!["HIVE_MODEL_TEMPERATURE", "HIVE_MODEL_TOP_P",
-            "HIVE_MODEL_TOP_K", "HIVE_MODEL_REPEAT_PENALTY", "HIVE_SERIAL_INFERENCE"]),
-        ("Engine Limits & Timeouts", vec!["HIVE_TIMEOUT_INFERENCE_SECS", "HIVE_TIMEOUT_TOOL_SECS",
-            "HIVE_TIMEOUT_COMPILE_SECS", "HIVE_LIMIT_CONTEXT_TOKENS", "HIVE_LIMIT_GENERATION_TOKENS",
-            "HIVE_WORKING_MEMORY_CAP", "HIVE_HISTORY_MSG_CAP"]),
-        ("Permissions", vec!["HIVE_ALLOW_TERMINAL", "HIVE_ALLOW_FILE_SYSTEM",
-            "HIVE_ALLOW_REFUSAL", "HIVE_STRICT_SAFEGUARDS"]),
-        ("Storage", vec!["HIVE_STORAGE_ROOT"]),
-        ("Training", vec!["HIVE_TRAINING_BACKEND", "HIVE_SLEEP_INTERVAL_SECS"]),
-        ("File Server", vec!["HIVE_FILE_SERVER_PORT", "HIVE_FILE_TOKEN"]),
-        ("SafeNet", vec!["NEUROLEASE_ENABLED", "HIVE_CRYPTO_SIMULATION"]),
-    ];
-
-    let mut written: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-    for (section, keys) in &groups {
-        let section_vals: Vec<_> = keys.iter()
-            .filter_map(|k| values.iter().find(|(key, _)| key == k).map(|(key, val)| (key.clone(), val.clone())))
-            .collect();
-
-        if section_vals.is_empty() { continue; }
-
-        content.push_str(&format!("# ── {} ──────────────────────────────────────────────────\n", section));
-        for (k, v) in &section_vals {
-            if v.contains(' ') || v.contains('#') || v.contains('\"') {
-                content.push_str(&format!("{}=\"{}\"\n", k, v));
-            } else {
-                content.push_str(&format!("{}={}\n", k, v));
-            }
-            written.insert(k.clone());
-        }
-        content.push('\n');
+    #[test]
+    fn test_gemma4_tier_low_ram() {
+        let tier = gemma4_tier(8);
+        assert_eq!(tier.main, "gemma4:e2b");
+        assert_eq!(tier.observer, "gemma4:e2b");
+        assert_eq!(tier.deep, "gemma4:e2b");
     }
 
-    // Write any remaining values not in groups
-    let remaining: Vec<_> = values.iter().filter(|(k, _)| !written.contains(k)).collect();
-    if !remaining.is_empty() {
-        content.push_str("# ── Other ──────────────────────────────────────────────────\n");
-        for (k, v) in remaining {
-            content.push_str(&format!("{}={}\n", k, v));
-        }
-        content.push('\n');
+    #[test]
+    fn test_gemma4_tier_medium_ram() {
+        let tier = gemma4_tier(64);
+        assert_eq!(tier.main, "gemma4:26b");
+        assert_eq!(tier.observer, "gemma4:e2b");
+        assert_eq!(tier.deep, "gemma4:26b");
     }
 
-    // Append mesh-governed notice
-    content.push_str("# ═══════════════════════════════════════════════════════════════\n");
-    content.push_str("# MESH-GOVERNED (HARDCODED — DO NOT ADD ENV VARS FOR THESE)\n");
-    content.push_str("# ═══════════════════════════════════════════════════════════════\n");
-    content.push_str("# Ports, economy, queue, pooling, content, offline settings are\n");
-    content.push_str("# compiled into the binary. Changes require source code edit.\n");
+    #[test]
+    fn test_gemma4_tier_high_ram() {
+        let tier = gemma4_tier(512);
+        assert_eq!(tier.main, "gemma4:26b");
+        assert_eq!(tier.observer, "gemma4:e2b");
+        assert_eq!(tier.deep, "gemma4:31b");
+    }
 
-    std::fs::write(".env", &content).unwrap_or_else(|e| {
-        print_error(&format!("Failed to write .env: {e}"));
-    });
-}
+    #[test]
+    fn test_qwen35_tier_low_ram() {
+        let tier = qwen35_tier(8);
+        assert_eq!(tier.main, "qwen3.5:2b");
+        assert_eq!(tier.observer, "qwen3.5:0.8b");
+    }
 
-fn write_sentinel(hw: Option<&HardwareProfile>) {
-    let _ = std::fs::create_dir_all("memory/core");
-    let sentinel = serde_json::json!({
-        "completed_at": chrono::Utc::now().to_rfc3339(),
-        "version": "1.0",
-        "hardware": hw.map(|h| serde_json::json!({
-            "cpu": h.cpu_model,
-            "cores": h.cpu_cores,
-            "ram_gb": h.ram_gb,
-            "arch": h.arch,
-            "os": h.os,
-        })),
-    });
-    std::fs::write(SENTINEL_PATH, serde_json::to_string_pretty(&sentinel).unwrap_or_default())
-        .unwrap_or_else(|e| {
-            print_error(&format!("Failed to write sentinel: {e}"));
-        });
+    #[test]
+    fn test_qwen35_tier_high_ram() {
+        let tier = qwen35_tier(512);
+        assert_eq!(tier.main, "qwen3.5:122b");
+        assert_eq!(tier.deep, "qwen3.5:122b");
+    }
+
+    #[test]
+    fn test_env_generation_contains_required_keys() {
+        let config = EnvConfig::defaults();
+        let env = config.generate_env();
+        assert!(env.contains("HIVE_MODEL="));
+        assert!(env.contains("HIVE_OBSERVER_MODEL="));
+        assert!(env.contains("HIVE_DEEP_MODEL="));
+        assert!(env.contains("DISCORD_TOKEN="));
+        assert!(env.contains("HIVE_PROVIDER=ollama"));
+        assert!(env.contains("HIVE_SERIAL_INFERENCE=false"));
+        assert!(env.contains("NEUROLEASE_ENABLED=true"));
+    }
+
+    #[test]
+    fn test_env_defaults_use_gemma4() {
+        let config = EnvConfig::defaults();
+        assert_eq!(config.main_model, "gemma4:e2b");
+        assert_eq!(config.observer_model, "gemma4:e2b");
+    }
 }
