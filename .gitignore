@@ -86,3 +86,4 @@ data/credits/
 # Marketplace — listing and transaction data
 data/marketplace/
 .env.backup
+*.log
