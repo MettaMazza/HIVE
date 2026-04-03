@@ -287,9 +287,18 @@ pub(crate) fn spawn_telemetry_receiver(
             }
         }
 
-        // Final message: just show completion. Thoughts were already streamed live.
+        // Final message: show completion WITH the full chain-of-thought preserved
         let elapsed_str = format_elapsed(start_time.elapsed().as_secs());
-        let status = format!("✅ Complete ({})", elapsed_str);
+        let humanized = humanize_telemetry(&buffered_thought);
+        let max_len = 3800;
+        let display_text = if humanized.len() > max_len {
+            let mut start = humanized.len() - max_len;
+            while !humanized.is_char_boundary(start) && start < humanized.len() { start += 1; }
+            format!("…{}", &humanized[start..])
+        } else {
+            humanized
+        };
+        let status = format!("✅ Complete ({})\n\n{}", elapsed_str, display_text);
         let update_res = Response {
             platform: platform_id.clone(),
             target_scope: scope.clone(),
