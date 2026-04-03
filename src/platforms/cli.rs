@@ -42,7 +42,8 @@ impl Platform for CliPlatform {
             // Multi-line paste accumulator: when lines arrive faster than the
             // paste threshold, we buffer them into a single event. This allows
             // users to paste entire persona documents without truncation.
-            let paste_threshold = tokio::time::Duration::from_millis(50);
+            // 750ms handles terminal I/O chunking for large pastes (50ms was too aggressive).
+            let paste_threshold = tokio::time::Duration::from_millis(750);
             let mut buffer: Vec<String> = Vec::new();
 
             loop {
@@ -112,14 +113,14 @@ impl Platform for CliPlatform {
     #[cfg(not(tarpaulin_include))]
     async fn send(&self, response: Response) -> Result<(), PlatformError> {
         if response.is_telemetry {
-            // Telemetry: show only the first line (quirk + elapsed), overwrite in place
+            // Telemetry: show only the status line (quirk + elapsed time)
+            // Use println instead of \r — Docker PTYs don't handle carriage return properly
             let status_line = response.text.lines().next().unwrap_or("🧠 Thinking...");
-            eprint!("\r\x1b[35m{}\x1b[0m\x1b[K", status_line);
+            eprintln!("\x1b[35m{}\x1b[0m", status_line);
             return Ok(());
         }
 
-        // Final reply — clear the telemetry line first, then print in white
-        eprintln!("\r\x1b[K"); // Clear telemetry line
+        // Final reply in white
         match response.target_scope {
             Scope::Public { .. } => {
                 println!("\x1b[97m🐝 {}\x1b[0m", response.text);
