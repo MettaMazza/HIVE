@@ -415,8 +415,8 @@ pub fn run() {
     config.discord_token = prompt("Discord bot token", "");
     if !config.discord_token.is_empty() {
         config.admin_users = prompt("Admin user ID(s) (comma-separated)", "");
-        config.target_channel = prompt("Target channel ID (agent posts here)", "");
-        config.chat_channel = prompt("Chat channel ID (agent listens here)", "");
+        config.target_channel = prompt("Autonomy channel ID (agent posts updates here)", "");
+        config.chat_channel = prompt("Chat channel ID (agent listens and replies here)", "");
     }
 
     // ── Step 4: API Keys ───────────────────────────────────────
