@@ -367,22 +367,39 @@ pub fn run() {
 
     match family.as_str() {
         "2" => {
-            let tier = qwen35_tier(ram_gb);
+            // Qwen 3.5 tiers
+            let low  = qwen35_tier(8);
+            let mid  = qwen35_tier(64);
+            let high = qwen35_tier(256);
+
+            let recommended = if ram_gb >= 128 { "3" } else if ram_gb >= 32 { "2" } else { "1" };
+
             println!();
-            println!("  {BOLD}Available Qwen 3.5 sizes:{RESET}");
-            println!("    {DIM}0.8b  ·  2b  ·  9b  ·  27b  ·  35b  ·  122b{RESET}");
+            println!("  {BOLD}Choose your performance tier:{RESET}");
+            println!("    {GREEN}[1]{RESET} Lightweight  {DIM}(8-16GB RAM){RESET}");
+            println!("        Main: {CYAN}{}{RESET}  Observer: {CYAN}{}{RESET}  Deep: {CYAN}{}{RESET}", low.main, low.observer, low.deep);
+            println!("    {GREEN}[2]{RESET} Balanced     {DIM}(32-96GB RAM){RESET}");
+            println!("        Main: {CYAN}{}{RESET}  Observer: {CYAN}{}{RESET}  Deep: {CYAN}{}{RESET}", mid.main, mid.observer, mid.deep);
+            println!("    {GREEN}[3]{RESET} Performance  {DIM}(128GB+ RAM){RESET}");
+            println!("        Main: {CYAN}{}{RESET}  Observer: {CYAN}{}{RESET}  Deep: {CYAN}{}{RESET}", high.main, high.observer, high.deep);
+            println!();
             if ram_gb > 0 {
-                println!();
-                println!("  {BOLD}Recommended for {ram_gb}GB RAM:{RESET}");
-                println!("    Main:     {GREEN}{}{RESET}", tier.main);
-                println!("    Observer: {GREEN}{}{RESET}", tier.observer);
-                println!("    Deep:     {GREEN}{}{RESET}", tier.deep);
+                println!("  {DIM}Detected {ram_gb}GB RAM → recommended: [{recommended}]{RESET}");
             }
+
+            let choice = prompt("Selection", recommended);
+            let tier = match choice.as_str() {
+                "1" => low,
+                "3" => high,
+                _   => mid,
+            };
+            config.main_model = tier.main.to_string();
+            config.observer_model = tier.observer.to_string();
+            config.deep_model = tier.deep.to_string();
+            config.glasses_model = tier.observer.to_string();
+
             println!();
-            config.main_model = prompt("Main model", tier.main);
-            config.observer_model = prompt("Observer model", tier.observer);
-            config.deep_model = prompt("Deep model", tier.deep);
-            config.glasses_model = prompt("Glasses model", tier.observer);
+            print_ok(&format!("Main: {}  Observer: {}  Deep: {}", tier.main, tier.observer, tier.deep));
         }
         "3" => {
             println!();
@@ -395,23 +412,39 @@ pub fn run() {
             config.glasses_model = prompt("Glasses model", &config.observer_model);
         }
         _ => {
-            // Default: Gemma 4
-            let tier = gemma4_tier(ram_gb);
+            // Gemma 4 tiers
+            let low  = gemma4_tier(8);
+            let mid  = gemma4_tier(64);
+            let high = gemma4_tier(256);
+
+            let recommended = if ram_gb >= 96 { "3" } else if ram_gb >= 32 { "2" } else { "1" };
+
             println!();
-            println!("  {BOLD}Available Gemma 4 sizes:{RESET}");
-            println!("    {DIM}e2b  ·  e4b  ·  12b  ·  26b  ·  31b{RESET}");
+            println!("  {BOLD}Choose your performance tier:{RESET}");
+            println!("    {GREEN}[1]{RESET} Lightweight  {DIM}(8-16GB RAM){RESET}");
+            println!("        Main: {CYAN}{}{RESET}  Observer: {CYAN}{}{RESET}  Deep: {CYAN}{}{RESET}", low.main, low.observer, low.deep);
+            println!("    {GREEN}[2]{RESET} Balanced     {DIM}(32-96GB RAM){RESET}");
+            println!("        Main: {CYAN}{}{RESET}  Observer: {CYAN}{}{RESET}  Deep: {CYAN}{}{RESET}", mid.main, mid.observer, mid.deep);
+            println!("    {GREEN}[3]{RESET} Performance  {DIM}(96GB+ RAM){RESET}");
+            println!("        Main: {CYAN}{}{RESET}  Observer: {CYAN}{}{RESET}  Deep: {CYAN}{}{RESET}", high.main, high.observer, high.deep);
+            println!();
             if ram_gb > 0 {
-                println!();
-                println!("  {BOLD}Recommended for {ram_gb}GB RAM:{RESET}");
-                println!("    Main:     {GREEN}{}{RESET}", tier.main);
-                println!("    Observer: {GREEN}{}{RESET}", tier.observer);
-                println!("    Deep:     {GREEN}{}{RESET}", tier.deep);
+                println!("  {DIM}Detected {ram_gb}GB RAM → recommended: [{recommended}]{RESET}");
             }
+
+            let choice = prompt("Selection", recommended);
+            let tier = match choice.as_str() {
+                "1" => low,
+                "3" => high,
+                _   => mid,
+            };
+            config.main_model = tier.main.to_string();
+            config.observer_model = tier.observer.to_string();
+            config.deep_model = tier.deep.to_string();
+            config.glasses_model = tier.observer.to_string();
+
             println!();
-            config.main_model = prompt("Main model", tier.main);
-            config.observer_model = prompt("Observer model", tier.observer);
-            config.deep_model = prompt("Deep model", tier.deep);
-            config.glasses_model = prompt("Glasses model", tier.observer);
+            print_ok(&format!("Main: {}  Observer: {}  Deep: {}", tier.main, tier.observer, tier.deep));
         }
     }
 
