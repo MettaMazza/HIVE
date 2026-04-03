@@ -292,6 +292,43 @@ export HIVE_HOST_CPU_MODEL="$HOST_CPU_MODEL"
 export HIVE_HOST_CPU_CORES="$HOST_CPU_CORES"
 log "🖥️  Host: $HOST_CPU_MODEL ($HOST_CPU_CORES cores, ${HOST_RAM_GB}GB RAM)"
 
+# ── Step 3.8: Check Ollama is running on host ────────────────────────
+# HIVE connects to Ollama on the host via host.docker.internal:11434.
+# If Ollama isn't installed or isn't running, inference will fail silently
+# after setup completes. Catch it early.
+echo ""
+if ! command -v ollama &>/dev/null; then
+    echo ""
+    log "❌ Ollama is not installed!"
+    log ""
+    log "   HIVE requires Ollama for local AI inference."
+    log "   Install it from: https://ollama.com/download"
+    log ""
+    log "   After installing, start it with:  ollama serve"
+    log ""
+    read -p "[HIVE] Continue anyway? (y/N): " SKIP_OLLAMA
+    if [ "$SKIP_OLLAMA" != "y" ] && [ "$SKIP_OLLAMA" != "Y" ]; then
+        echo ""
+        log "Exiting. Install Ollama and try again."
+        exit 1
+    fi
+elif ! curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
+    echo ""
+    log "⚠️  Ollama is installed but not running!"
+    log ""
+    log "   Start it with:  ollama serve"
+    log "   Or open the Ollama app from your Applications folder."
+    log ""
+    read -p "[HIVE] Continue anyway? (y/N): " SKIP_OLLAMA
+    if [ "$SKIP_OLLAMA" != "y" ] && [ "$SKIP_OLLAMA" != "Y" ]; then
+        echo ""
+        log "Exiting. Start Ollama and try again."
+        exit 1
+    fi
+else
+    log "✅ Ollama is running on localhost:11434"
+fi
+
 # ── Step 4: Build & Launch ──────────────────────────────────────────
 echo ""
 log "🔨 Building HIVE container (this takes ~5 min first time)..."
