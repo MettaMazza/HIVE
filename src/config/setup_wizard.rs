@@ -368,14 +368,17 @@ pub fn run() {
     match family.as_str() {
         "2" => {
             let tier = qwen35_tier(ram_gb);
+            println!();
+            println!("  {BOLD}Available Qwen 3.5 sizes:{RESET}");
+            println!("    {DIM}0.8b  ·  2b  ·  9b  ·  27b  ·  35b  ·  122b{RESET}");
             if ram_gb > 0 {
                 println!();
                 println!("  {BOLD}Recommended for {ram_gb}GB RAM:{RESET}");
                 println!("    Main:     {GREEN}{}{RESET}", tier.main);
                 println!("    Observer: {GREEN}{}{RESET}", tier.observer);
                 println!("    Deep:     {GREEN}{}{RESET}", tier.deep);
-                println!();
             }
+            println!();
             config.main_model = prompt("Main model", tier.main);
             config.observer_model = prompt("Observer model", tier.observer);
             config.deep_model = prompt("Deep model", tier.deep);
@@ -394,14 +397,17 @@ pub fn run() {
         _ => {
             // Default: Gemma 4
             let tier = gemma4_tier(ram_gb);
+            println!();
+            println!("  {BOLD}Available Gemma 4 sizes:{RESET}");
+            println!("    {DIM}e2b  ·  e4b  ·  12b  ·  26b  ·  31b{RESET}");
             if ram_gb > 0 {
                 println!();
                 println!("  {BOLD}Recommended for {ram_gb}GB RAM:{RESET}");
                 println!("    Main:     {GREEN}{}{RESET}", tier.main);
                 println!("    Observer: {GREEN}{}{RESET}", tier.observer);
                 println!("    Deep:     {GREEN}{}{RESET}", tier.deep);
-                println!();
             }
+            println!();
             config.main_model = prompt("Main model", tier.main);
             config.observer_model = prompt("Observer model", tier.observer);
             config.deep_model = prompt("Deep model", tier.deep);
