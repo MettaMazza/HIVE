@@ -467,7 +467,6 @@ pub fn dispatch_native_tool(
     }
 
     if tool_type == "save_raw_persona" {
-        let context_owned = context.to_string();
         let handle = tokio::spawn(async move {
             if let Some(ref tx) = tx_clone {
                 let _ = tx.send("📜 Saving raw identity document...\n".into()).await;
@@ -475,52 +474,8 @@ pub fn dispatch_native_tool(
 
             let _ = std::fs::create_dir_all(".hive");
 
-            // The LLM can't echo a 15K document into a JSON field, so we extract
-            // the identity document directly from the user's original message.
-            // Look for the pasted content after common intro phrases.
-            let user_msg = context_owned.trim();
-            let content = {
-                // Try to find where the pasted document starts (after any intro text)
-                let lower = user_msg.to_lowercase();
-                let markers = [
-                    "identity prompt:",
-                    "identity document:",
-                    "persona prompt:",
-                    "persona document:",
-                    "this is your identity:",
-                    "here is your identity:",
-                    "═══",  // The decorative header line
-                ];
-                let mut doc_start = None;
-                for marker in &markers {
-                    if let Some(pos) = lower.find(marker) {
-                        // Start from the marker itself if it's a decorative line
-                        if marker.starts_with('═') {
-                            doc_start = Some(pos);
-                        } else {
-                            // Start after the marker + any newline
-                            let after = pos + marker.len();
-                            doc_start = Some(user_msg[after..].find(|c: char| c == '\n' || c == '═')
-                                .map(|p| after + p)
-                                .unwrap_or(after));
-                        }
-                        break;
-                    }
-                }
-
-                match doc_start {
-                    Some(start) => user_msg[start..].trim().to_string(),
-                    None => {
-                        // No marker found — if the message is large enough, save it all
-                        if user_msg.len() > 200 {
-                            user_msg.to_string()
-                        } else {
-                            // Fallback to desc if context is too short
-                            desc.trim().to_string()
-                        }
-                    }
-                }
-            };
+            // The entire description IS the persona document — save verbatim
+            let content = desc.trim().to_string();
 
             if content.len() < 50 {
                 return ToolResult {
