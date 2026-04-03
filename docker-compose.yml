@@ -41,6 +41,9 @@ services:
 
     environment:
       - HIVE_AUTO_OPEN=false
+      # Host hardware specs (detected in launch.sh, passed through for setup wizard)
+      - HIVE_HOST_RAM_GB=${HIVE_HOST_RAM_GB:-0}
+      - HIVE_HOST_CPU_MODEL=${HIVE_HOST_CPU_MODEL:-Unknown}
       # Connect to host's Ollama — host.docker.internal resolves to your machine
       - HIVE_OLLAMA_URL=http://host.docker.internal:11434
       # Model selection comes from .env — do NOT hardcode models here

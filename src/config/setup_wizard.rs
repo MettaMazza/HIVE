@@ -342,7 +342,19 @@ pub fn run() {
     // ── Step 1: Hardware Detection ──────────────────────────────
     print_step(1, "Hardware Detection");
     if prompt_yn("May I scan your hardware to recommend the best model?", true) {
-        if let Some(ram) = detect_ram_gb() {
+        // Prefer host hardware specs passed in from launch.sh via docker-compose
+        let host_ram = std::env::var("HIVE_HOST_RAM_GB").ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|&v| v > 0);
+        let host_cpu = std::env::var("HIVE_HOST_CPU_MODEL").ok()
+            .filter(|v| !v.is_empty() && v != "Unknown");
+
+        if let Some(ram) = host_ram {
+            ram_gb = ram;
+            let cpu = host_cpu.unwrap_or_else(|| detect_cpu_info());
+            print_ok(&format!("RAM: {ram_gb} GB"));
+            print_ok(&format!("CPU: {cpu}"));
+        } else if let Some(ram) = detect_ram_gb() {
             ram_gb = ram;
             let cpu = detect_cpu_info();
             print_ok(&format!("RAM: {ram_gb} GB"));
